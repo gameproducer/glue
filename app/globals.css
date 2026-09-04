@@ -118,8 +118,8 @@ h1 {
 
 .grab-guide {
   position: absolute;
-  top: 48%;
-  right: calc(50% - min(28vw, 238px));
+  top: 52%;
+  left: max(7%, calc(50% - min(40vw, 390px)));
   z-index: 4;
   width: 16px;
   height: 16px;
@@ -134,10 +134,22 @@ h1 {
   position: absolute;
   top: 50%;
   left: 22px;
-  width: 30px;
+  width: 48px;
   height: 1px;
   background: linear-gradient(90deg, rgba(255,255,255,.7), transparent);
   content: "";
+}
+
+.loading-art {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  color: var(--muted);
+  font: 500 9px/1 var(--font-geist-mono), monospace;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  transform: translate(-50%, -50%);
 }
 
 .interaction-hint {
@@ -307,7 +319,7 @@ h1 {
   .prototype-shell { padding: 20px 16px 16px; }
   .stage { margin: -20px -16px -16px; }
   .readouts { font-size: 8px; }
-  .grab-guide { right: 17%; }
+  .grab-guide { left: 7%; }
   .control-bar { gap: 5px; }
   .control-bar button { min-width: 0; gap: 5px; padding: 10px 11px; font-size: 8px; }
   .meter { right: -8px; }

@@ -13,107 +13,76 @@ export type PeelSnapshot = {
   maxMoves: number;
   progress: number;
   stress: number;
+  tracking: boolean;
   pulling: boolean;
   canCommit: boolean;
   complete: boolean;
   failed: boolean;
   grab: Vec2;
   pointer: Vec2;
-  inward: Vec2;
-  peelDepth: number;
+  direction: Vec2;
+  frontDepth: number;
 };
-
-class MinHeap {
-  private indices: number[] = [];
-  private priorities: number[] = [];
-
-  get isEmpty() { return this.indices.length === 0; }
-
-  push(index: number, priority: number) {
-    let i = this.indices.length;
-    this.indices.push(index);
-    this.priorities.push(priority);
-    while (i > 0) {
-      const p = (i - 1) >> 1;
-      if (this.priorities[p] <= priority) break;
-      this.indices[i] = this.indices[p];
-      this.priorities[i] = this.priorities[p];
-      i = p;
-    }
-    this.indices[i] = index;
-    this.priorities[i] = priority;
-  }
-
-  pop(): [number, number] {
-    const index = this.indices[0];
-    const priority = this.priorities[0];
-    const lastIndex = this.indices.pop()!;
-    const lastPriority = this.priorities.pop()!;
-    if (this.indices.length > 0) {
-      let i = 0;
-      while (true) {
-        const left = i * 2 + 1;
-        if (left >= this.indices.length) break;
-        const right = left + 1;
-        const child = right < this.indices.length && this.priorities[right] < this.priorities[left] ? right : left;
-        if (this.priorities[child] >= lastPriority) break;
-        this.indices[i] = this.indices[child];
-        this.priorities[i] = this.priorities[child];
-        i = child;
-      }
-      this.indices[i] = lastIndex;
-      this.priorities[i] = lastPriority;
-    }
-    return [index, priority];
-  }
-}
 
 const clamp = (value: number, low = 0, high = 1) => Math.max(low, Math.min(high, value));
 
-/** Deterministic adhesive-grid simulation. Rendering never feeds back into this state. */
+/** Connected moving-front solver based on the original Cocos2d-x GlueZone. */
 export class PeelSimulation {
   readonly width: number;
   readonly height: number;
+  readonly aspect: number;
   readonly state: Uint8Array;
   readonly adhesion: Float32Array;
-  readonly arrival: Float32Array;
   readonly maxMoves: number;
 
+  private readonly initialState: Uint8Array;
+  private readonly gestureBase: Uint8Array;
+  private readonly visited: Uint8Array;
+  private readonly queue: Int32Array;
   private totalCells = 0;
-  private movedCells = 0;
+  private releasedCells = 0;
+  private pendingNewCells = 0;
   private liftedCells = 0;
   private moves = 0;
+  private tracking = false;
   private pulling = false;
   private failed = false;
-  private grab: Vec2 = { x: 0.86, y: 0.5 };
+  private grabIndex = -1;
+  private gestureOrigin: Vec2 = { x: 0, y: 0 };
+  private grab: Vec2 = { x: 0.08, y: 0.5 };
   private pointer: Vec2 = { ...this.grab };
-  private inward: Vec2 = { x: -1, y: 0 };
-  private peelDepth = 0;
+  private direction: Vec2 = { x: 1, y: 0 };
+  private frontDepth = 0;
   private stress = 0;
   private lastPointer: Vec2 = { ...this.grab };
   private lastTime = 0;
 
-  constructor(width = 144, height = 132, seed = 0x5045454c, maxMoves = 4) {
+  constructor(width = 144, height = 132, seed = 0x5045454c, maxMoves = 4, mask?: Uint8Array) {
+    if (mask && mask.length !== width * height) throw new Error("Sticker mask dimensions do not match the grid");
     this.width = width;
     this.height = height;
+    this.aspect = width / height;
     this.maxMoves = maxMoves;
     const count = width * height;
     this.state = new Uint8Array(count);
+    this.initialState = new Uint8Array(count);
+    this.gestureBase = new Uint8Array(count);
+    this.visited = new Uint8Array(count);
+    this.queue = new Int32Array(count);
     this.adhesion = new Float32Array(count);
-    this.arrival = new Float32Array(count);
-    this.arrival.fill(Infinity);
+
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const u = x / (width - 1);
-        const v = y / (height - 1);
-        const i = y * width + x;
-        if (PeelSimulation.contains(u, v)) {
-          this.state[i] = Cell.adhered;
+        const index = y * width + x;
+        const present = mask ? mask[index] !== 0 : PeelSimulation.contains(x / (width - 1), y / (height - 1));
+        if (present) {
+          this.state[index] = Cell.adhered;
           this.totalCells++;
         }
-        this.adhesion[i] = 0.2 + this.noise(x, y, seed) * 0.8;
+        this.adhesion[index] = 0.22 + this.noise(x, y, seed) * 0.78;
       }
     }
+    this.initialState.set(this.state);
   }
 
   static contains(u: number, v: number) {
@@ -131,135 +100,224 @@ export class PeelSimulation {
       || ellipse(0, 0, 0.39, 0.9);
     const leftHole = ellipse(-0.35, 0.28, 0.115, 0.17);
     const rightHole = ellipse(0.35, 0.28, 0.115, 0.17);
-    const lowerNotch = y < -0.82 && Math.abs(x) < 0.12;
-    return body && !leftHole && !rightHole && !lowerNotch;
+    return body && !leftHole && !rightHole && !(y < -0.82 && Math.abs(x) < 0.12);
   }
 
   reset() {
-    this.movedCells = 0;
+    this.state.set(this.initialState);
+    this.releasedCells = 0;
+    this.pendingNewCells = 0;
     this.liftedCells = 0;
     this.moves = 0;
+    this.tracking = false;
     this.pulling = false;
     this.failed = false;
-    this.peelDepth = 0;
+    this.grabIndex = -1;
+    this.frontDepth = 0;
     this.stress = 0;
-    for (let y = 0; y < this.height; y++) {
-      for (let x = 0; x < this.width; x++) {
-        const i = y * this.width + x;
-        this.state[i] = PeelSimulation.contains(x / (this.width - 1), y / (this.height - 1)) ? Cell.adhered : Cell.outside;
-      }
-    }
   }
 
   begin(point: Vec2, time = 0) {
-    if (this.pulling || this.failed || this.movedCells === this.totalCells) return false;
-    const seed = this.nearestExposed(point, 0.15);
-    if (seed < 0) return false;
-    this.grab = this.cellPoint(seed);
+    if (this.tracking || this.failed || this.releasedCells >= this.totalCells) return false;
+    this.tracking = true;
+    this.pulling = false;
+    this.gestureOrigin = { ...point };
     this.pointer = { ...point };
     this.lastPointer = { ...point };
     this.lastTime = time;
-    this.peelDepth = 0;
+    this.frontDepth = 0;
     this.stress = 0;
-    this.pulling = true;
-    this.computeArrival(seed);
+    this.grabIndex = -1;
     return true;
   }
 
   drag(point: Vec2, time: number) {
-    if (!this.pulling) return;
+    if (!this.tracking) return;
     this.pointer = { ...point };
-    const dx = point.x - this.grab.x;
-    const dy = point.y - this.grab.y;
-    const pull = Math.hypot(dx, dy);
-    if (pull > 0.004) this.inward = { x: -dx / pull, y: -dy / pull };
 
-    const depthCells = pull * Math.max(this.width, this.height) * 1.02;
-    this.peelDepth = depthCells / Math.max(this.width, this.height);
-    let lifted = 0;
-    for (let i = 0; i < this.state.length; i++) {
-      if (this.state[i] === Cell.adhered && this.arrival[i] <= depthCells) {
-        this.state[i] = Cell.lifted;
-      } else if (this.state[i] === Cell.lifted && this.arrival[i] > depthCells) {
-        this.state[i] = Cell.adhered;
+    if (!this.pulling) {
+      const seed = this.traceAccessibleCell(this.gestureOrigin, point);
+      if (seed < 0) {
+        this.lastPointer = { ...point };
+        this.lastTime = time;
+        return;
       }
-      if (this.state[i] === Cell.lifted) lifted++;
+      this.acquire(seed);
     }
-    this.liftedCells = lifted;
 
-    if (this.lastTime > 0 && time > this.lastTime) {
-      const frameDistance = Math.hypot(point.x - this.lastPointer.x, point.y - this.lastPointer.y);
-      const speed = frameDistance / ((time - this.lastTime) / 1000);
-      const speedLoad = clamp((speed - 0.45) / 2.8);
-      const areaLoad = clamp(lifted / Math.max(1, this.totalCells) * 0.7);
-      this.stress += (Math.max(speedLoad, areaLoad) - this.stress) * 0.22;
-    }
+    const dx = (point.x - this.grab.x) * this.aspect;
+    const dy = point.y - this.grab.y;
+    const pullDistance = Math.hypot(dx, dy);
+    if (pullDistance < 0.001) return;
+    this.direction = { x: dx / pullDistance, y: dy / pullDistance };
+    this.frontDepth = this.calcFrontDepth(pullDistance);
+    const { frontCells, averageAdhesion } = this.rebuildLifted();
+
+    const frameDistance = Math.hypot((point.x - this.lastPointer.x) * this.aspect, point.y - this.lastPointer.y);
+    const elapsed = this.lastTime > 0 && time > this.lastTime ? (time - this.lastTime) / 1000 : 1 / 60;
+    const speed = frameDistance / Math.max(elapsed, 1 / 240);
+    const narrowLoad = clamp((18 - frontCells) / 16);
+    const resistanceLoad = clamp((averageAdhesion - 0.42) / 0.58);
+    const reachLoad = clamp(this.frontDepth / (this.aspect * 0.78));
+    const speedLoad = clamp((speed - 1.5) / 5) * 0.12;
+    const targetStress = clamp(narrowLoad * 0.54 + resistanceLoad * 0.28 + reachLoad * 0.18 + speedLoad);
+    this.stress += (targetStress - this.stress) * 0.2;
     this.lastPointer = { ...point };
     this.lastTime = time;
   }
 
   end(commit = true) {
-    if (!this.pulling) return false;
-    const accepted = commit && this.liftedCells >= 8 && this.peelDepth > 0.035;
-    for (let i = 0; i < this.state.length; i++) {
-      if (this.state[i] !== Cell.lifted) continue;
-      this.state[i] = accepted ? Cell.released : Cell.adhered;
+    if (!this.tracking) return false;
+    const threshold = Math.max(10, Math.round(this.totalCells * 0.0015));
+    const accepted = commit && this.pulling && this.pendingNewCells >= threshold && this.frontDepth > 0.012;
+
+    if (this.pulling) {
+      for (let index = 0; index < this.state.length; index++) {
+        this.state[index] = this.state[index] === Cell.lifted && accepted ? Cell.released : this.gestureBase[index];
+      }
     }
     if (accepted) {
-      this.movedCells += this.liftedCells;
+      this.releasedCells += this.pendingNewCells;
       this.moves++;
     }
+
+    this.pendingNewCells = 0;
     this.liftedCells = 0;
+    this.tracking = false;
     this.pulling = false;
-    this.peelDepth = 0;
-    this.stress *= 0.35;
-    this.failed = this.moves >= this.maxMoves && this.movedCells < this.totalCells;
+    this.grabIndex = -1;
+    this.frontDepth = 0;
+    this.stress *= 0.32;
+    this.failed = this.moves >= this.maxMoves && this.releasedCells < this.totalCells * 0.997;
     return accepted;
   }
 
   snapshot(): PeelSnapshot {
-    const progress = (this.movedCells + this.liftedCells) / Math.max(1, this.totalCells);
+    const progress = (this.releasedCells + this.pendingNewCells) / Math.max(1, this.totalCells);
     return {
       moves: this.moves,
       maxMoves: this.maxMoves,
       progress,
       stress: this.stress,
+      tracking: this.tracking,
       pulling: this.pulling,
-      canCommit: this.liftedCells >= 8,
-      complete: progress >= 0.999,
+      canCommit: this.pendingNewCells > 0,
+      complete: progress >= 0.997,
       failed: this.failed,
       grab: { ...this.grab },
       pointer: { ...this.pointer },
-      inward: { ...this.inward },
-      peelDepth: this.peelDepth,
+      direction: { ...this.direction },
+      frontDepth: this.frontDepth,
     };
   }
 
   writeTexture(target: Uint8Array) {
     if (target.length !== this.state.length * 4) throw new Error("State texture has the wrong size");
-    for (let i = 0, p = 0; i < this.state.length; i++, p += 4) {
-      const value = this.state[i];
-      target[p] = value === Cell.adhered ? 255 : 0;
-      target[p + 1] = value === Cell.released ? 255 : 0;
-      target[p + 2] = value === Cell.lifted ? 255 : 0;
-      target[p + 3] = value === Cell.outside ? 0 : 255;
+    for (let index = 0, offset = 0; index < this.state.length; index++, offset += 4) {
+      const value = this.state[index];
+      target[offset] = value === Cell.adhered ? 255 : 0;
+      target[offset + 1] = value === Cell.released ? 255 : 0;
+      target[offset + 2] = value === Cell.lifted ? 255 : 0;
+      target[offset + 3] = value === Cell.outside ? 0 : 255;
     }
   }
 
-  private noise(x: number, y: number, seed: number) {
-    let n = (Math.imul(x + 17, 374761393) + Math.imul(y + 31, 668265263) + seed) | 0;
-    n = Math.imul(n ^ (n >>> 13), 1274126177);
-    n ^= n >>> 16;
-    const fine = (n >>> 0) / 4294967295;
-    const broad = Math.sin(x * 0.14 + y * 0.09) * Math.sin(y * 0.12 - x * 0.05) * 0.5 + 0.5;
-    return fine * 0.38 + broad * 0.62;
+  private acquire(index: number) {
+    this.grabIndex = index;
+    this.grab = this.cellPoint(index);
+    this.gestureBase.set(this.state);
+    this.pulling = true;
   }
 
-  private cellPoint(index: number): Vec2 {
-    return { x: (index % this.width) / (this.width - 1), y: Math.floor(index / this.width) / (this.height - 1) };
+  private calcFrontDepth(pointerDistance: number) {
+    const radius = 0.082;
+    const quarterTravel = (Math.PI / 2 - 1) * radius;
+    if (pointerDistance < quarterTravel) return pointerDistance / quarterTravel * (Math.PI / 2 * radius);
+    if (pointerDistance < Math.PI * radius) {
+      return ((pointerDistance - quarterTravel) / (Math.PI * radius - quarterTravel) + 1)
+        * (Math.PI / 2 * radius);
+    }
+    return Math.PI * radius + (pointerDistance - Math.PI * radius) * 0.5;
   }
 
-  private isExposed(index: number) {
+  private rebuildLifted() {
+    this.state.set(this.gestureBase);
+    this.visited.fill(0);
+    this.pendingNewCells = 0;
+    this.liftedCells = 0;
+    let adhesionSum = 0;
+    let frontCells = 0;
+    let head = 0;
+    let tail = 0;
+    this.queue[tail++] = this.grabIndex;
+    this.visited[this.grabIndex] = 1;
+
+    const grabX = this.grab.x * this.aspect;
+    const grabY = this.grab.y;
+    const frontX = grabX + this.direction.x * this.frontDepth;
+    const frontY = grabY + this.direction.y * this.frontDepth;
+    const edgeTolerance = 0.7 / this.height;
+    const dx4 = [-1, 1, 0, 0];
+    const dy4 = [0, 0, -1, 1];
+
+    while (head < tail) {
+      const index = this.queue[head++];
+      const base = this.gestureBase[index];
+      if (base === Cell.outside) continue;
+      const x = index % this.width;
+      const y = Math.floor(index / this.width);
+      const metricX = x / (this.width - 1) * this.aspect;
+      const metricY = y / (this.height - 1);
+      const signed = (metricX - frontX) * this.direction.x + (metricY - frontY) * this.direction.y;
+      const adhesiveDelay = (this.adhesion[index] - 0.58) * 0.012;
+      if (index !== this.grabIndex && signed > edgeTolerance - adhesiveDelay) continue;
+
+      this.state[index] = Cell.lifted;
+      this.liftedCells++;
+      if (base === Cell.adhered) {
+        this.pendingNewCells++;
+        adhesionSum += this.adhesion[index];
+      }
+
+      let touchesFront = false;
+      for (let neighbor = 0; neighbor < 4; neighbor++) {
+        const nx = x + dx4[neighbor];
+        const ny = y + dy4[neighbor];
+        if (nx < 0 || nx >= this.width || ny < 0 || ny >= this.height) continue;
+        const next = ny * this.width + nx;
+        if (this.gestureBase[next] === Cell.outside) continue;
+        const nextMetricX = nx / (this.width - 1) * this.aspect;
+        const nextMetricY = ny / (this.height - 1);
+        const nextSigned = (nextMetricX - frontX) * this.direction.x + (nextMetricY - frontY) * this.direction.y;
+        if (nextSigned > edgeTolerance) touchesFront = true;
+        if (!this.visited[next]) {
+          this.visited[next] = 1;
+          this.queue[tail++] = next;
+        }
+      }
+      if (touchesFront) frontCells++;
+    }
+
+    return { frontCells, averageAdhesion: adhesionSum / Math.max(1, this.pendingNewCells) };
+  }
+
+  private traceAccessibleCell(start: Vec2, end: Vec2) {
+    const spanX = Math.abs(end.x - start.x) * this.width;
+    const spanY = Math.abs(end.y - start.y) * this.height;
+    const steps = Math.max(1, Math.ceil(Math.max(spanX, spanY) * 2));
+    for (let step = 0; step <= steps; step++) {
+      const t = step / steps;
+      const x = Math.round((start.x + (end.x - start.x) * t) * (this.width - 1));
+      const y = Math.round((start.y + (end.y - start.y) * t) * (this.height - 1));
+      if (x < 0 || x >= this.width || y < 0 || y >= this.height) continue;
+      const index = y * this.width + x;
+      if (this.isAccessible(index)) return index;
+    }
+    return -1;
+  }
+
+  private isAccessible(index: number) {
+    if (this.state[index] === Cell.released) return true;
     if (this.state[index] !== Cell.adhered) return false;
     const x = index % this.width;
     const y = Math.floor(index / this.width);
@@ -273,51 +331,16 @@ export class PeelSimulation {
     return false;
   }
 
-  private nearestExposed(point: Vec2, radius: number) {
-    let best = -1;
-    let bestDistance = radius * radius;
-    for (let i = 0; i < this.state.length; i++) {
-      if (!this.isExposed(i)) continue;
-      const cell = this.cellPoint(i);
-      const dx = cell.x - point.x;
-      const dy = cell.y - point.y;
-      const distance = dx * dx + dy * dy;
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        best = i;
-      }
-    }
-    return best;
+  private cellPoint(index: number): Vec2 {
+    return { x: (index % this.width) / (this.width - 1), y: Math.floor(index / this.width) / (this.height - 1) };
   }
 
-  private computeArrival(seed: number) {
-    this.arrival.fill(Infinity);
-    this.arrival[seed] = 0;
-    const heap = new MinHeap();
-    heap.push(seed, 0);
-    const neighbors = [
-      [-1, 0, 1], [1, 0, 1], [0, -1, 1], [0, 1, 1],
-      [-1, -1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [1, 1, Math.SQRT2],
-    ] as const;
-    while (!heap.isEmpty) {
-      const [index, distance] = heap.pop();
-      // Arrival is compact Float32 data while heap priorities are JS doubles.
-      // Compare with a small tolerance so quantization does not stop propagation.
-      if (distance > this.arrival[index] + 0.0001) continue;
-      const x = index % this.width;
-      const y = Math.floor(index / this.width);
-      for (const [ox, oy, step] of neighbors) {
-        const nx = x + ox;
-        const ny = y + oy;
-        if (nx < 0 || nx >= this.width || ny < 0 || ny >= this.height) continue;
-        const next = ny * this.width + nx;
-        if (this.state[next] !== Cell.adhered) continue;
-        const resistance = 0.72 + (this.adhesion[index] + this.adhesion[next]) * 0.34;
-        const candidate = distance + step * resistance;
-        if (candidate >= this.arrival[next]) continue;
-        this.arrival[next] = candidate;
-        heap.push(next, candidate);
-      }
-    }
+  private noise(x: number, y: number, seed: number) {
+    let value = (Math.imul(x + 17, 374761393) + Math.imul(y + 31, 668265263) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    value ^= value >>> 16;
+    const fine = (value >>> 0) / 4294967295;
+    const broad = Math.sin(x * 0.14 + y * 0.09) * Math.sin(y * 0.12 - x * 0.05) * 0.5 + 0.5;
+    return fine * 0.38 + broad * 0.62;
   }
 }
