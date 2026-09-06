@@ -3,6 +3,7 @@ export const Cell = {
   adhered: 1,
   released: 2,
   lifted: 3,
+  torn: 4,
 } as const;
 
 export type Vec2 = { x: number; y: number };
@@ -18,6 +19,10 @@ export type PeelSnapshot = {
   canCommit: boolean;
   complete: boolean;
   failed: boolean;
+  torn: boolean;
+  tearDragging: boolean;
+  tearThreshold: number;
+  tornOffset: Vec2;
   grab: Vec2;
   pointer: Vec2;
   direction: Vec2;
@@ -47,6 +52,11 @@ export class PeelSimulation {
   private tracking = false;
   private pulling = false;
   private failed = false;
+  private torn = false;
+  private tearThreshold: number;
+  private tearOrigin: Vec2 = { x: 0, y: 0 };
+  private tearRecoil: Vec2 = { x: 0, y: 0 };
+  private tornOffset: Vec2 = { x: 0, y: 0 };
   private grabIndex = -1;
   private gestureOrigin: Vec2 = { x: 0, y: 0 };
   private grab: Vec2 = { x: 0.08, y: 0.5 };
@@ -57,12 +67,20 @@ export class PeelSimulation {
   private lastPointer: Vec2 = { ...this.grab };
   private lastTime = 0;
 
-  constructor(width = 144, height = 132, seed = 0x5045454c, maxMoves = 4, mask?: Uint8Array) {
+  constructor(
+    width = 144,
+    height = 132,
+    seed = 0x5045454c,
+    maxMoves = 4,
+    mask?: Uint8Array,
+    tearThreshold = 0.78,
+  ) {
     if (mask && mask.length !== width * height) throw new Error("Sticker mask dimensions do not match the grid");
     this.width = width;
     this.height = height;
     this.aspect = width / height;
     this.maxMoves = maxMoves;
+    this.tearThreshold = clamp(tearThreshold, 0.05, 1);
     const count = width * height;
     this.state = new Uint8Array(count);
     this.initialState = new Uint8Array(count);
@@ -112,13 +130,17 @@ export class PeelSimulation {
     this.tracking = false;
     this.pulling = false;
     this.failed = false;
+    this.torn = false;
+    this.tearOrigin = { x: 0, y: 0 };
+    this.tearRecoil = { x: 0, y: 0 };
+    this.tornOffset = { x: 0, y: 0 };
     this.grabIndex = -1;
     this.frontDepth = 0;
     this.stress = 0;
   }
 
   begin(point: Vec2, time = 0) {
-    if (this.tracking || this.failed || this.releasedCells >= this.totalCells) return false;
+    if (this.tracking || this.failed || this.torn || this.releasedCells >= this.totalCells) return false;
     this.tracking = true;
     this.pulling = false;
     this.gestureOrigin = { ...point };
@@ -133,6 +155,15 @@ export class PeelSimulation {
 
   drag(point: Vec2, time: number) {
     if (!this.tracking) return;
+
+    if (this.torn) {
+      this.tornOffset = {
+        x: this.tearRecoil.x + point.x - this.tearOrigin.x,
+        y: this.tearRecoil.y + point.y - this.tearOrigin.y,
+      };
+      return;
+    }
+
     this.pointer = { ...point };
 
     if (!this.pulling) {
@@ -164,10 +195,26 @@ export class PeelSimulation {
     this.stress += (targetStress - this.stress) * 0.2;
     this.lastPointer = { ...point };
     this.lastTime = time;
+
+    const minimumPiece = Math.max(8, Math.round(this.totalCells * 0.002));
+    if (
+      this.stress >= this.tearThreshold
+      && this.liftedCells >= minimumPiece
+      && this.liftedCells < this.totalCells * 0.985
+    ) {
+      this.triggerTear();
+    }
   }
 
   end(commit = true) {
     if (!this.tracking) return false;
+    if (this.torn) {
+      this.tracking = false;
+      this.pulling = false;
+      this.failed = true;
+      this.grabIndex = -1;
+      return false;
+    }
     const threshold = Math.max(10, Math.round(this.totalCells * 0.0015));
     const accepted = commit && this.pulling && this.pendingNewCells >= threshold && this.frontDepth > 0.012;
 
@@ -204,6 +251,10 @@ export class PeelSimulation {
       canCommit: this.pendingNewCells > 0,
       complete: progress >= 0.997,
       failed: this.failed,
+      torn: this.torn,
+      tearDragging: this.torn && this.tracking,
+      tearThreshold: this.tearThreshold,
+      tornOffset: { ...this.tornOffset },
       grab: { ...this.grab },
       pointer: { ...this.pointer },
       direction: { ...this.direction },
@@ -218,8 +269,12 @@ export class PeelSimulation {
       target[offset] = value === Cell.adhered ? 255 : 0;
       target[offset + 1] = value === Cell.released ? 255 : 0;
       target[offset + 2] = value === Cell.lifted ? 255 : 0;
-      target[offset + 3] = value === Cell.outside ? 0 : 255;
+      target[offset + 3] = value === Cell.torn ? 255 : 0;
     }
+  }
+
+  setTearThreshold(value: number) {
+    this.tearThreshold = clamp(value, 0.05, 1);
   }
 
   private acquire(index: number) {
@@ -227,6 +282,29 @@ export class PeelSimulation {
     this.grab = this.cellPoint(index);
     this.gestureBase.set(this.state);
     this.pulling = true;
+  }
+
+  private triggerTear() {
+    let detachedReleasedCells = 0;
+    for (let index = 0; index < this.state.length; index++) {
+      if (this.state[index] === Cell.lifted) {
+        if (this.gestureBase[index] === Cell.released) detachedReleasedCells++;
+        this.state[index] = Cell.torn;
+      } else {
+        this.state[index] = this.gestureBase[index];
+      }
+    }
+    this.releasedCells = Math.max(0, this.releasedCells - detachedReleasedCells);
+    this.pendingNewCells = 0;
+    this.liftedCells = 0;
+    this.torn = true;
+    this.tearOrigin = { ...this.pointer };
+    this.tearRecoil = {
+      x: this.direction.x * 0.01 / this.aspect,
+      y: this.direction.y * 0.01,
+    };
+    this.tornOffset = { ...this.tearRecoil };
+    this.stress = Math.max(this.stress, this.tearThreshold);
   }
 
   private calcFrontDepth(pointerDistance: number) {

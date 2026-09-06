@@ -188,11 +188,22 @@ h1 {
 }
 
 .meter i {
+  position: relative;
   display: block;
   width: 82px;
   height: 2px;
   overflow: hidden;
   background: rgba(255,255,255,.12);
+}
+
+.meter em {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: rgba(255, 255, 255, .88);
+  box-shadow: 0 0 7px rgba(255, 255, 255, .65);
+  transform: translateX(-50%);
 }
 
 .meter b {
@@ -258,6 +269,48 @@ h1 {
   font: 500 8px/1.1 var(--font-geist-mono), monospace;
   letter-spacing: .06em;
   pointer-events: none;
+}
+
+.tear-settings {
+  position: absolute;
+  right: 50%;
+  bottom: 42px;
+  z-index: 8;
+  display: grid;
+  gap: 12px;
+  width: min(88vw, 310px);
+  padding: 15px 17px 13px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 16px;
+  color: rgba(255,255,255,.82);
+  background: rgba(13, 10, 20, .86);
+  box-shadow: 0 20px 55px rgba(0,0,0,.38), inset 0 1px rgba(255,255,255,.05);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  transform: translateX(50%);
+}
+
+.tear-settings div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: 600 11px/1 var(--font-geist-mono), monospace;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.tear-settings output { color: #d7a6ff; }
+
+.tear-settings input {
+  width: 100%;
+  accent-color: #9f56da;
+  cursor: pointer;
+}
+
+.tear-settings small {
+  color: rgba(255,255,255,.42);
+  font: 500 9px/1 var(--font-geist-mono), monospace;
+  letter-spacing: .04em;
 }
 
 .result-card {

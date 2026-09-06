@@ -5,6 +5,14 @@ import { type CurlProfile, PeelSimulation, type PeelSnapshot } from "@/lib/peel/
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 
+const ACTIVE_LEVEL = {
+  id: "octopus-v1",
+  name: "Octopus",
+  artwork: "/octopus-sticker.webp",
+  tearThreshold: 0.72,
+} as const;
+const tearThresholdStorageKey = `peel.level.${ACTIVE_LEVEL.id}.tearThreshold`;
+
 const emptySnapshot: PeelSnapshot = {
   moves: 0,
   maxMoves: 4,
@@ -15,6 +23,10 @@ const emptySnapshot: PeelSnapshot = {
   canCommit: false,
   complete: false,
   failed: false,
+  torn: false,
+  tearDragging: false,
+  tearThreshold: ACTIVE_LEVEL.tearThreshold,
+  tornOffset: { x: 0, y: 0 },
   grab: { x: 0.08, y: 0.5 },
   pointer: { x: 0.08, y: 0.5 },
   direction: { x: 1, y: 0 },
@@ -28,8 +40,11 @@ export default function PeelExperience() {
   const activePointer = useRef<number | null>(null);
   const textureFrame = useRef(0);
   const profileRef = useRef<CurlProfile>("cylinder");
+  const tearThresholdRef = useRef<number>(ACTIVE_LEVEL.tearThreshold);
   const [profile, setProfile] = useState<CurlProfile>("cylinder");
   const [debug, setDebug] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tearThreshold, setTearThreshold] = useState<number>(ACTIVE_LEVEL.tearThreshold);
   const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
   const [started, setStarted] = useState(false);
@@ -43,7 +58,16 @@ export default function PeelExperience() {
     if (!simulation) return;
     const next = simulation.snapshot();
     if (updateTexture) renderer?.updateState();
-    renderer?.setPeel(next.grab, next.pointer, next.direction, next.frontDepth, profileRef.current, next.stress);
+    renderer?.setPeel(
+      next.grab,
+      next.pointer,
+      next.direction,
+      next.frontDepth,
+      profileRef.current,
+      next.stress,
+      next.tornOffset,
+      next.torn,
+    );
     setSnapshot(next);
   }, []);
 
@@ -54,9 +78,18 @@ export default function PeelExperience() {
 
     void (async () => {
       try {
-        const asset = await loadStickerAsset("/octopus-sticker.webp");
+        const asset = await loadStickerAsset(ACTIVE_LEVEL.artwork);
         if (disposed || !hostRef.current) return;
-        const simulation = new PeelSimulation(asset.width, asset.height, 0x5045454c, 4, asset.mask);
+        let savedThreshold: number = ACTIVE_LEVEL.tearThreshold;
+        try {
+          const stored = Number(window.localStorage.getItem(tearThresholdStorageKey));
+          if (Number.isFinite(stored) && stored >= 0.35 && stored <= 0.98) savedThreshold = stored;
+        } catch {
+          // Storage can be unavailable in locked-down browser contexts; the level default remains valid.
+        }
+        tearThresholdRef.current = savedThreshold;
+        setTearThreshold(savedThreshold);
+        const simulation = new PeelSimulation(asset.width, asset.height, 0x5045454c, 4, asset.mask, savedThreshold);
         const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect, "bubble");
         simulationRef.current = simulation;
         rendererRef.current = renderer;
@@ -87,12 +120,23 @@ export default function PeelExperience() {
           const point = renderer.screenToSticker(event.clientX, event.clientY);
           if (!point) return;
           event.preventDefault();
+          const wasTorn = simulation.snapshot().torn;
           simulation.drag(point, performance.now());
           const next = simulation.snapshot();
           if (next.pulling) setStarted(true);
-          renderer.setPeel(next.grab, next.pointer, next.direction, next.frontDepth, profileRef.current, next.stress);
+          renderer.setPeel(
+            next.grab,
+            next.pointer,
+            next.direction,
+            next.frontDepth,
+            profileRef.current,
+            next.stress,
+            next.tornOffset,
+            next.torn,
+          );
           setSnapshot(next);
           scheduleTextureRefresh();
+          if (!wasTorn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
         };
 
         const finishPointer = (event: PointerEvent, commit: boolean) => {
@@ -106,7 +150,8 @@ export default function PeelExperience() {
             setMiss(true);
             window.setTimeout(() => setMiss(false), 420);
           }
-          if (simulation.snapshot().moves === 0) setStarted(false);
+          const ended = simulation.snapshot();
+          if (ended.moves === 0 && !ended.torn) setStarted(false);
           if (navigator.vibrate && accepted) navigator.vibrate(12);
         };
 
@@ -153,6 +198,18 @@ export default function PeelExperience() {
     rendererRef.current?.setDebug(next);
   };
 
+  const changeTearThreshold = (value: number) => {
+    const next = Math.max(0.35, Math.min(0.98, value));
+    tearThresholdRef.current = next;
+    setTearThreshold(next);
+    simulationRef.current?.setTearThreshold(next);
+    try {
+      window.localStorage.setItem(tearThresholdStorageKey, next.toFixed(2));
+    } catch {
+      // The setting remains active for this session when persistent storage is unavailable.
+    }
+  };
+
   const reset = () => {
     simulationRef.current?.reset();
     setStarted(false);
@@ -161,14 +218,18 @@ export default function PeelExperience() {
   };
 
   const percent = Math.min(100, Math.round(snapshot.progress * 100));
-  const status = snapshot.complete
+  const status = snapshot.torn
+    ? snapshot.tearDragging
+      ? "Torn — move the detached piece, then release it."
+      : "The lifted piece separated from the sticker."
+    : snapshot.complete
     ? "Clean release — the sticker stayed intact."
     : snapshot.failed
       ? "The adhesive held. Try broader pulls through the body."
       : snapshot.tracking && !snapshot.pulling
         ? "Cross an exposed edge to pick it up."
         : snapshot.pulling
-          ? snapshot.stress > 0.72 ? "The material is necking — change direction." : "Keep sweeping the peel front."
+          ? snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction." : "Keep sweeping the peel front."
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
   return (
@@ -197,14 +258,38 @@ export default function PeelExperience() {
         )}
         <div className="meter" aria-label={`Tension ${Math.round(snapshot.stress * 100)} percent`}>
           <span>Tension</span>
-          <i><b style={{ transform: `scaleX(${Math.min(1, snapshot.stress)})` }} /></i>
+          <i>
+            <b style={{ transform: `scaleX(${Math.min(1, snapshot.stress)})` }} />
+            <em style={{ left: `${tearThreshold * 100}%` }} aria-hidden="true" />
+          </i>
         </div>
         <p className="interaction-hint" aria-live="polite">{status}</p>
 
+        {settingsOpen && (
+          <aside className="tear-settings" aria-label="Level tear settings">
+            <div>
+              <span>Tear threshold</span>
+              <output>{Math.round(tearThreshold * 100)}%</output>
+            </div>
+            <input
+              type="range"
+              min="35"
+              max="98"
+              step="1"
+              value={Math.round(tearThreshold * 100)}
+              aria-label="Tear threshold percentage"
+              onChange={(event) => changeTearThreshold(Number(event.currentTarget.value) / 100)}
+            />
+            <small>Autosaved for {ACTIVE_LEVEL.name}</small>
+          </aside>
+        )}
+
         {(snapshot.complete || snapshot.failed) && (
           <div className="result-card" role="dialog" aria-modal="false" aria-label="Level result">
-            <span>{snapshot.complete ? "RELEASED" : "OUT OF MOVES"}</span>
-            <strong>{snapshot.complete ? "One piece. No tears." : `${percent}% came free.`}</strong>
+            <span>{snapshot.complete ? "RELEASED" : snapshot.torn ? "TORN" : "OUT OF MOVES"}</span>
+            <strong>
+              {snapshot.complete ? "One piece. No tears." : snapshot.torn ? "The lifted piece separated." : `${percent}% came free.`}
+            </strong>
             <button type="button" onClick={reset}>Try again</button>
           </div>
         )}
@@ -214,6 +299,7 @@ export default function PeelExperience() {
             <span>FPS {fps}</span>
             <span>GRID {simulationRef.current?.width ?? 208}×{simulationRef.current?.height ?? 166}</span>
             <span>FRONT {(snapshot.frontDepth * 100).toFixed(1)}</span>
+            <span>TEAR {Math.round(tearThreshold * 100)}%</span>
             <span>GPU WEBGL</span>
           </aside>
         )}
@@ -225,6 +311,9 @@ export default function PeelExperience() {
         </button>
         <button type="button" onClick={toggleDebug} aria-pressed={debug}>
           <span>Debug</span>{debug ? "On" : "Off"}
+        </button>
+        <button type="button" onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen}>
+          <span>Tear</span>{Math.round(tearThreshold * 100)}%
         </button>
         <button type="button" onClick={reset}>
           <span>Level</span>Reset

@@ -21,6 +21,7 @@ type PeelUniforms = {
   uRadius: { value: number };
   uCone: { value: number };
   uStress: { value: number };
+  uTornOffset: { value: THREE.Vector2 };
 };
 
 const vertexShader = /* glsl */ `
@@ -32,6 +33,7 @@ const vertexShader = /* glsl */ `
   uniform float uRadius;
   uniform float uCone;
   uniform float uLayer;
+  uniform vec2 uTornOffset;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying vec3 vNormalView;
@@ -78,6 +80,10 @@ const vertexShader = /* glsl */ `
       p.z += 0.018;
     }
 
+    if (uLayer > 2.5) {
+      p.xy += uTornOffset;
+    }
+
     vec4 viewPosition = modelViewMatrix * vec4(p, 1.0);
     vec4 clipPosition = projectionMatrix * viewPosition;
     vViewRay = viewPosition.xyz;
@@ -108,9 +114,11 @@ const fragmentShader = /* glsl */ `
 
   void main() {
     vec4 state = texture2D(uState, vUv);
-    float layerMask = uLayer < 0.5 ? state.r : (uLayer < 1.5 ? state.g : state.b);
+    float layerMask = uLayer < 0.5
+      ? state.r
+      : (uLayer < 1.5 ? state.g : (uLayer < 2.5 ? state.b : state.a));
     float layerCoverage = smoothstep(0.02, 0.98, layerMask);
-    if (layerCoverage < 0.01 || state.a < 0.02) discard;
+    if (layerCoverage < 0.01) discard;
     vec4 frontInk = texture2D(uArt, vUv);
     if (frontInk.a < 0.04) discard;
 
@@ -159,9 +167,9 @@ const fragmentShader = /* glsl */ `
         texture2D(uScene, uvBlue).b
       );
       float fresnel = pow(1.0 - abs(dot(-incident, lensNormal)), 3.0);
-      color = mix(refractedScene, uLensTint, 0.07 + fresnel * 0.12);
+      color = mix(refractedScene, uLensTint, 0.66 + fresnel * 0.08);
       color += vec3(0.62, 0.76, 1.0) * specular * 0.22;
-      alpha = frontInk.a * mix(0.76, 0.92, fresnel);
+      alpha = frontInk.a * 0.5;
     }
 
     gl_FragColor = vec4(color, alpha * layerCoverage);
@@ -246,7 +254,7 @@ export class PeelRenderer {
   private resizeFrame = 0;
   private lastFpsTime = performance.now();
   private fpsFrames = 0;
-  private backLensMesh: THREE.Mesh | null = null;
+  private readonly backLensMeshes: THREE.Mesh[] = [];
   private lensActive = false;
   // Keep render resolution stable. Reallocating the WebGL drawing buffer mid-gesture
   // caused intermittent single-frame flashes on devices near the FPS thresholds.
@@ -296,13 +304,15 @@ export class PeelRenderer {
     const lens = lensProfile === "prismatic"
       ? { ior: 1.52, magnification: 1.16, dispersion: 0.018, tint: 0x9a78d6 }
       : lensProfile === "bubble"
-        ? { ior: 1.46, magnification: 1.12, dispersion: 0.008, tint: 0x7250a8 }
+        ? { ior: 1.46, magnification: 1.12, dispersion: 0.008, tint: 0x7937bd }
         : { ior: 1.33, magnification: 1.04, dispersion: 0.002, tint: 0xbfc9dc };
     const layerPasses = [
       { layer: 0, side: THREE.FrontSide, depthWrite: true, renderOrder: 0, isLens: false },
       { layer: 1, side: THREE.FrontSide, depthWrite: false, renderOrder: 1, isLens: false },
       { layer: 2, side: THREE.BackSide, depthWrite: false, renderOrder: 2, isLens: true },
       { layer: 2, side: THREE.FrontSide, depthWrite: true, renderOrder: 3, isLens: false },
+      { layer: 3, side: THREE.BackSide, depthWrite: false, renderOrder: 4, isLens: true },
+      { layer: 3, side: THREE.FrontSide, depthWrite: true, renderOrder: 5, isLens: false },
     ] as const;
     for (const pass of layerPasses) {
       const uniforms: PeelUniforms = {
@@ -322,6 +332,7 @@ export class PeelRenderer {
         uRadius: { value: 0.31 },
         uCone: { value: 0 },
         uStress: { value: 0 },
+        uTornOffset: { value: new THREE.Vector2() },
       };
       const material = new THREE.ShaderMaterial({
         uniforms,
@@ -337,7 +348,7 @@ export class PeelRenderer {
       mesh.position.z = pass.layer * 0.002;
       this.materials.push(material);
       this.stickerMeshes.push(mesh);
-      if (pass.isLens) this.backLensMesh = mesh;
+      if (pass.isLens) this.backLensMeshes.push(mesh);
       this.scene.add(mesh);
     }
 
@@ -366,8 +377,17 @@ export class PeelRenderer {
     this.stateTexture.needsUpdate = true;
   }
 
-  setPeel(grab: Vec2, pointer: Vec2, direction: Vec2, depth: number, profile: CurlProfile, stress: number) {
-    this.lensActive = depth > 0.002;
+  setPeel(
+    grab: Vec2,
+    pointer: Vec2,
+    direction: Vec2,
+    depth: number,
+    profile: CurlProfile,
+    stress: number,
+    tornOffset: Vec2 = { x: 0, y: 0 },
+    torn = false,
+  ) {
+    this.lensActive = depth > 0.002 || torn;
     const worldGrab = this.uvToWorld(grab);
     const worldPointer = this.uvToWorld(pointer);
     const worldDirection = new THREE.Vector2(direction.x, direction.y).normalize();
@@ -381,6 +401,7 @@ export class PeelRenderer {
       uniforms.uRadius.value = profile === "cone" ? 0.28 : 0.32;
       uniforms.uCone.value = profile === "cone" ? 1 : 0;
       uniforms.uStress.value = stress;
+      uniforms.uTornOffset.value.set(tornOffset.x * this.stickerWidth, tornOffset.y * this.stickerHeight);
     }
     const lift = Math.min(1, depth * 2.2);
     this.shadow.scale.set(1 + lift * 0.08, 1 + lift * 0.12, 1);
@@ -445,11 +466,11 @@ export class PeelRenderer {
   private animate = () => {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
-    if (this.lensActive && this.backLensMesh) {
-      this.backLensMesh.visible = false;
+    if (this.lensActive && this.backLensMeshes.length > 0) {
+      for (const mesh of this.backLensMeshes) mesh.visible = false;
       this.renderer.setRenderTarget(this.refractionTarget);
       this.renderer.render(this.scene, this.camera);
-      this.backLensMesh.visible = true;
+      for (const mesh of this.backLensMeshes) mesh.visible = true;
       this.renderer.setRenderTarget(null);
     }
     this.renderer.render(this.scene, this.camera);

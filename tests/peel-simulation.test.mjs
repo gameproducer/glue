@@ -71,3 +71,27 @@ test("released material persists and can seed the next pull", () => {
   assert.equal(simulation.snapshot().moves, 2);
   assert.ok(first > 0 && second > first);
 });
+
+test("crossing the tear threshold detaches the lifted piece until release", () => {
+  const width = 64;
+  const height = 40;
+  const mask = rectangleMask(width, height, 3, 60, 18, 21);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.35);
+
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  for (let step = 1; step <= 12 && !simulation.snapshot().torn; step++) {
+    simulation.drag({ x: 0.02 + step * 0.04, y: 0.5 }, 100 + step * 45);
+  }
+
+  const torn = simulation.snapshot();
+  assert.equal(torn.torn, true);
+  assert.equal(torn.tearDragging, true);
+  assert.ok(simulation.state.some((value) => value === Cell.torn));
+  assert.ok(simulation.state.some((value) => value === Cell.adhered));
+
+  simulation.drag({ x: 0.74, y: 0.72 }, 900);
+  assert.ok(Math.hypot(simulation.snapshot().tornOffset.x, simulation.snapshot().tornOffset.y) > 0.2);
+  assert.equal(simulation.end(true), false);
+  assert.equal(simulation.snapshot().failed, true);
+  assert.ok(simulation.state.some((value) => value === Cell.torn));
+});
