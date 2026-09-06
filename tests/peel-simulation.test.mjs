@@ -117,3 +117,20 @@ test("a sudden release avalanche tears at the smaller previous front", () => {
   assert.ok(tornCells < simulation.state.length * 0.35);
   assert.ok(simulation.state.some((value) => value === Cell.adhered));
 });
+
+test("release-jump tearing has an independent threshold", () => {
+  const width = 72;
+  const height = 36;
+  const mask = rectangleMask(width, height, 3, 68, 6, 29);
+  const simulation = new PeelSimulation(width, height, 41, 4, mask, 0.9, 0.98);
+
+  simulation.begin({ x: 0.01, y: 0.5 }, 100);
+  simulation.drag({ x: 0.16, y: 0.5 }, 420);
+  assert.equal(simulation.end(true), true);
+
+  simulation.begin({ x: 0.08, y: 0.5 }, 700);
+  simulation.drag({ x: 0.96, y: 0.5 }, 760);
+
+  assert.equal(simulation.snapshot().torn, false);
+  assert.equal(simulation.snapshot().releaseJumpThreshold, 0.98);
+});

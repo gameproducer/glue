@@ -22,6 +22,7 @@ export type PeelSnapshot = {
   torn: boolean;
   tearDragging: boolean;
   tearThreshold: number;
+  releaseJumpThreshold: number;
   tornOffset: Vec2;
   grab: Vec2;
   pointer: Vec2;
@@ -55,6 +56,7 @@ export class PeelSimulation {
   private failed = false;
   private torn = false;
   private tearThreshold: number;
+  private releaseJumpThreshold: number;
   private tearOrigin: Vec2 = { x: 0, y: 0 };
   private tearRecoil: Vec2 = { x: 0, y: 0 };
   private tornOffset: Vec2 = { x: 0, y: 0 };
@@ -75,6 +77,7 @@ export class PeelSimulation {
     maxMoves = 4,
     mask?: Uint8Array,
     tearThreshold = 0.78,
+    releaseJumpThreshold = 0.28,
   ) {
     if (mask && mask.length !== width * height) throw new Error("Sticker mask dimensions do not match the grid");
     this.width = width;
@@ -82,6 +85,7 @@ export class PeelSimulation {
     this.aspect = width / height;
     this.maxMoves = maxMoves;
     this.tearThreshold = clamp(tearThreshold, 0.05, 1);
+    this.releaseJumpThreshold = clamp(releaseJumpThreshold, 0.05, 1);
     const count = width * height;
     this.state = new Uint8Array(count);
     this.initialState = new Uint8Array(count);
@@ -203,10 +207,6 @@ export class PeelSimulation {
     // to pull nearly the entire sticker free instantaneously.
     const gainedCells = Math.max(0, this.pendingNewCells - previousPendingCells);
     const absoluteGain = gainedCells / Math.max(1, this.totalCells);
-    const relativeGain = gainedCells / Math.max(this.totalCells * 0.04, tearCandidateCells);
-    const areaGainLoad = clamp((absoluteGain - 0.08) / 0.42);
-    const expansionLoad = clamp((relativeGain - 0.8) / 2.2);
-    const releaseShock = Math.max(areaGainLoad, expansionLoad);
 
     const frameDistance = Math.hypot((point.x - this.lastPointer.x) * this.aspect, point.y - this.lastPointer.y);
     const elapsed = this.lastTime > 0 && time > this.lastTime ? (time - this.lastTime) / 1000 : 1 / 60;
@@ -221,7 +221,7 @@ export class PeelSimulation {
     this.lastTime = time;
 
     const minimumPiece = Math.max(8, Math.round(this.totalCells * 0.002));
-    const avalancheTear = releaseShock >= this.tearThreshold && tearCandidateCells >= minimumPiece;
+    const avalancheTear = absoluteGain >= this.releaseJumpThreshold && tearCandidateCells >= minimumPiece;
     const stressTear = (
       this.stress >= this.tearThreshold
       && this.liftedCells >= minimumPiece
@@ -282,6 +282,7 @@ export class PeelSimulation {
       torn: this.torn,
       tearDragging: this.torn && this.tracking,
       tearThreshold: this.tearThreshold,
+      releaseJumpThreshold: this.releaseJumpThreshold,
       tornOffset: { ...this.tornOffset },
       grab: { ...this.grab },
       pointer: { ...this.pointer },
@@ -303,6 +304,10 @@ export class PeelSimulation {
 
   setTearThreshold(value: number) {
     this.tearThreshold = clamp(value, 0.05, 1);
+  }
+
+  setReleaseJumpThreshold(value: number) {
+    this.releaseJumpThreshold = clamp(value, 0.05, 1);
   }
 
   private acquire(index: number) {

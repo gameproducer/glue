@@ -271,14 +271,14 @@ h1 {
   pointer-events: none;
 }
 
-.tear-settings {
+.physics-settings {
   position: absolute;
   right: 50%;
   bottom: 42px;
   z-index: 8;
   display: grid;
-  gap: 12px;
-  width: min(88vw, 310px);
+  gap: 15px;
+  width: min(90vw, 340px);
   padding: 15px 17px 13px;
   border: 1px solid rgba(255,255,255,.16);
   border-radius: 16px;
@@ -290,7 +290,12 @@ h1 {
   transform: translateX(50%);
 }
 
-.tear-settings div {
+.setting-control {
+  display: grid;
+  gap: 7px;
+}
+
+.setting-control div {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -299,15 +304,15 @@ h1 {
   text-transform: uppercase;
 }
 
-.tear-settings output { color: #d7a6ff; }
+.physics-settings output { color: #f39bc8; }
 
-.tear-settings input {
+.physics-settings input {
   width: 100%;
-  accent-color: #9f56da;
+  accent-color: #ed6cab;
   cursor: pointer;
 }
 
-.tear-settings small {
+.physics-settings small {
   color: rgba(255,255,255,.42);
   font: 500 9px/1 var(--font-geist-mono), monospace;
   letter-spacing: .04em;

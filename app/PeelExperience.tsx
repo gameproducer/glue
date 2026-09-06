@@ -10,8 +10,12 @@ const ACTIVE_LEVEL = {
   name: "Octopus",
   artwork: "/octopus-sticker.webp",
   tearThreshold: 0.72,
+  releaseJumpThreshold: 0.28,
+  liftedTransparency: 0.5,
 } as const;
 const tearThresholdStorageKey = `peel.level.${ACTIVE_LEVEL.id}.tearThreshold`;
+const releaseJumpStorageKey = `peel.level.${ACTIVE_LEVEL.id}.releaseJumpThreshold`;
+const liftedTransparencyStorageKey = `peel.level.${ACTIVE_LEVEL.id}.liftedTransparency`;
 
 const emptySnapshot: PeelSnapshot = {
   moves: 0,
@@ -26,6 +30,7 @@ const emptySnapshot: PeelSnapshot = {
   torn: false,
   tearDragging: false,
   tearThreshold: ACTIVE_LEVEL.tearThreshold,
+  releaseJumpThreshold: ACTIVE_LEVEL.releaseJumpThreshold,
   tornOffset: { x: 0, y: 0 },
   grab: { x: 0.08, y: 0.5 },
   pointer: { x: 0.08, y: 0.5 },
@@ -40,11 +45,12 @@ export default function PeelExperience() {
   const activePointer = useRef<number | null>(null);
   const textureFrame = useRef(0);
   const profileRef = useRef<CurlProfile>("cylinder");
-  const tearThresholdRef = useRef<number>(ACTIVE_LEVEL.tearThreshold);
   const [profile, setProfile] = useState<CurlProfile>("cylinder");
   const [debug, setDebug] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tearThreshold, setTearThreshold] = useState<number>(ACTIVE_LEVEL.tearThreshold);
+  const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(ACTIVE_LEVEL.releaseJumpThreshold);
+  const [liftedTransparency, setLiftedTransparency] = useState<number>(ACTIVE_LEVEL.liftedTransparency);
   const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
   const [started, setStarted] = useState(false);
@@ -66,7 +72,6 @@ export default function PeelExperience() {
       profileRef.current,
       next.stress,
       next.tornOffset,
-      next.torn,
     );
     setSnapshot(next);
   }, []);
@@ -80,17 +85,34 @@ export default function PeelExperience() {
       try {
         const asset = await loadStickerAsset(ACTIVE_LEVEL.artwork);
         if (disposed || !hostRef.current) return;
+        const readSavedSetting = (key: string, fallback: number, minimum: number, maximum: number) => {
+          const stored = Number(window.localStorage.getItem(key));
+          return Number.isFinite(stored) && stored >= minimum && stored <= maximum ? stored : fallback;
+        };
         let savedThreshold: number = ACTIVE_LEVEL.tearThreshold;
+        let savedJumpThreshold: number = ACTIVE_LEVEL.releaseJumpThreshold;
+        let savedTransparency: number = ACTIVE_LEVEL.liftedTransparency;
         try {
-          const stored = Number(window.localStorage.getItem(tearThresholdStorageKey));
-          if (Number.isFinite(stored) && stored >= 0.35 && stored <= 0.98) savedThreshold = stored;
+          savedThreshold = readSavedSetting(tearThresholdStorageKey, savedThreshold, 0.35, 0.98);
+          savedJumpThreshold = readSavedSetting(releaseJumpStorageKey, savedJumpThreshold, 0.1, 0.8);
+          savedTransparency = readSavedSetting(liftedTransparencyStorageKey, savedTransparency, 0.05, 0.9);
         } catch {
           // Storage can be unavailable in locked-down browser contexts; the level default remains valid.
         }
-        tearThresholdRef.current = savedThreshold;
         setTearThreshold(savedThreshold);
-        const simulation = new PeelSimulation(asset.width, asset.height, 0x5045454c, 4, asset.mask, savedThreshold);
-        const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect, "bubble");
+        setReleaseJumpThreshold(savedJumpThreshold);
+        setLiftedTransparency(savedTransparency);
+        const simulation = new PeelSimulation(
+          asset.width,
+          asset.height,
+          0x5045454c,
+          4,
+          asset.mask,
+          savedThreshold,
+          savedJumpThreshold,
+        );
+        const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect);
+        renderer.setLiftedTransparency(savedTransparency);
         simulationRef.current = simulation;
         rendererRef.current = renderer;
         renderer.onFps = setFps;
@@ -132,7 +154,6 @@ export default function PeelExperience() {
             profileRef.current,
             next.stress,
             next.tornOffset,
-            next.torn,
           );
           setSnapshot(next);
           scheduleTextureRefresh();
@@ -200,11 +221,32 @@ export default function PeelExperience() {
 
   const changeTearThreshold = (value: number) => {
     const next = Math.max(0.35, Math.min(0.98, value));
-    tearThresholdRef.current = next;
     setTearThreshold(next);
     simulationRef.current?.setTearThreshold(next);
     try {
       window.localStorage.setItem(tearThresholdStorageKey, next.toFixed(2));
+    } catch {
+      // The setting remains active for this session when persistent storage is unavailable.
+    }
+  };
+
+  const changeReleaseJumpThreshold = (value: number) => {
+    const next = Math.max(0.1, Math.min(0.8, value));
+    setReleaseJumpThreshold(next);
+    simulationRef.current?.setReleaseJumpThreshold(next);
+    try {
+      window.localStorage.setItem(releaseJumpStorageKey, next.toFixed(2));
+    } catch {
+      // The setting remains active for this session when persistent storage is unavailable.
+    }
+  };
+
+  const changeLiftedTransparency = (value: number) => {
+    const next = Math.max(0.05, Math.min(0.9, value));
+    setLiftedTransparency(next);
+    rendererRef.current?.setLiftedTransparency(next);
+    try {
+      window.localStorage.setItem(liftedTransparencyStorageKey, next.toFixed(2));
     } catch {
       // The setting remains active for this session when persistent storage is unavailable.
     }
@@ -266,20 +308,40 @@ export default function PeelExperience() {
         <p className="interaction-hint" aria-live="polite">{status}</p>
 
         {settingsOpen && (
-          <aside className="tear-settings" aria-label="Level tear settings">
-            <div>
-              <span>Tear threshold</span>
-              <output>{Math.round(tearThreshold * 100)}%</output>
-            </div>
-            <input
-              type="range"
-              min="35"
-              max="98"
-              step="1"
-              value={Math.round(tearThreshold * 100)}
-              aria-label="Tear threshold percentage"
-              onChange={(event) => changeTearThreshold(Number(event.currentTarget.value) / 100)}
-            />
+          <aside className="physics-settings" aria-label="Level material settings">
+            <label className="setting-control">
+              <div><span>Tension tear</span><output>{Math.round(tearThreshold * 100)}%</output></div>
+              <input
+                type="range"
+                min="35"
+                max="98"
+                step="1"
+                value={Math.round(tearThreshold * 100)}
+                onChange={(event) => changeTearThreshold(Number(event.currentTarget.value) / 100)}
+              />
+            </label>
+            <label className="setting-control">
+              <div><span>Area jump</span><output>{Math.round(releaseJumpThreshold * 100)}%</output></div>
+              <input
+                type="range"
+                min="10"
+                max="80"
+                step="1"
+                value={Math.round(releaseJumpThreshold * 100)}
+                onChange={(event) => changeReleaseJumpThreshold(Number(event.currentTarget.value) / 100)}
+              />
+            </label>
+            <label className="setting-control">
+              <div><span>Lift transparency</span><output>{Math.round(liftedTransparency * 100)}%</output></div>
+              <input
+                type="range"
+                min="5"
+                max="90"
+                step="1"
+                value={Math.round(liftedTransparency * 100)}
+                onChange={(event) => changeLiftedTransparency(Number(event.currentTarget.value) / 100)}
+              />
+            </label>
             <small>Autosaved for {ACTIVE_LEVEL.name}</small>
           </aside>
         )}
@@ -300,6 +362,8 @@ export default function PeelExperience() {
             <span>GRID {simulationRef.current?.width ?? 208}×{simulationRef.current?.height ?? 166}</span>
             <span>FRONT {(snapshot.frontDepth * 100).toFixed(1)}</span>
             <span>TEAR {Math.round(tearThreshold * 100)}%</span>
+            <span>JUMP {Math.round(releaseJumpThreshold * 100)}%</span>
+            <span>FILM {Math.round(liftedTransparency * 100)}%</span>
             <span>GPU WEBGL</span>
           </aside>
         )}
@@ -313,7 +377,7 @@ export default function PeelExperience() {
           <span>Debug</span>{debug ? "On" : "Off"}
         </button>
         <button type="button" onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen}>
-          <span>Tear</span>{Math.round(tearThreshold * 100)}%
+          <span>Physics</span>Tune
         </button>
         <button type="button" onClick={reset}>
           <span>Level</span>Reset

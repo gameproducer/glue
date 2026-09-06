@@ -2,18 +2,13 @@ import * as THREE from "three";
 import type { CurlProfile, PeelSimulation, Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
-export type LensProfile = "clear" | "bubble" | "prismatic";
 
 type PeelUniforms = {
   uArt: { value: THREE.Texture };
-  uScene: { value: THREE.Texture };
   uState: { value: THREE.DataTexture };
   uLayer: { value: number };
-  uIor: { value: number };
-  uMagnification: { value: number };
-  uDispersion: { value: number };
-  uLensTint: { value: THREE.Color };
-  uScreenAspect: { value: number };
+  uFilmColor: { value: THREE.Color };
+  uLiftedOpacity: { value: number };
   uGrab: { value: THREE.Vector2 };
   uPointer: { value: THREE.Vector2 };
   uDirection: { value: THREE.Vector2 };
@@ -36,9 +31,6 @@ const vertexShader = /* glsl */ `
   uniform vec2 uTornOffset;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
-  varying vec3 vNormalView;
-  varying vec3 vViewRay;
-  varying vec2 vScreenUv;
   varying float vCurl;
 
   const float PI = 3.141592653589793;
@@ -84,32 +76,20 @@ const vertexShader = /* glsl */ `
       p.xy += uTornOffset;
     }
 
-    vec4 viewPosition = modelViewMatrix * vec4(p, 1.0);
-    vec4 clipPosition = projectionMatrix * viewPosition;
-    vViewRay = viewPosition.xyz;
-    vNormalView = normalize(normalMatrix * vNormalWorld);
-    vScreenUv = clipPosition.xy / clipPosition.w * 0.5 + 0.5;
-    gl_Position = clipPosition;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }
 `;
 
 const fragmentShader = /* glsl */ `
   precision highp float;
   uniform sampler2D uArt;
-  uniform sampler2D uScene;
   uniform sampler2D uState;
   uniform float uLayer;
-  uniform float uIor;
-  uniform float uMagnification;
-  uniform float uDispersion;
-  uniform vec3 uLensTint;
-  uniform float uScreenAspect;
+  uniform vec3 uFilmColor;
+  uniform float uLiftedOpacity;
   uniform float uStress;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
-  varying vec3 vNormalView;
-  varying vec3 vViewRay;
-  varying vec2 vScreenUv;
   varying float vCurl;
 
   void main() {
@@ -130,7 +110,14 @@ const fragmentShader = /* glsl */ `
     vec3 color;
     float alpha;
 
-    if (gl_FrontFacing) {
+    if (uLayer > 1.5) {
+      // The lifted sheet has no printed face: both geometric sides are the same
+      // translucent pink film. Artwork contributes only its outer contour/alpha.
+      color = uFilmColor * (0.78 + diffuse * 0.14);
+      color += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
+      color = mix(color, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
+      alpha = frontInk.a * uLiftedOpacity * mix(0.92, 1.0, grazing);
+    } else {
       color = frontInk.rgb * (0.61 + diffuse * 0.43);
       color += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
       color = mix(color, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
@@ -141,38 +128,6 @@ const fragmentShader = /* glsl */ `
         color = mix(color, vec3(0.075, 0.045, 0.12), 0.46);
         alpha *= 0.52;
       }
-    } else {
-      // Baseline Snell refraction. The pre-lens scene is magnified as one image,
-      // then its optical axis swings with the curved underside normal.
-      vec3 incident = normalize(vViewRay);
-      vec3 lensNormal = normalize(-vNormalView);
-      float etaGreen = 1.0 / uIor;
-      float etaRed = 1.0 / max(1.001, uIor - uDispersion);
-      float etaBlue = 1.0 / (uIor + uDispersion);
-      vec3 rayRed = refract(incident, lensNormal, etaRed);
-      vec3 rayGreen = refract(incident, lensNormal, etaGreen);
-      vec3 rayBlue = refract(incident, lensNormal, etaBlue);
-      vec2 incidentSlope = incident.xy / max(abs(incident.z), 0.12);
-      vec2 projectionScale = vec2(1.0 / max(uScreenAspect, 0.2), 1.0) * 0.072;
-      vec2 shiftRed = (rayRed.xy / max(abs(rayRed.z), 0.12) - incidentSlope) * projectionScale;
-      vec2 shiftGreen = (rayGreen.xy / max(abs(rayGreen.z), 0.12) - incidentSlope) * projectionScale;
-      vec2 shiftBlue = (rayBlue.xy / max(abs(rayBlue.z), 0.12) - incidentSlope) * projectionScale;
-      vec2 magnifiedUv = vec2(0.5) + (vScreenUv - vec2(0.5)) / uMagnification;
-      vec2 uvRed = clamp(magnifiedUv + shiftRed, vec2(0.002), vec2(0.998));
-      vec2 uvGreen = clamp(magnifiedUv + shiftGreen, vec2(0.002), vec2(0.998));
-      vec2 uvBlue = clamp(magnifiedUv + shiftBlue, vec2(0.002), vec2(0.998));
-      vec3 refractedScene = vec3(
-        texture2D(uScene, uvRed).r,
-        texture2D(uScene, uvGreen).g,
-        texture2D(uScene, uvBlue).b
-      );
-      float fresnel = pow(1.0 - abs(dot(-incident, lensNormal)), 3.0);
-      float sceneLuma = dot(refractedScene, vec3(0.2126, 0.7152, 0.0722));
-      // Pre-composite the see-through view in monochrome so a colorful sticker
-      // beneath the film can never read as artwork printed on its backside.
-      color = mix(vec3(sceneLuma), uLensTint, 0.5 + fresnel * 0.08);
-      color += vec3(0.62, 0.76, 1.0) * specular * 0.22;
-      alpha = frontInk.a;
     }
 
     gl_FragColor = vec4(color, alpha * layerCoverage);
@@ -242,11 +197,6 @@ export class PeelRenderer {
   private readonly hitPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private readonly stateData: Uint8Array;
   private readonly stateTexture: THREE.DataTexture;
-  private readonly refractionTarget = new THREE.WebGLRenderTarget(1, 1, {
-    minFilter: THREE.LinearFilter,
-    magFilter: THREE.LinearFilter,
-    depthBuffer: true,
-  });
   private readonly materials: THREE.ShaderMaterial[] = [];
   private readonly stickerMeshes: THREE.Mesh[] = [];
   private readonly shadow: THREE.Mesh;
@@ -257,10 +207,6 @@ export class PeelRenderer {
   private resizeFrame = 0;
   private lastFpsTime = performance.now();
   private fpsFrames = 0;
-  // The transparent underside must refract the level beneath it, never a render
-  // of the same in-hand piece. Both faces of lifted and torn layers are excluded.
-  private readonly refractionExcludedMeshes: THREE.Mesh[] = [];
-  private lensActive = false;
   // Keep render resolution stable. Reallocating the WebGL drawing buffer mid-gesture
   // caused intermittent single-frame flashes on devices near the FPS thresholds.
   private readonly pixelRatio = Math.min(window.devicePixelRatio, 1.75);
@@ -272,7 +218,6 @@ export class PeelRenderer {
     private readonly simulation: PeelSimulation,
     artwork: HTMLImageElement,
     artworkAspect: number,
-    lensProfile: LensProfile = "bubble",
   ) {
     this.stickerHeight = this.stickerWidth / artworkAspect;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -306,11 +251,6 @@ export class PeelRenderer {
 
     const art = makeArtTexture(artwork);
     const geometry = new THREE.PlaneGeometry(this.stickerWidth, this.stickerHeight, 124, 100);
-    const lens = lensProfile === "prismatic"
-      ? { ior: 1.52, magnification: 1.16, dispersion: 0.018, tint: 0x9a78d6 }
-      : lensProfile === "bubble"
-        ? { ior: 1.46, magnification: 1.12, dispersion: 0.008, tint: 0x7937bd }
-        : { ior: 1.33, magnification: 1.04, dispersion: 0.002, tint: 0xbfc9dc };
     const layerPasses = [
       { layer: 0, side: THREE.FrontSide, depthWrite: true, renderOrder: 0 },
       { layer: 1, side: THREE.FrontSide, depthWrite: false, renderOrder: 1 },
@@ -322,14 +262,10 @@ export class PeelRenderer {
     for (const pass of layerPasses) {
       const uniforms: PeelUniforms = {
         uArt: { value: art },
-        uScene: { value: this.refractionTarget.texture },
         uState: { value: this.stateTexture },
         uLayer: { value: pass.layer },
-        uIor: { value: lens.ior },
-        uMagnification: { value: lens.magnification },
-        uDispersion: { value: lens.dispersion },
-        uLensTint: { value: new THREE.Color(lens.tint) },
-        uScreenAspect: { value: 1 },
+        uFilmColor: { value: new THREE.Color(0xf05fa8) },
+        uLiftedOpacity: { value: 0.5 },
         uGrab: { value: new THREE.Vector2(-2.1, 0) },
         uPointer: { value: new THREE.Vector2(-2.1, 0) },
         uDirection: { value: new THREE.Vector2(1, 0) },
@@ -353,7 +289,6 @@ export class PeelRenderer {
       mesh.position.z = pass.layer * 0.002;
       this.materials.push(material);
       this.stickerMeshes.push(mesh);
-      if (pass.layer >= 2) this.refractionExcludedMeshes.push(mesh);
       this.scene.add(mesh);
     }
 
@@ -390,9 +325,7 @@ export class PeelRenderer {
     profile: CurlProfile,
     stress: number,
     tornOffset: Vec2 = { x: 0, y: 0 },
-    torn = false,
   ) {
-    this.lensActive = depth > 0.002 || torn;
     const worldGrab = this.uvToWorld(grab);
     const worldPointer = this.uvToWorld(pointer);
     const worldDirection = new THREE.Vector2(direction.x, direction.y).normalize();
@@ -418,6 +351,13 @@ export class PeelRenderer {
     for (const material of this.materials) material.wireframe = enabled;
   }
 
+  setLiftedTransparency(transparency: number) {
+    const opacity = 1 - THREE.MathUtils.clamp(transparency, 0, 0.95);
+    for (const material of this.materials) {
+      (material.uniforms as unknown as PeelUniforms).uLiftedOpacity.value = opacity;
+    }
+  }
+
   screenToSticker(clientX: number, clientY: number): Vec2 | null {
     const rect = this.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
@@ -437,7 +377,6 @@ export class PeelRenderer {
     this.shadow.geometry.dispose();
     (this.shadow.material as THREE.Material).dispose();
     this.stateTexture.dispose();
-    this.refractionTarget.dispose();
     this.renderer.dispose();
     this.domElement.remove();
   }
@@ -450,11 +389,6 @@ export class PeelRenderer {
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(width, height, false);
-    const lensResolutionScale = 0.75;
-    this.refractionTarget.setSize(
-      Math.max(1, Math.floor(width * this.pixelRatio * lensResolutionScale)),
-      Math.max(1, Math.floor(height * this.pixelRatio * lensResolutionScale)),
-    );
     this.camera.aspect = width / height;
     const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5));
     const margin = width < 680 ? 1.14 : 1.09;
@@ -463,21 +397,11 @@ export class PeelRenderer {
     this.camera.position.set(0, 0, Math.max(verticalDistance, horizontalDistance));
     this.camera.lookAt(0, 0, 0);
     this.camera.updateProjectionMatrix();
-    for (const material of this.materials) {
-      (material.uniforms as unknown as PeelUniforms).uScreenAspect.value = this.camera.aspect;
-    }
   }
 
   private animate = () => {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
-    if (this.lensActive && this.refractionExcludedMeshes.length > 0) {
-      for (const mesh of this.refractionExcludedMeshes) mesh.visible = false;
-      this.renderer.setRenderTarget(this.refractionTarget);
-      this.renderer.render(this.scene, this.camera);
-      for (const mesh of this.refractionExcludedMeshes) mesh.visible = true;
-      this.renderer.setRenderTarget(null);
-    }
     this.renderer.render(this.scene, this.camera);
     this.fpsFrames++;
     const now = performance.now();
