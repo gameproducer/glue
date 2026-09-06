@@ -57,7 +57,7 @@ export default function PeelExperience() {
         const asset = await loadStickerAsset("/octopus-sticker.webp");
         if (disposed || !hostRef.current) return;
         const simulation = new PeelSimulation(asset.width, asset.height, 0x5045454c, 4, asset.mask);
-        const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect);
+        const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect, "bubble");
         simulationRef.current = simulation;
         rendererRef.current = renderer;
         renderer.onFps = setFps;

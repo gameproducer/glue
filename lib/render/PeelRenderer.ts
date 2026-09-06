@@ -2,12 +2,18 @@ import * as THREE from "three";
 import type { CurlProfile, PeelSimulation, Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
+export type LensProfile = "clear" | "bubble" | "prismatic";
 
 type PeelUniforms = {
   uArt: { value: THREE.Texture };
-  uBack: { value: THREE.Texture };
+  uScene: { value: THREE.Texture };
   uState: { value: THREE.DataTexture };
   uLayer: { value: number };
+  uIor: { value: number };
+  uMagnification: { value: number };
+  uDispersion: { value: number };
+  uLensTint: { value: THREE.Color };
+  uScreenAspect: { value: number };
   uGrab: { value: THREE.Vector2 };
   uPointer: { value: THREE.Vector2 };
   uDirection: { value: THREE.Vector2 };
@@ -28,6 +34,9 @@ const vertexShader = /* glsl */ `
   uniform float uLayer;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
+  varying vec3 vNormalView;
+  varying vec3 vViewRay;
+  varying vec2 vScreenUv;
   varying float vCurl;
 
   const float PI = 3.141592653589793;
@@ -69,39 +78,93 @@ const vertexShader = /* glsl */ `
       p.z += 0.018;
     }
 
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    vec4 viewPosition = modelViewMatrix * vec4(p, 1.0);
+    vec4 clipPosition = projectionMatrix * viewPosition;
+    vViewRay = viewPosition.xyz;
+    vNormalView = normalize(normalMatrix * vNormalWorld);
+    vScreenUv = clipPosition.xy / clipPosition.w * 0.5 + 0.5;
+    gl_Position = clipPosition;
   }
 `;
 
 const fragmentShader = /* glsl */ `
   precision highp float;
   uniform sampler2D uArt;
-  uniform sampler2D uBack;
+  uniform sampler2D uScene;
   uniform sampler2D uState;
   uniform float uLayer;
+  uniform float uIor;
+  uniform float uMagnification;
+  uniform float uDispersion;
+  uniform vec3 uLensTint;
+  uniform float uScreenAspect;
   uniform float uStress;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
+  varying vec3 vNormalView;
+  varying vec3 vViewRay;
+  varying vec2 vScreenUv;
   varying float vCurl;
 
   void main() {
     vec4 state = texture2D(uState, vUv);
     float layerMask = uLayer < 0.5 ? state.r : (uLayer < 1.5 ? state.g : state.b);
-    if (layerMask < 0.32 || state.a < 0.2) discard;
+    float layerCoverage = smoothstep(0.02, 0.98, layerMask);
+    if (layerCoverage < 0.01 || state.a < 0.02) discard;
     vec4 frontInk = texture2D(uArt, vUv);
-    vec4 backPaper = texture2D(uBack, vUv);
-    vec4 ink = gl_FrontFacing ? frontInk : backPaper;
-    if (ink.a < 0.04) discard;
+    if (frontInk.a < 0.04) discard;
 
     vec3 normal = normalize(gl_FrontFacing ? vNormalWorld : -vNormalWorld);
     vec3 lightDirection = normalize(vec3(-0.38, 0.55, 0.74));
     float diffuse = max(dot(normal, lightDirection), 0.0);
     float grazing = pow(1.0 - abs(normal.z), 2.0);
     float specular = pow(max(dot(reflect(-lightDirection, normal), vec3(0.0, 0.0, 1.0)), 0.0), 26.0);
-    vec3 color = ink.rgb * (0.61 + diffuse * 0.43);
-    color += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
-    color = mix(color, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
-    gl_FragColor = vec4(color, ink.a);
+    vec3 color;
+    float alpha;
+
+    if (gl_FrontFacing) {
+      color = frontInk.rgb * (0.61 + diffuse * 0.43);
+      color += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
+      color = mix(color, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
+      alpha = frontInk.a;
+
+      // Released material settles close to the surface, but no longer reads as attached.
+      if (uLayer > 0.5 && uLayer < 1.5) {
+        color = mix(color, vec3(0.075, 0.045, 0.12), 0.46);
+        alpha *= 0.52;
+      }
+    } else {
+      // Baseline Snell refraction. The pre-lens scene is magnified as one image,
+      // then its optical axis swings with the curved underside normal.
+      vec3 incident = normalize(vViewRay);
+      vec3 lensNormal = normalize(-vNormalView);
+      float etaGreen = 1.0 / uIor;
+      float etaRed = 1.0 / max(1.001, uIor - uDispersion);
+      float etaBlue = 1.0 / (uIor + uDispersion);
+      vec3 rayRed = refract(incident, lensNormal, etaRed);
+      vec3 rayGreen = refract(incident, lensNormal, etaGreen);
+      vec3 rayBlue = refract(incident, lensNormal, etaBlue);
+      vec2 incidentSlope = incident.xy / max(abs(incident.z), 0.12);
+      vec2 projectionScale = vec2(1.0 / max(uScreenAspect, 0.2), 1.0) * 0.072;
+      vec2 shiftRed = (rayRed.xy / max(abs(rayRed.z), 0.12) - incidentSlope) * projectionScale;
+      vec2 shiftGreen = (rayGreen.xy / max(abs(rayGreen.z), 0.12) - incidentSlope) * projectionScale;
+      vec2 shiftBlue = (rayBlue.xy / max(abs(rayBlue.z), 0.12) - incidentSlope) * projectionScale;
+      vec2 magnifiedUv = vec2(0.5) + (vScreenUv - vec2(0.5)) / uMagnification;
+      vec2 uvRed = clamp(magnifiedUv + shiftRed, vec2(0.002), vec2(0.998));
+      vec2 uvGreen = clamp(magnifiedUv + shiftGreen, vec2(0.002), vec2(0.998));
+      vec2 uvBlue = clamp(magnifiedUv + shiftBlue, vec2(0.002), vec2(0.998));
+      vec3 refractedScene = vec3(
+        texture2D(uScene, uvRed).r,
+        texture2D(uScene, uvGreen).g,
+        texture2D(uScene, uvBlue).b
+      );
+      float fresnel = pow(1.0 - abs(dot(-incident, lensNormal)), 3.0);
+      color = mix(refractedScene, uLensTint, 0.07 + fresnel * 0.12);
+      color += vec3(0.62, 0.76, 1.0) * specular * 0.22;
+      alpha = frontInk.a * mix(0.76, 0.92, fresnel);
+    }
+
+    gl_FragColor = vec4(color, alpha * layerCoverage);
   }
 `;
 
@@ -110,32 +173,6 @@ function makeArtTexture(image: HTMLImageElement) {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
   texture.needsUpdate = true;
-  return texture;
-}
-
-function makeBackTexture() {
-  const size = 1024;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const context = canvas.getContext("2d")!;
-  const paper = context.createLinearGradient(100, 80, 900, 940);
-  paper.addColorStop(0, "#fffdf8");
-  paper.addColorStop(0.5, "#e7dfd4");
-  paper.addColorStop(1, "#c9bcad");
-  context.fillStyle = paper;
-  context.fillRect(0, 0, size, size);
-  context.globalAlpha = 0.16;
-  context.strokeStyle = "#83776b";
-  context.lineWidth = 2;
-  for (let y = 24; y < size; y += 15) {
-    context.beginPath();
-    context.moveTo(0, y);
-    context.bezierCurveTo(260, y + 12, 720, y - 11, size, y + 4);
-    context.stroke();
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
   return texture;
 }
 
@@ -194,6 +231,11 @@ export class PeelRenderer {
   private readonly hitPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private readonly stateData: Uint8Array;
   private readonly stateTexture: THREE.DataTexture;
+  private readonly refractionTarget = new THREE.WebGLRenderTarget(1, 1, {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  });
   private readonly materials: THREE.ShaderMaterial[] = [];
   private readonly stickerMeshes: THREE.Mesh[] = [];
   private readonly shadow: THREE.Mesh;
@@ -204,7 +246,11 @@ export class PeelRenderer {
   private resizeFrame = 0;
   private lastFpsTime = performance.now();
   private fpsFrames = 0;
-  private pixelRatio = Math.min(window.devicePixelRatio, 2);
+  private backLensMesh: THREE.Mesh | null = null;
+  private lensActive = false;
+  // Keep render resolution stable. Reallocating the WebGL drawing buffer mid-gesture
+  // caused intermittent single-frame flashes on devices near the FPS thresholds.
+  private readonly pixelRatio = Math.min(window.devicePixelRatio, 1.75);
   private disposed = false;
   onFps?: (fps: number) => void;
 
@@ -213,6 +259,7 @@ export class PeelRenderer {
     private readonly simulation: PeelSimulation,
     artwork: HTMLImageElement,
     artworkAspect: number,
+    lensProfile: LensProfile = "bubble",
   ) {
     this.stickerHeight = this.stickerWidth / artworkAspect;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -238,19 +285,36 @@ export class PeelRenderer {
     this.stateData = new Uint8Array(simulation.width * simulation.height * 4);
     simulation.writeTexture(this.stateData);
     this.stateTexture = new THREE.DataTexture(this.stateData, simulation.width, simulation.height, THREE.RGBAFormat);
+    // The channels identify layers, while interpolation supplies sub-cell coverage
+    // so diagonal release fronts do not expose the simulation grid as stair steps.
     this.stateTexture.minFilter = THREE.LinearFilter;
     this.stateTexture.magFilter = THREE.LinearFilter;
     this.stateTexture.needsUpdate = true;
 
     const art = makeArtTexture(artwork);
-    const back = makeBackTexture();
     const geometry = new THREE.PlaneGeometry(this.stickerWidth, this.stickerHeight, 124, 100);
-    for (let layer = 0; layer < 3; layer++) {
+    const lens = lensProfile === "prismatic"
+      ? { ior: 1.52, magnification: 1.16, dispersion: 0.018, tint: 0x9a78d6 }
+      : lensProfile === "bubble"
+        ? { ior: 1.46, magnification: 1.12, dispersion: 0.008, tint: 0x7250a8 }
+        : { ior: 1.33, magnification: 1.04, dispersion: 0.002, tint: 0xbfc9dc };
+    const layerPasses = [
+      { layer: 0, side: THREE.FrontSide, depthWrite: true, renderOrder: 0, isLens: false },
+      { layer: 1, side: THREE.FrontSide, depthWrite: false, renderOrder: 1, isLens: false },
+      { layer: 2, side: THREE.BackSide, depthWrite: false, renderOrder: 2, isLens: true },
+      { layer: 2, side: THREE.FrontSide, depthWrite: true, renderOrder: 3, isLens: false },
+    ] as const;
+    for (const pass of layerPasses) {
       const uniforms: PeelUniforms = {
         uArt: { value: art },
-        uBack: { value: back },
+        uScene: { value: this.refractionTarget.texture },
         uState: { value: this.stateTexture },
-        uLayer: { value: layer },
+        uLayer: { value: pass.layer },
+        uIor: { value: lens.ior },
+        uMagnification: { value: lens.magnification },
+        uDispersion: { value: lens.dispersion },
+        uLensTint: { value: new THREE.Color(lens.tint) },
+        uScreenAspect: { value: 1 },
         uGrab: { value: new THREE.Vector2(-2.1, 0) },
         uPointer: { value: new THREE.Vector2(-2.1, 0) },
         uDirection: { value: new THREE.Vector2(1, 0) },
@@ -264,15 +328,16 @@ export class PeelRenderer {
         vertexShader,
         fragmentShader,
         transparent: true,
-        side: THREE.DoubleSide,
-        depthWrite: true,
+        side: pass.side,
+        depthWrite: pass.depthWrite,
         depthTest: true,
       });
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.renderOrder = layer;
-      mesh.position.z = layer * 0.002;
+      mesh.renderOrder = pass.renderOrder;
+      mesh.position.z = pass.layer * 0.002;
       this.materials.push(material);
       this.stickerMeshes.push(mesh);
+      if (pass.isLens) this.backLensMesh = mesh;
       this.scene.add(mesh);
     }
 
@@ -302,6 +367,7 @@ export class PeelRenderer {
   }
 
   setPeel(grab: Vec2, pointer: Vec2, direction: Vec2, depth: number, profile: CurlProfile, stress: number) {
+    this.lensActive = depth > 0.002;
     const worldGrab = this.uvToWorld(grab);
     const worldPointer = this.uvToWorld(pointer);
     const worldDirection = new THREE.Vector2(direction.x, direction.y).normalize();
@@ -345,6 +411,7 @@ export class PeelRenderer {
     this.shadow.geometry.dispose();
     (this.shadow.material as THREE.Material).dispose();
     this.stateTexture.dispose();
+    this.refractionTarget.dispose();
     this.renderer.dispose();
     this.domElement.remove();
   }
@@ -357,6 +424,11 @@ export class PeelRenderer {
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(width, height, false);
+    const lensResolutionScale = 0.75;
+    this.refractionTarget.setSize(
+      Math.max(1, Math.floor(width * this.pixelRatio * lensResolutionScale)),
+      Math.max(1, Math.floor(height * this.pixelRatio * lensResolutionScale)),
+    );
     this.camera.aspect = width / height;
     const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5));
     const margin = width < 680 ? 1.14 : 1.09;
@@ -365,27 +437,27 @@ export class PeelRenderer {
     this.camera.position.set(0, 0, Math.max(verticalDistance, horizontalDistance));
     this.camera.lookAt(0, 0, 0);
     this.camera.updateProjectionMatrix();
+    for (const material of this.materials) {
+      (material.uniforms as unknown as PeelUniforms).uScreenAspect.value = this.camera.aspect;
+    }
   }
 
   private animate = () => {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
+    if (this.lensActive && this.backLensMesh) {
+      this.backLensMesh.visible = false;
+      this.renderer.setRenderTarget(this.refractionTarget);
+      this.renderer.render(this.scene, this.camera);
+      this.backLensMesh.visible = true;
+      this.renderer.setRenderTarget(null);
+    }
     this.renderer.render(this.scene, this.camera);
     this.fpsFrames++;
     const now = performance.now();
     if (now - this.lastFpsTime > 650) {
       const fps = Math.round(this.fpsFrames * 1000 / (now - this.lastFpsTime));
       this.onFps?.(fps);
-      const ceiling = Math.min(window.devicePixelRatio, 2);
-      if (fps < 46 && this.pixelRatio > 1) {
-        this.pixelRatio = Math.max(1, this.pixelRatio - 0.25);
-        this.renderer.setPixelRatio(this.pixelRatio);
-        this.resize();
-      } else if (fps > 58 && this.pixelRatio < ceiling) {
-        this.pixelRatio = Math.min(ceiling, this.pixelRatio + 0.1);
-        this.renderer.setPixelRatio(this.pixelRatio);
-        this.resize();
-      }
       this.fpsFrames = 0;
       this.lastFpsTime = now;
     }
