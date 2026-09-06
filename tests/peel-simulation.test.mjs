@@ -95,3 +95,25 @@ test("crossing the tear threshold detaches the lifted piece until release", () =
   assert.equal(simulation.snapshot().failed, true);
   assert.ok(simulation.state.some((value) => value === Cell.torn));
 });
+
+test("a sudden release avalanche tears at the smaller previous front", () => {
+  const width = 72;
+  const height = 36;
+  const mask = rectangleMask(width, height, 3, 68, 6, 29);
+  const simulation = new PeelSimulation(width, height, 41, 4, mask, 0.9);
+
+  simulation.begin({ x: 0.01, y: 0.5 }, 100);
+  simulation.drag({ x: 0.16, y: 0.5 }, 420);
+  assert.equal(simulation.end(true), true);
+  const releasedBeforeJump = simulation.state.filter((value) => value === Cell.released).length;
+  assert.ok(releasedBeforeJump > 8);
+
+  simulation.begin({ x: 0.08, y: 0.5 }, 700);
+  simulation.drag({ x: 0.96, y: 0.5 }, 760);
+
+  const tornCells = simulation.state.filter((value) => value === Cell.torn).length;
+  assert.equal(simulation.snapshot().torn, true);
+  assert.ok(tornCells >= releasedBeforeJump * 0.9);
+  assert.ok(tornCells < simulation.state.length * 0.35);
+  assert.ok(simulation.state.some((value) => value === Cell.adhered));
+});

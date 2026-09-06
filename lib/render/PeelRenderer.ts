@@ -167,9 +167,12 @@ const fragmentShader = /* glsl */ `
         texture2D(uScene, uvBlue).b
       );
       float fresnel = pow(1.0 - abs(dot(-incident, lensNormal)), 3.0);
-      color = mix(refractedScene, uLensTint, 0.66 + fresnel * 0.08);
+      float sceneLuma = dot(refractedScene, vec3(0.2126, 0.7152, 0.0722));
+      // Pre-composite the see-through view in monochrome so a colorful sticker
+      // beneath the film can never read as artwork printed on its backside.
+      color = mix(vec3(sceneLuma), uLensTint, 0.5 + fresnel * 0.08);
       color += vec3(0.62, 0.76, 1.0) * specular * 0.22;
-      alpha = frontInk.a * 0.5;
+      alpha = frontInk.a;
     }
 
     gl_FragColor = vec4(color, alpha * layerCoverage);

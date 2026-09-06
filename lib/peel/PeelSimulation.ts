@@ -42,6 +42,7 @@ export class PeelSimulation {
 
   private readonly initialState: Uint8Array;
   private readonly gestureBase: Uint8Array;
+  private readonly tearCandidate: Uint8Array;
   private readonly visited: Uint8Array;
   private readonly queue: Int32Array;
   private totalCells = 0;
@@ -85,6 +86,7 @@ export class PeelSimulation {
     this.state = new Uint8Array(count);
     this.initialState = new Uint8Array(count);
     this.gestureBase = new Uint8Array(count);
+    this.tearCandidate = new Uint8Array(count);
     this.visited = new Uint8Array(count);
     this.queue = new Int32Array(count);
     this.adhesion = new Float32Array(count);
@@ -182,7 +184,29 @@ export class PeelSimulation {
     if (pullDistance < 0.001) return;
     this.direction = { x: dx / pullDistance, y: dy / pullDistance };
     this.frontDepth = this.calcFrontDepth(pullDistance);
+    const previousPendingCells = this.pendingNewCells;
+    const previousLiftedCells = this.liftedCells;
+    let tearCandidateCells = 0;
+    this.tearCandidate.fill(0);
+    for (let index = 0; index < this.state.length; index++) {
+      const wasHeld = this.state[index] === Cell.lifted;
+      const wasReleasedAtGestureStart = previousLiftedCells === 0 && this.gestureBase[index] === Cell.released;
+      if (wasHeld || wasReleasedAtGestureStart) {
+        this.tearCandidate[index] = 1;
+        tearCandidateCells++;
+      }
+    }
     const { frontCells, averageAdhesion } = this.rebuildLifted();
+
+    // A large one-frame expansion is a release avalanche. It is treated as a
+    // fracture at the previous front, rather than allowing a small held region
+    // to pull nearly the entire sticker free instantaneously.
+    const gainedCells = Math.max(0, this.pendingNewCells - previousPendingCells);
+    const absoluteGain = gainedCells / Math.max(1, this.totalCells);
+    const relativeGain = gainedCells / Math.max(this.totalCells * 0.04, tearCandidateCells);
+    const areaGainLoad = clamp((absoluteGain - 0.08) / 0.42);
+    const expansionLoad = clamp((relativeGain - 0.8) / 2.2);
+    const releaseShock = Math.max(areaGainLoad, expansionLoad);
 
     const frameDistance = Math.hypot((point.x - this.lastPointer.x) * this.aspect, point.y - this.lastPointer.y);
     const elapsed = this.lastTime > 0 && time > this.lastTime ? (time - this.lastTime) / 1000 : 1 / 60;
@@ -197,11 +221,15 @@ export class PeelSimulation {
     this.lastTime = time;
 
     const minimumPiece = Math.max(8, Math.round(this.totalCells * 0.002));
-    if (
+    const avalancheTear = releaseShock >= this.tearThreshold && tearCandidateCells >= minimumPiece;
+    const stressTear = (
       this.stress >= this.tearThreshold
       && this.liftedCells >= minimumPiece
       && this.liftedCells < this.totalCells * 0.985
-    ) {
+    );
+    if (avalancheTear) {
+      this.triggerTear(this.tearCandidate);
+    } else if (stressTear) {
       this.triggerTear();
     }
   }
@@ -284,10 +312,11 @@ export class PeelSimulation {
     this.pulling = true;
   }
 
-  private triggerTear() {
+  private triggerTear(detachedMask?: Uint8Array) {
     let detachedReleasedCells = 0;
     for (let index = 0; index < this.state.length; index++) {
-      if (this.state[index] === Cell.lifted) {
+      const shouldDetach = detachedMask ? detachedMask[index] !== 0 : this.state[index] === Cell.lifted;
+      if (shouldDetach) {
         if (this.gestureBase[index] === Cell.released) detachedReleasedCells++;
         this.state[index] = Cell.torn;
       } else {
