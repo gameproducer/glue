@@ -254,7 +254,9 @@ export class PeelRenderer {
   private resizeFrame = 0;
   private lastFpsTime = performance.now();
   private fpsFrames = 0;
-  private readonly backLensMeshes: THREE.Mesh[] = [];
+  // The transparent underside must refract the level beneath it, never a render
+  // of the same in-hand piece. Both faces of lifted and torn layers are excluded.
+  private readonly refractionExcludedMeshes: THREE.Mesh[] = [];
   private lensActive = false;
   // Keep render resolution stable. Reallocating the WebGL drawing buffer mid-gesture
   // caused intermittent single-frame flashes on devices near the FPS thresholds.
@@ -307,12 +309,12 @@ export class PeelRenderer {
         ? { ior: 1.46, magnification: 1.12, dispersion: 0.008, tint: 0x7937bd }
         : { ior: 1.33, magnification: 1.04, dispersion: 0.002, tint: 0xbfc9dc };
     const layerPasses = [
-      { layer: 0, side: THREE.FrontSide, depthWrite: true, renderOrder: 0, isLens: false },
-      { layer: 1, side: THREE.FrontSide, depthWrite: false, renderOrder: 1, isLens: false },
-      { layer: 2, side: THREE.BackSide, depthWrite: false, renderOrder: 2, isLens: true },
-      { layer: 2, side: THREE.FrontSide, depthWrite: true, renderOrder: 3, isLens: false },
-      { layer: 3, side: THREE.BackSide, depthWrite: false, renderOrder: 4, isLens: true },
-      { layer: 3, side: THREE.FrontSide, depthWrite: true, renderOrder: 5, isLens: false },
+      { layer: 0, side: THREE.FrontSide, depthWrite: true, renderOrder: 0 },
+      { layer: 1, side: THREE.FrontSide, depthWrite: false, renderOrder: 1 },
+      { layer: 2, side: THREE.BackSide, depthWrite: false, renderOrder: 2 },
+      { layer: 2, side: THREE.FrontSide, depthWrite: true, renderOrder: 3 },
+      { layer: 3, side: THREE.BackSide, depthWrite: false, renderOrder: 4 },
+      { layer: 3, side: THREE.FrontSide, depthWrite: true, renderOrder: 5 },
     ] as const;
     for (const pass of layerPasses) {
       const uniforms: PeelUniforms = {
@@ -348,7 +350,7 @@ export class PeelRenderer {
       mesh.position.z = pass.layer * 0.002;
       this.materials.push(material);
       this.stickerMeshes.push(mesh);
-      if (pass.isLens) this.backLensMeshes.push(mesh);
+      if (pass.layer >= 2) this.refractionExcludedMeshes.push(mesh);
       this.scene.add(mesh);
     }
 
@@ -466,11 +468,11 @@ export class PeelRenderer {
   private animate = () => {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
-    if (this.lensActive && this.backLensMeshes.length > 0) {
-      for (const mesh of this.backLensMeshes) mesh.visible = false;
+    if (this.lensActive && this.refractionExcludedMeshes.length > 0) {
+      for (const mesh of this.refractionExcludedMeshes) mesh.visible = false;
       this.renderer.setRenderTarget(this.refractionTarget);
       this.renderer.render(this.scene, this.camera);
-      for (const mesh of this.backLensMeshes) mesh.visible = true;
+      for (const mesh of this.refractionExcludedMeshes) mesh.visible = true;
       this.renderer.setRenderTarget(null);
     }
     this.renderer.render(this.scene, this.camera);
