@@ -542,6 +542,18 @@ export default function PeelExperience() {
           sampleId={snapshot.physicsSample}
           scaleMax={RELEASE_JUMP_CONTROL_MAX}
         />
+        <button
+          type="button"
+          className="log-eraser-button"
+          onClick={clearDiagnosticLog}
+          aria-label="Clear diagnostic log and start a new recording"
+          title="Clear diagnostic log"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m14.7 4.3 5 5a2 2 0 0 1 0 2.8l-7.2 7.2H7.8L3.3 14.8a2 2 0 0 1 0-2.8l8.6-7.7a2 2 0 0 1 2.8 0Z" />
+            <path d="m8.2 19.3 7.8-7.8M12.5 19.3H21" />
+          </svg>
+        </button>
         <p className="interaction-hint" aria-live="polite">{status}</p>
 
         {settingsOpen && (
