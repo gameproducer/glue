@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type CurlProfile, PeelSimulation, type PeelSnapshot } from "@/lib/peel/PeelSimulation";
+import {
+  type CurlProfile,
+  type PeelDiagnostics,
+  PeelSimulation,
+  type PeelSnapshot,
+  type Vec2,
+} from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 
@@ -41,6 +47,35 @@ const emptySnapshot: PeelSnapshot = {
   direction: { x: 1, y: 0 },
   frontDepth: 0,
 };
+
+type DiagnosticEvent = {
+  sequence: number;
+  elapsedMs: number;
+  type: string;
+  point: Vec2 | null;
+  profile: CurlProfile;
+  snapshot: PeelSnapshot;
+  solver: PeelDiagnostics;
+  details: Record<string, string | number | boolean | null>;
+};
+
+function encodeStateRuns(state: Uint8Array) {
+  const runs: Array<[number, number]> = [];
+  if (state.length === 0) return runs;
+  let value = state[0];
+  let length = 1;
+  for (let index = 1; index < state.length; index++) {
+    if (state[index] === value) {
+      length++;
+    } else {
+      runs.push([value, length]);
+      value = state[index];
+      length = 1;
+    }
+  }
+  runs.push([value, length]);
+  return runs;
+}
 
 function RollingSignalChart({
   label,
@@ -99,6 +134,10 @@ export default function PeelExperience() {
   const activePointer = useRef<number | null>(null);
   const textureFrame = useRef(0);
   const profileRef = useRef<CurlProfile>("cylinder");
+  const diagnosticEvents = useRef<DiagnosticEvent[]>([]);
+  const diagnosticStartedAt = useRef(0);
+  const diagnosticStartedWallClock = useRef("");
+  const diagnosticSessionId = useRef("");
   const [profile, setProfile] = useState<CurlProfile>("cylinder");
   const [debug, setDebug] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -111,6 +150,28 @@ export default function PeelExperience() {
   const [miss, setMiss] = useState(false);
   const [webglError, setWebglError] = useState(false);
   const [snapshot, setSnapshot] = useState<PeelSnapshot>(emptySnapshot);
+  const [logStatus, setLogStatus] = useState("Recording locally");
+
+  const recordDiagnostic = useCallback((
+    type: string,
+    point: Vec2 | null = null,
+    details: Record<string, string | number | boolean | null> = {},
+  ) => {
+    const simulation = simulationRef.current;
+    if (!simulation) return;
+    const now = performance.now();
+    if (diagnosticStartedAt.current === 0) diagnosticStartedAt.current = now;
+    diagnosticEvents.current.push({
+      sequence: diagnosticEvents.current.length,
+      elapsedMs: Number((now - diagnosticStartedAt.current).toFixed(3)),
+      type,
+      point: point ? { ...point } : null,
+      profile: profileRef.current,
+      snapshot: simulation.snapshot(),
+      solver: simulation.diagnostics(),
+      details,
+    });
+  }, []);
 
   const refresh = useCallback((updateTexture = true) => {
     const simulation = simulationRef.current;
@@ -169,6 +230,16 @@ export default function PeelExperience() {
         renderer.setLiftedTransparency(savedTransparency);
         simulationRef.current = simulation;
         rendererRef.current = renderer;
+        diagnosticEvents.current = [];
+        diagnosticStartedAt.current = performance.now();
+        diagnosticStartedWallClock.current = new Date().toISOString();
+        diagnosticSessionId.current = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        setLogStatus("Recording locally");
+        recordDiagnostic("session_start", null, {
+          gridWidth: simulation.width,
+          gridHeight: simulation.height,
+          seed: "0x5045454c",
+        });
         renderer.onFps = setFps;
         const canvas = renderer.domElement;
         canvas.setAttribute("aria-label", "Interactive octopus sticker. Sweep from an exposed edge through the sticker to peel it.");
@@ -184,7 +255,15 @@ export default function PeelExperience() {
         const onPointerDown = (event: PointerEvent) => {
           if (activePointer.current !== null) return;
           const point = renderer.screenToSticker(event.clientX, event.clientY);
-          if (!point || !simulation.begin(point, performance.now())) return;
+          const simulationTime = performance.now();
+          const accepted = point ? simulation.begin(point, simulationTime) : false;
+          recordDiagnostic("pointer_down", point, {
+            accepted,
+            simulationTime,
+            pointerId: event.pointerId,
+            pointerType: event.pointerType,
+          });
+          if (!point || !accepted) return;
           event.preventDefault();
           activePointer.current = event.pointerId;
           canvas.setPointerCapture(event.pointerId);
@@ -197,7 +276,12 @@ export default function PeelExperience() {
           if (!point) return;
           event.preventDefault();
           const wasTorn = simulation.snapshot().torn;
-          simulation.drag(point, performance.now());
+          const simulationTime = performance.now();
+          simulation.drag(point, simulationTime);
+          recordDiagnostic("pointer_move", point, {
+            simulationTime,
+            pointerId: event.pointerId,
+          });
           const next = simulation.snapshot();
           if (next.pulling) setStarted(true);
           renderer.setPeel(
@@ -220,6 +304,13 @@ export default function PeelExperience() {
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const hadGrab = simulation.snapshot().pulling;
           const accepted = simulation.end(commit);
+          const point = renderer.screenToSticker(event.clientX, event.clientY);
+          recordDiagnostic(commit ? "pointer_up" : "pointer_cancel", point, {
+            accepted,
+            commit,
+            hadGrab,
+            pointerId: event.pointerId,
+          });
           refresh(true);
           if (!accepted && !hadGrab) {
             setMiss(true);
@@ -258,12 +349,13 @@ export default function PeelExperience() {
       if (textureFrame.current) cancelAnimationFrame(textureFrame.current);
       teardown();
     };
-  }, [refresh]);
+  }, [recordDiagnostic, refresh]);
 
   const toggleProfile = () => {
     const next = profile === "cylinder" ? "cone" : "cylinder";
     profileRef.current = next;
     setProfile(next);
+    recordDiagnostic("curl_profile", null, { profile: next });
     refresh(false);
   };
 
@@ -277,6 +369,7 @@ export default function PeelExperience() {
     const next = Math.max(0, Math.min(TENSION_CONTROL_MAX, value));
     setTearThreshold(next);
     simulationRef.current?.setTearThreshold(next);
+    recordDiagnostic("tension_threshold", null, { value: next });
     try {
       window.localStorage.setItem(tearThresholdStorageKey, next.toFixed(2));
     } catch {
@@ -288,6 +381,7 @@ export default function PeelExperience() {
     const next = Math.max(0, Math.min(RELEASE_JUMP_CONTROL_MAX, value));
     setReleaseJumpThreshold(next);
     simulationRef.current?.setReleaseJumpThreshold(next);
+    recordDiagnostic("area_jump_threshold", null, { value: next });
     try {
       window.localStorage.setItem(releaseJumpStorageKey, next.toFixed(2));
     } catch {
@@ -299,6 +393,7 @@ export default function PeelExperience() {
     const next = Math.max(0.05, Math.min(0.9, value));
     setLiftedTransparency(next);
     rendererRef.current?.setLiftedTransparency(next);
+    recordDiagnostic("lift_transparency", null, { value: next });
     try {
       window.localStorage.setItem(liftedTransparencyStorageKey, next.toFixed(2));
     } catch {
@@ -308,9 +403,88 @@ export default function PeelExperience() {
 
   const reset = () => {
     simulationRef.current?.reset();
+    recordDiagnostic("level_reset");
     setStarted(false);
     setMiss(false);
     refresh(true);
+  };
+
+  const buildDiagnosticLog = () => {
+    const simulation = simulationRef.current;
+    if (!simulation) return "";
+    return JSON.stringify({
+      schema: "peel-diagnostic-log-v1",
+      sessionId: diagnosticSessionId.current,
+      startedAt: diagnosticStartedWallClock.current,
+      exportedAt: new Date().toISOString(),
+      durationMs: Number((performance.now() - diagnosticStartedAt.current).toFixed(3)),
+      level: {
+        id: ACTIVE_LEVEL.id,
+        name: ACTIVE_LEVEL.name,
+        artwork: ACTIVE_LEVEL.artwork,
+        seed: "0x5045454c",
+        gridWidth: simulation.width,
+        gridHeight: simulation.height,
+      },
+      settings: {
+        curlProfile: profileRef.current,
+        tensionThreshold: simulation.snapshot().tearThreshold,
+        areaJumpThreshold: simulation.snapshot().releaseJumpThreshold,
+        liftedTransparency,
+      },
+      environment: {
+        userAgent: navigator.userAgent,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      },
+      eventCount: diagnosticEvents.current.length,
+      finalSnapshot: simulation.snapshot(),
+      finalSolver: simulation.diagnostics(),
+      stateLegend: { 0: "outside", 1: "adhered", 2: "released", 3: "lifted", 4: "torn" },
+      finalStateRle: encodeStateRuns(simulation.state),
+      events: diagnosticEvents.current,
+    }, null, 2);
+  };
+
+  const copyDiagnosticLog = async () => {
+    const log = buildDiagnosticLog();
+    if (!log) return;
+    try {
+      await navigator.clipboard.writeText(log);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = log;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    setLogStatus("Copied — paste it into this chat");
+  };
+
+  const downloadDiagnosticLog = () => {
+    const log = buildDiagnosticLog();
+    if (!log) return;
+    const url = URL.createObjectURL(new Blob([log], { type: "application/json" }));
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    link.href = url;
+    link.download = `peel-diagnostic-${stamp}.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setLogStatus("Downloaded — attach the JSON here");
+  };
+
+  const clearDiagnosticLog = () => {
+    diagnosticEvents.current = [];
+    diagnosticStartedAt.current = performance.now();
+    diagnosticStartedWallClock.current = new Date().toISOString();
+    diagnosticSessionId.current = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setLogStatus("New recording started");
+    recordDiagnostic("session_start", null, { reason: "manual_clear" });
   };
 
   const percent = Math.min(100, Math.round(snapshot.progress * 100));
@@ -406,6 +580,16 @@ export default function PeelExperience() {
               />
             </label>
             <small>Autosaved for {ACTIVE_LEVEL.name}</small>
+            <section className="log-tools" aria-label="Diagnostic recording">
+              <header><span>Diagnostic log</span><output>{diagnosticEvents.current.length} events</output></header>
+              <p>Local only. Reproduce the fast release, then copy or download the complete trace.</p>
+              <div className="log-actions">
+                <button type="button" onClick={() => void copyDiagnosticLog()}>Copy log</button>
+                <button type="button" onClick={downloadDiagnosticLog}>Download JSON</button>
+                <button type="button" onClick={clearDiagnosticLog}>Clear</button>
+              </div>
+              <small role="status">{logStatus}</small>
+            </section>
           </aside>
         )}
 

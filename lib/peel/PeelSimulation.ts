@@ -9,6 +9,33 @@ export const Cell = {
 export type Vec2 = { x: number; y: number };
 export type CurlProfile = "cylinder" | "cone";
 
+export type PeelDiagnostics = {
+  current: {
+    totalCells: number;
+    releasedCells: number;
+    pendingNewCells: number;
+    liftedCells: number;
+    grabIndex: number;
+  };
+  lastStep: {
+    previousPendingCells: number;
+    pendingNewCells: number;
+    liftedCells: number;
+    gainedCells: number;
+    tearCandidateCells: number;
+    frontCells: number;
+    averageAdhesion: number;
+    pullDistance: number;
+    frameDistance: number;
+    elapsed: number;
+    speed: number;
+    targetStress: number;
+    minimumPiece: number;
+    avalancheTear: boolean;
+    stressTear: boolean;
+  };
+};
+
 export type PeelSnapshot = {
   moves: number;
   maxMoves: number;
@@ -33,6 +60,23 @@ export type PeelSnapshot = {
 };
 
 const clamp = (value: number, low = 0, high = 1) => Math.max(low, Math.min(high, value));
+const emptyDiagnosticStep = (): PeelDiagnostics["lastStep"] => ({
+  previousPendingCells: 0,
+  pendingNewCells: 0,
+  liftedCells: 0,
+  gainedCells: 0,
+  tearCandidateCells: 0,
+  frontCells: 0,
+  averageAdhesion: 0,
+  pullDistance: 0,
+  frameDistance: 0,
+  elapsed: 0,
+  speed: 0,
+  targetStress: 0,
+  minimumPiece: 0,
+  avalancheTear: false,
+  stressTear: false,
+});
 
 /** Connected moving-front solver based on the original Cocos2d-x GlueZone. */
 export class PeelSimulation {
@@ -71,6 +115,7 @@ export class PeelSimulation {
   private stress = 0;
   private areaJump = 0;
   private physicsSample = 0;
+  private lastDiagnosticStep = emptyDiagnosticStep();
   private lastPointer: Vec2 = { ...this.grab };
   private lastTime = 0;
 
@@ -149,6 +194,7 @@ export class PeelSimulation {
     this.stress = 0;
     this.areaJump = 0;
     this.physicsSample++;
+    this.lastDiagnosticStep = emptyDiagnosticStep();
   }
 
   begin(point: Vec2, time = 0) {
@@ -163,6 +209,7 @@ export class PeelSimulation {
     this.stress = 0;
     this.areaJump = 0;
     this.physicsSample++;
+    this.lastDiagnosticStep = emptyDiagnosticStep();
     this.grabIndex = -1;
     const seed = this.nearestAccessibleCell(point);
     if (seed >= 0) this.acquire(seed);
@@ -173,6 +220,7 @@ export class PeelSimulation {
     if (!this.tracking) return;
     this.areaJump = 0;
     this.physicsSample++;
+    this.lastDiagnosticStep = emptyDiagnosticStep();
 
     if (this.torn) {
       this.tornOffset = {
@@ -240,6 +288,23 @@ export class PeelSimulation {
       && this.liftedCells >= minimumPiece
       && this.liftedCells < this.totalCells * 0.985
     );
+    this.lastDiagnosticStep = {
+      previousPendingCells,
+      pendingNewCells: this.pendingNewCells,
+      liftedCells: this.liftedCells,
+      gainedCells,
+      tearCandidateCells,
+      frontCells,
+      averageAdhesion,
+      pullDistance,
+      frameDistance,
+      elapsed,
+      speed,
+      targetStress,
+      minimumPiece,
+      avalancheTear,
+      stressTear,
+    };
     if (avalancheTear) {
       this.triggerTear(this.tearCandidate);
     } else if (stressTear) {
@@ -303,6 +368,19 @@ export class PeelSimulation {
       pointer: { ...this.pointer },
       direction: { ...this.direction },
       frontDepth: this.frontDepth,
+    };
+  }
+
+  diagnostics(): PeelDiagnostics {
+    return {
+      current: {
+        totalCells: this.totalCells,
+        releasedCells: this.releasedCells,
+        pendingNewCells: this.pendingNewCells,
+        liftedCells: this.liftedCells,
+        grabIndex: this.grabIndex,
+      },
+      lastStep: { ...this.lastDiagnosticStep },
     };
   }
 
