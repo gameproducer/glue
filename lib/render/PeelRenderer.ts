@@ -117,12 +117,10 @@ const fragmentShader = /* glsl */ `
     alpha = frontInk.a;
 
     if (uLayer > 1.5) {
-      // Color disappears only on the backside once the held section has turned
-      // almost parallel to the surface. The front face and active curl stay printed.
+      // The front face stays printed; every visible backside fragment is the
+      // same monochrome pink film, including the curved transition.
       float viewingBackside = gl_FrontFacing ? 0.0 : 1.0;
-      float nearlyParallel = smoothstep(0.94, 0.995, -vNormalWorld.z)
-        * smoothstep(0.88, 0.98, vCurl);
-      float monochrome = viewingBackside * nearlyParallel;
+      float monochrome = viewingBackside;
       vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
       filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
       filmColor = mix(filmColor, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);

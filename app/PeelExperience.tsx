@@ -9,10 +9,12 @@ const ACTIVE_LEVEL = {
   id: "octopus-v1",
   name: "Octopus",
   artwork: "/octopus-sticker.webp",
-  tearThreshold: 0.72,
+  tearThreshold: 0.24,
   releaseJumpThreshold: 0.28,
   liftedTransparency: 0.5,
 } as const;
+const TENSION_CONTROL_MAX = 0.33;
+const RELEASE_JUMP_CONTROL_MAX = 0.33;
 const tearThresholdStorageKey = `peel.level.${ACTIVE_LEVEL.id}.tearThreshold`;
 const releaseJumpStorageKey = `peel.level.${ACTIVE_LEVEL.id}.releaseJumpThreshold`;
 const liftedTransparencyStorageKey = `peel.level.${ACTIVE_LEVEL.id}.liftedTransparency`;
@@ -125,8 +127,8 @@ export default function PeelExperience() {
         let savedJumpThreshold: number = ACTIVE_LEVEL.releaseJumpThreshold;
         let savedTransparency: number = ACTIVE_LEVEL.liftedTransparency;
         try {
-          savedThreshold = readSavedSetting(tearThresholdStorageKey, savedThreshold, 0.35, 0.98);
-          savedJumpThreshold = readSavedSetting(releaseJumpStorageKey, savedJumpThreshold, 0.1, 0.8);
+          savedThreshold = readSavedSetting(tearThresholdStorageKey, savedThreshold, 0, TENSION_CONTROL_MAX);
+          savedJumpThreshold = readSavedSetting(releaseJumpStorageKey, savedJumpThreshold, 0, RELEASE_JUMP_CONTROL_MAX);
           savedTransparency = readSavedSetting(liftedTransparencyStorageKey, savedTransparency, 0.05, 0.9);
         } catch {
           // Storage can be unavailable in locked-down browser contexts; the level default remains valid.
@@ -252,7 +254,7 @@ export default function PeelExperience() {
   };
 
   const changeTearThreshold = (value: number) => {
-    const next = Math.max(0.35, Math.min(0.98, value));
+    const next = Math.max(0, Math.min(TENSION_CONTROL_MAX, value));
     setTearThreshold(next);
     simulationRef.current?.setTearThreshold(next);
     try {
@@ -263,7 +265,7 @@ export default function PeelExperience() {
   };
 
   const changeReleaseJumpThreshold = (value: number) => {
-    const next = Math.max(0.1, Math.min(0.8, value));
+    const next = Math.max(0, Math.min(RELEASE_JUMP_CONTROL_MAX, value));
     setReleaseJumpThreshold(next);
     simulationRef.current?.setReleaseJumpThreshold(next);
     try {
@@ -339,8 +341,8 @@ export default function PeelExperience() {
               <div><span>Tension tear</span><output>{Math.round(tearThreshold * 100)}%</output></div>
               <input
                 type="range"
-                min="35"
-                max="98"
+                min="0"
+                max="33"
                 step="1"
                 value={Math.round(tearThreshold * 100)}
                 onChange={(event) => changeTearThreshold(Number(event.currentTarget.value) / 100)}
@@ -350,8 +352,8 @@ export default function PeelExperience() {
               <div><span>Area jump</span><output>{Math.round(releaseJumpThreshold * 100)}%</output></div>
               <input
                 type="range"
-                min="10"
-                max="80"
+                min="0"
+                max="33"
                 step="1"
                 value={Math.round(releaseJumpThreshold * 100)}
                 onChange={(event) => changeReleaseJumpThreshold(Number(event.currentTarget.value) / 100)}

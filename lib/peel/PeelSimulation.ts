@@ -84,8 +84,8 @@ export class PeelSimulation {
     this.height = height;
     this.aspect = width / height;
     this.maxMoves = maxMoves;
-    this.tearThreshold = clamp(tearThreshold, 0.05, 1);
-    this.releaseJumpThreshold = clamp(releaseJumpThreshold, 0.05, 1);
+    this.tearThreshold = clamp(tearThreshold);
+    this.releaseJumpThreshold = clamp(releaseJumpThreshold);
     const count = width * height;
     this.state = new Uint8Array(count);
     this.initialState = new Uint8Array(count);
@@ -305,11 +305,11 @@ export class PeelSimulation {
   }
 
   setTearThreshold(value: number) {
-    this.tearThreshold = clamp(value, 0.05, 1);
+    this.tearThreshold = clamp(value);
   }
 
   setReleaseJumpThreshold(value: number) {
-    this.releaseJumpThreshold = clamp(value, 0.05, 1);
+    this.releaseJumpThreshold = clamp(value);
   }
 
   private acquire(index: number) {

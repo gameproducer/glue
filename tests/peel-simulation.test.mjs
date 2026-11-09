@@ -153,3 +153,12 @@ test("release-jump tearing has an independent threshold", () => {
   assert.equal(simulation.snapshot().torn, false);
   assert.equal(simulation.snapshot().releaseJumpThreshold, 0.98);
 });
+
+test("tear controls accept zero as a deliberate threshold", () => {
+  const simulation = new PeelSimulation();
+  simulation.setTearThreshold(0);
+  simulation.setReleaseJumpThreshold(0);
+
+  assert.equal(simulation.snapshot().tearThreshold, 0);
+  assert.equal(simulation.snapshot().releaseJumpThreshold, 0);
+});
