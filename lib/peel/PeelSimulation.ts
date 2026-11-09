@@ -156,6 +156,8 @@ export class PeelSimulation {
     this.frontDepth = 0;
     this.stress = 0;
     this.grabIndex = -1;
+    const seed = this.nearestAccessibleCell(point);
+    if (seed >= 0) this.acquire(seed);
     return true;
   }
 
@@ -428,12 +430,38 @@ export class PeelSimulation {
     return -1;
   }
 
+  private nearestAccessibleCell(point: Vec2) {
+    const centerX = Math.round(point.x * (this.width - 1));
+    const centerY = Math.round(point.y * (this.height - 1));
+    const radius = 4;
+    let closest = -1;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    for (let oy = -radius; oy <= radius; oy++) {
+      for (let ox = -radius; ox <= radius; ox++) {
+        const x = centerX + ox;
+        const y = centerY + oy;
+        if (x < 0 || x >= this.width || y < 0 || y >= this.height) continue;
+        const distance = ox * ox + oy * oy;
+        if (distance > radius * radius || distance >= closestDistance) continue;
+        const index = y * this.width + x;
+        if (!this.isAccessible(index)) continue;
+        closest = index;
+        closestDistance = distance;
+      }
+    }
+    return closest;
+  }
+
   private isAccessible(index: number) {
     if (this.state[index] === Cell.released) return true;
     if (this.state[index] !== Cell.adhered) return false;
     const x = index % this.width;
     const y = Math.floor(index / this.width);
-    const neighbors = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    const neighbors = [
+      [-1, -1], [0, -1], [1, -1],
+      [-1, 0],             [1, 0],
+      [-1, 1],  [0, 1],   [1, 1],
+    ];
     for (const [ox, oy] of neighbors) {
       const nx = x + ox;
       const ny = y + oy;

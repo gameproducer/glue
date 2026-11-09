@@ -17,6 +17,25 @@ test("fallback sticker mask preserves cutouts", () => {
   assert.equal(PeelSimulation.contains(0.01, 0.01), false);
 });
 
+test("any outer contour can be grabbed without first crossing it", () => {
+  const width = 40;
+  const height = 30;
+  const mask = rectangleMask(width, height, 5, 34, 4, 25);
+  const edgePoints = [
+    { x: 5 / (width - 1), y: 15 / (height - 1) },
+    { x: 34 / (width - 1), y: 15 / (height - 1) },
+    { x: 20 / (width - 1), y: 4 / (height - 1) },
+    { x: 20 / (width - 1), y: 25 / (height - 1) },
+    { x: 5 / (width - 1), y: 4 / (height - 1) },
+  ];
+
+  for (const point of edgePoints) {
+    const simulation = new PeelSimulation(width, height, 17, 4, mask);
+    assert.equal(simulation.begin(point, 100), true);
+    assert.equal(simulation.snapshot().pulling, true);
+  }
+});
+
 test("a sweep only peels the connected component reached from its edge", () => {
   const width = 48;
   const height = 28;

@@ -38,6 +38,38 @@ const emptySnapshot: PeelSnapshot = {
   frontDepth: 0,
 };
 
+function TensionChart({ value, threshold }: { value: number; threshold: number }) {
+  const currentValue = useRef(value);
+  const [samples, setSamples] = useState<number[]>(() => Array(51).fill(0));
+
+  useEffect(() => {
+    currentValue.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setSamples((history) => [...history.slice(-50), currentValue.current]);
+    }, 100);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const points = samples
+    .map((sample, index) => `${(index / (samples.length - 1)) * 160},${64 - Math.min(1, sample) * 64}`)
+    .join(" ");
+  const thresholdY = 64 - threshold * 64;
+
+  return (
+    <aside className="tension-chart" aria-label={`Tension over the last five seconds. Current tension ${Math.round(value * 100)} percent.`}>
+      <div><span>Tension · 5 sec</span><output>{Math.round(value * 100)}%</output></div>
+      <svg viewBox="0 0 160 64" role="img" aria-hidden="true">
+        <line className="tension-threshold" x1="0" x2="160" y1={thresholdY} y2={thresholdY} />
+        <polygon className="tension-area" points={`0,64 ${points} 160,64`} />
+        <polyline className="tension-line" points={points} />
+      </svg>
+    </aside>
+  );
+}
+
 export default function PeelExperience() {
   const hostRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<PeelSimulation | null>(null);
@@ -298,13 +330,7 @@ export default function PeelExperience() {
             <span>Open this page in a browser with WebGL enabled.</span>
           </div>
         )}
-        <div className="meter" aria-label={`Tension ${Math.round(snapshot.stress * 100)} percent`}>
-          <span>Tension</span>
-          <i>
-            <b style={{ transform: `scaleX(${Math.min(1, snapshot.stress)})` }} />
-            <em style={{ left: `${tearThreshold * 100}%` }} aria-hidden="true" />
-          </i>
-        </div>
+        <TensionChart value={snapshot.stress} threshold={tearThreshold} />
         <p className="interaction-hint" aria-live="polite">{status}</p>
 
         {settingsOpen && (

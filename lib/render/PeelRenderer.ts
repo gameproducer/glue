@@ -110,18 +110,26 @@ const fragmentShader = /* glsl */ `
     vec3 color;
     float alpha;
 
+    vec3 printedColor = frontInk.rgb * (0.61 + diffuse * 0.43);
+    printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
+    printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
+    color = printedColor;
+    alpha = frontInk.a;
+
     if (uLayer > 1.5) {
-      // The lifted sheet has no printed face: both geometric sides are the same
-      // translucent pink film. Artwork contributes only its outer contour/alpha.
-      color = uFilmColor * (0.78 + diffuse * 0.14);
-      color += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
-      color = mix(color, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
-      alpha = frontInk.a * uLiftedOpacity * mix(0.92, 1.0, grazing);
+      // Color disappears only on the backside once the held section has turned
+      // almost parallel to the surface. The front face and active curl stay printed.
+      float viewingBackside = gl_FrontFacing ? 0.0 : 1.0;
+      float nearlyParallel = smoothstep(0.94, 0.995, -vNormalWorld.z)
+        * smoothstep(0.88, 0.98, vCurl);
+      float monochrome = viewingBackside * nearlyParallel;
+      vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
+      filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
+      filmColor = mix(filmColor, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
+      float filmAlpha = frontInk.a * uLiftedOpacity * mix(0.92, 1.0, grazing);
+      color = mix(printedColor, filmColor, monochrome);
+      alpha = mix(frontInk.a, filmAlpha, monochrome);
     } else {
-      color = frontInk.rgb * (0.61 + diffuse * 0.43);
-      color += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
-      color = mix(color, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
-      alpha = frontInk.a;
 
       // Released material settles close to the surface, but no longer reads as attached.
       if (uLayer > 0.5 && uLayer < 1.5) {

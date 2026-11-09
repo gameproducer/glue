@@ -170,50 +170,58 @@ h1 {
 .miss .interaction-hint { color: rgba(255, 157, 175, 0.92); }
 .miss .renderer-host { animation: missNudge 180ms ease-in-out 2 alternate; }
 
-.meter {
+.tension-chart {
   position: absolute;
-  top: 50%;
-  right: 1px;
+  right: 18px;
+  bottom: 54px;
   z-index: 4;
   display: grid;
-  gap: 8px;
-  width: 82px;
-  color: rgba(255,255,255,.38);
+  gap: 7px;
+  width: 176px;
+  padding: 10px 11px 9px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px;
+  color: rgba(255,255,255,.46);
+  background: rgba(10, 8, 15, .5);
+  box-shadow: inset 0 1px rgba(255,255,255,.04), 0 10px 30px rgba(0,0,0,.16);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   font: 500 8px/1 var(--font-geist-mono), monospace;
-  letter-spacing: .12em;
+  letter-spacing: .1em;
   text-transform: uppercase;
-  transform: rotate(90deg) translateY(-100%);
-  transform-origin: top right;
   pointer-events: none;
 }
 
-.meter i {
-  position: relative;
-  display: block;
-  width: 82px;
-  height: 2px;
-  overflow: hidden;
-  background: rgba(255,255,255,.12);
+.tension-chart div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.meter em {
-  position: absolute;
-  top: -3px;
-  bottom: -3px;
-  width: 1px;
-  background: rgba(255, 255, 255, .88);
-  box-shadow: 0 0 7px rgba(255, 255, 255, .65);
-  transform: translateX(-50%);
-}
+.tension-chart output { color: rgba(255,255,255,.9); }
 
-.meter b {
+.tension-chart svg {
   display: block;
   width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, #65d8cd 0 62%, #ffba43 78%, #ff425f);
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform 90ms linear;
+  height: 62px;
+  overflow: visible;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+
+.tension-area { fill: rgba(101, 216, 205, .09); }
+
+.tension-line {
+  fill: none;
+  stroke: #78e2d8;
+  stroke-width: 1.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.tension-threshold {
+  stroke: rgba(255, 94, 119, .72);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
 }
 
 .control-bar {
@@ -380,7 +388,7 @@ h1 {
   .grab-guide { left: 7%; }
   .control-bar { gap: 5px; }
   .control-bar button { min-width: 0; gap: 5px; padding: 10px 11px; font-size: 8px; }
-  .meter { right: -8px; }
+  .tension-chart { right: 8px; bottom: 78px; width: 150px; }
   .interaction-hint { bottom: 64px; }
 }
 
@@ -392,5 +400,5 @@ h1 {
 
 @media (prefers-reduced-motion: reduce) {
   .grab-guide, .result-card, .miss .renderer-host { animation: none; }
-  .control-bar button, .meter b { transition: none; }
+  .control-bar button { transition: none; }
 }
