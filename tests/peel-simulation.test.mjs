@@ -132,6 +132,7 @@ test("a sudden release avalanche tears at the smaller previous front", () => {
 
   const tornCells = simulation.state.filter((value) => value === Cell.torn).length;
   assert.equal(simulation.snapshot().torn, true);
+  assert.ok(simulation.snapshot().areaJump >= simulation.snapshot().releaseJumpThreshold);
   assert.ok(tornCells >= releasedBeforeJump * 0.9);
   assert.ok(tornCells < simulation.state.length * 0.35);
   assert.ok(simulation.state.some((value) => value === Cell.adhered));

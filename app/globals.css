@@ -170,9 +170,8 @@ h1 {
 .miss .interaction-hint { color: rgba(255, 157, 175, 0.92); }
 .miss .renderer-host { animation: missNudge 180ms ease-in-out 2 alternate; }
 
-.tension-chart {
+.signal-chart {
   position: absolute;
-  right: 18px;
   bottom: 54px;
   z-index: 4;
   display: grid;
@@ -192,15 +191,18 @@ h1 {
   pointer-events: none;
 }
 
-.tension-chart div {
+.tension-chart { right: 18px; }
+.area-jump-chart { left: 18px; }
+
+.signal-chart div {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.tension-chart output { color: rgba(255,255,255,.9); }
+.signal-chart output { color: rgba(255,255,255,.9); }
 
-.tension-chart svg {
+.signal-chart svg {
   display: block;
   width: 100%;
   height: 62px;
@@ -208,21 +210,24 @@ h1 {
   border-bottom: 1px solid rgba(255,255,255,.08);
 }
 
-.tension-area { fill: rgba(101, 216, 205, .09); }
+.signal-area { fill: rgba(101, 216, 205, .09); }
 
-.tension-line {
+.signal-line {
   fill: none;
   stroke: #78e2d8;
   stroke-width: 1.75;
   vector-effect: non-scaling-stroke;
 }
 
-.tension-threshold {
+.signal-threshold {
   stroke: rgba(255, 94, 119, .72);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   vector-effect: non-scaling-stroke;
 }
+
+.area-jump-chart .signal-area { fill: rgba(255, 186, 67, .1); }
+.area-jump-chart .signal-line { stroke: #ffba43; }
 
 .control-bar {
   position: relative;
@@ -389,6 +394,7 @@ h1 {
   .control-bar { gap: 5px; }
   .control-bar button { min-width: 0; gap: 5px; padding: 10px 11px; font-size: 8px; }
   .tension-chart { right: 8px; bottom: 78px; width: 150px; }
+  .area-jump-chart { left: 8px; bottom: 78px; width: 150px; }
   .interaction-hint { bottom: 64px; }
 }
 

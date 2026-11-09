@@ -24,6 +24,8 @@ const emptySnapshot: PeelSnapshot = {
   maxMoves: 4,
   progress: 0,
   stress: 0,
+  areaJump: 0,
+  physicsSample: 0,
   tracking: false,
   pulling: false,
   canCommit: false,
@@ -40,33 +42,51 @@ const emptySnapshot: PeelSnapshot = {
   frontDepth: 0,
 };
 
-function TensionChart({ value, threshold }: { value: number; threshold: number }) {
+function RollingSignalChart({
+  label,
+  value,
+  threshold,
+  position,
+  pulse = false,
+  sampleId = 0,
+  scaleMax = 1,
+}: {
+  label: string;
+  value: number;
+  threshold: number;
+  position: "tension" | "area-jump";
+  pulse?: boolean;
+  sampleId?: number;
+  scaleMax?: number;
+}) {
   const currentValue = useRef(value);
   const [samples, setSamples] = useState<number[]>(() => Array(51).fill(0));
 
   useEffect(() => {
-    currentValue.current = value;
-  }, [value]);
+    currentValue.current = pulse ? Math.max(currentValue.current, value) : value;
+  }, [pulse, sampleId, value]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
       setSamples((history) => [...history.slice(-50), currentValue.current]);
+      if (pulse) currentValue.current = 0;
     }, 100);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [pulse]);
 
   const points = samples
-    .map((sample, index) => `${(index / (samples.length - 1)) * 160},${64 - Math.min(1, sample) * 64}`)
+    .map((sample, index) => `${(index / (samples.length - 1)) * 160},${64 - Math.min(1, sample / scaleMax) * 64}`)
     .join(" ");
-  const thresholdY = 64 - threshold * 64;
+  const thresholdY = 64 - Math.min(1, threshold / scaleMax) * 64;
+  const displayedValue = pulse ? samples[samples.length - 1] : value;
 
   return (
-    <aside className="tension-chart" aria-label={`Tension over the last five seconds. Current tension ${Math.round(value * 100)} percent.`}>
-      <div><span>Tension · 5 sec</span><output>{Math.round(value * 100)}%</output></div>
+    <aside className={`signal-chart ${position}-chart`} aria-label={`${label} over the last five seconds. Current value ${Math.round(displayedValue * 100)} percent.`}>
+      <div><span>{label} · 5 sec</span><output>{Math.round(displayedValue * 100)}%</output></div>
       <svg viewBox="0 0 160 64" role="img" aria-hidden="true">
-        <line className="tension-threshold" x1="0" x2="160" y1={thresholdY} y2={thresholdY} />
-        <polygon className="tension-area" points={`0,64 ${points} 160,64`} />
-        <polyline className="tension-line" points={points} />
+        <line className="signal-threshold" x1="0" x2="160" y1={thresholdY} y2={thresholdY} />
+        <polygon className="signal-area" points={`0,64 ${points} 160,64`} />
+        <polyline className="signal-line" points={points} />
       </svg>
     </aside>
   );
@@ -332,7 +352,22 @@ export default function PeelExperience() {
             <span>Open this page in a browser with WebGL enabled.</span>
           </div>
         )}
-        <TensionChart value={snapshot.stress} threshold={tearThreshold} />
+        <RollingSignalChart
+          label="Tension"
+          value={snapshot.stress}
+          threshold={tearThreshold}
+          position="tension"
+          scaleMax={TENSION_CONTROL_MAX}
+        />
+        <RollingSignalChart
+          label="Area jump"
+          value={snapshot.areaJump}
+          threshold={releaseJumpThreshold}
+          position="area-jump"
+          pulse
+          sampleId={snapshot.physicsSample}
+          scaleMax={RELEASE_JUMP_CONTROL_MAX}
+        />
         <p className="interaction-hint" aria-live="polite">{status}</p>
 
         {settingsOpen && (

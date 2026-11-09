@@ -14,6 +14,8 @@ export type PeelSnapshot = {
   maxMoves: number;
   progress: number;
   stress: number;
+  areaJump: number;
+  physicsSample: number;
   tracking: boolean;
   pulling: boolean;
   canCommit: boolean;
@@ -67,6 +69,8 @@ export class PeelSimulation {
   private direction: Vec2 = { x: 1, y: 0 };
   private frontDepth = 0;
   private stress = 0;
+  private areaJump = 0;
+  private physicsSample = 0;
   private lastPointer: Vec2 = { ...this.grab };
   private lastTime = 0;
 
@@ -143,6 +147,8 @@ export class PeelSimulation {
     this.grabIndex = -1;
     this.frontDepth = 0;
     this.stress = 0;
+    this.areaJump = 0;
+    this.physicsSample++;
   }
 
   begin(point: Vec2, time = 0) {
@@ -155,6 +161,8 @@ export class PeelSimulation {
     this.lastTime = time;
     this.frontDepth = 0;
     this.stress = 0;
+    this.areaJump = 0;
+    this.physicsSample++;
     this.grabIndex = -1;
     const seed = this.nearestAccessibleCell(point);
     if (seed >= 0) this.acquire(seed);
@@ -163,6 +171,8 @@ export class PeelSimulation {
 
   drag(point: Vec2, time: number) {
     if (!this.tracking) return;
+    this.areaJump = 0;
+    this.physicsSample++;
 
     if (this.torn) {
       this.tornOffset = {
@@ -209,6 +219,7 @@ export class PeelSimulation {
     // to pull nearly the entire sticker free instantaneously.
     const gainedCells = Math.max(0, this.pendingNewCells - previousPendingCells);
     const absoluteGain = gainedCells / Math.max(1, this.totalCells);
+    this.areaJump = absoluteGain;
 
     const frameDistance = Math.hypot((point.x - this.lastPointer.x) * this.aspect, point.y - this.lastPointer.y);
     const elapsed = this.lastTime > 0 && time > this.lastTime ? (time - this.lastTime) / 1000 : 1 / 60;
@@ -276,6 +287,8 @@ export class PeelSimulation {
       maxMoves: this.maxMoves,
       progress,
       stress: this.stress,
+      areaJump: this.areaJump,
+      physicsSample: this.physicsSample,
       tracking: this.tracking,
       pulling: this.pulling,
       canCommit: this.pendingNewCells > 0,
