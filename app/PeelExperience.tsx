@@ -720,7 +720,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           </aside>
         )}
 
-        {!snapshot.tearDragging && (snapshot.complete || snapshot.failed) && (
+        {!snapshot.tracking && (snapshot.complete || snapshot.failed) && (
           <div className="result-card" role="dialog" aria-modal="false" aria-label="Level result">
             <span>{snapshot.complete ? "RELEASED" : snapshot.torn ? "TORN" : "OUT OF MOVES"}</span>
             <strong>

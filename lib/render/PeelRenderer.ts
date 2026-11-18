@@ -250,7 +250,7 @@ export class PeelRenderer {
   private lastReleaseRevision = -1;
   private readonly materials: THREE.ShaderMaterial[] = [];
   private readonly stickerMeshes: THREE.Mesh[] = [];
-  private readonly shadow: THREE.Mesh;
+  private readonly shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private readonly resizeObserver: ResizeObserver;
   private readonly originalWhiteArtwork: boolean;
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
@@ -369,7 +369,36 @@ export class PeelRenderer {
 
     this.shadow = new THREE.Mesh(
       new THREE.PlaneGeometry(this.stickerWidth * 1.14, this.stickerHeight * 1.14),
-      new THREE.MeshBasicMaterial({ map: makeShadowTexture(artwork), transparent: true, opacity: 0.38, depthWrite: false }),
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        uniforms: {
+          uShadow: { value: makeShadowTexture(artwork) },
+          uState: { value: this.stateTexture },
+          uOpacity: { value: 0.38 },
+          uPadding: { value: 58 / 1024 },
+        },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D uShadow;
+          uniform sampler2D uState;
+          uniform float uOpacity;
+          uniform float uPadding;
+          varying vec2 vUv;
+          void main() {
+            vec2 artworkUv = (vUv - uPadding) / (1.0 - 2.0 * uPadding);
+            vec4 state = texture2D(uState, artworkUv);
+            float present = clamp(dot(state, vec4(1.0)), 0.0, 1.0);
+            gl_FragColor = vec4(0.0, 0.0, 0.0, texture2D(uShadow, vUv).a * present * uOpacity);
+          }
+        `,
+      }),
     );
     this.shadow.position.set(0.06, -0.08, -0.055);
     this.shadow.renderOrder = -1;
@@ -441,7 +470,7 @@ export class PeelRenderer {
     const lift = Math.min(1, depth * 2.2);
     this.shadow.scale.set(1 + lift * 0.08, 1 + lift * 0.12, 1);
     this.shadow.position.set(-direction.x * lift * 0.08 + 0.06, -direction.y * lift * 0.08 - 0.08, -0.055);
-    (this.shadow.material as THREE.MeshBasicMaterial).opacity = 0.3 + lift * 0.18;
+    this.shadow.material.uniforms.uOpacity.value = 0.3 + lift * 0.18;
   }
 
   setAppearance(appearance: PeelAppearance) {
@@ -525,7 +554,8 @@ export class PeelRenderer {
     for (const mesh of this.stickerMeshes) mesh.geometry.dispose();
     for (const material of this.materials) material.dispose();
     this.shadow.geometry.dispose();
-    (this.shadow.material as THREE.Material).dispose();
+    this.shadow.material.uniforms.uShadow.value.dispose();
+    this.shadow.material.dispose();
     this.stateTexture.dispose();
     this.releaseTexture.dispose();
     this.renderer.dispose();

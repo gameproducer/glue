@@ -434,8 +434,9 @@ export class PeelSimulation {
 
     if (this.pulling) {
       for (let index = 0; index < this.state.length; index++) {
-        if (accepted && this.state[index] === Cell.lifted) {
-          this.state[index] = Cell.released;
+        const remove = accepted && releasedWholeComponent && this.grabbedComponent[index] !== 0;
+        if (remove || (accepted && this.state[index] === Cell.lifted)) {
+          this.state[index] = remove ? Cell.outside : Cell.released;
           this.releasedHistory[index] = 255;
         } else {
           this.state[index] = this.gestureBase[index];

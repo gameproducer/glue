@@ -218,7 +218,7 @@ test("tear controls accept zero as a deliberate threshold", () => {
   assert.equal(simulation.snapshot().releaseJumpThreshold, 0);
 });
 
-test("a fast pull that frees an entire disconnected figure is a clean release", () => {
+test("finishing one figure over multiple moves removes it and preserves the other figure", () => {
   const width = 72;
   const height = 36;
   const left = rectangleMask(width, height, 3, 30, 6, 29);
@@ -229,15 +229,31 @@ test("a fast pull that frees an entire disconnected figure is a clean release", 
   assert.equal(simulation.begin({ x: 0.02, y: 0.5 }, 100), true);
   simulation.drag({ x: 0.16, y: 0.5 }, 420);
   assert.equal(simulation.end(true), true);
+  assert.ok(simulation.state.includes(Cell.released));
   assert.equal(simulation.begin({ x: 0.08, y: 0.5 }, 700), true);
   simulation.drag({ x: 0.96, y: 0.5 }, 760);
   assert.ok(simulation.snapshot().areaJump > 0.02);
   assert.equal(simulation.snapshot().torn, false);
   assert.equal(simulation.end(true), true);
   for (let index = 0; index < mask.length; index++) {
-    if (left[index]) assert.equal(simulation.state[index], Cell.released);
+    if (left[index]) assert.equal(simulation.state[index], Cell.outside);
     if (right[index]) assert.equal(simulation.state[index], Cell.adhered);
   }
+  assert.equal(simulation.snapshot().progress, 28 / 49);
+  assert.equal(simulation.snapshot().moves, 2);
+  simulation.begin({ x: 0.1, y: 0.5 }, 800);
+  simulation.drag({ x: 0.3, y: 0.5 }, 900);
+  assert.equal(simulation.snapshot().pulling, false);
+  assert.equal(simulation.end(true), false);
+
+  simulation.begin({ x: 48 / (width - 1), y: 0.5 }, 1000);
+  simulation.drag({ x: 1.35, y: 0.5 }, 1400);
+  assert.equal(simulation.end(true), true);
+  assert.ok(simulation.state.every(cell => cell === Cell.outside));
+  assert.equal(simulation.snapshot().progress, 1);
+  assert.equal(simulation.snapshot().complete, true);
+  simulation.reset();
+  assert.deepEqual(simulation.state, mask);
 });
 
 test("pulling back softly stalls, while a strong reversal tears only the held flap", () => {
