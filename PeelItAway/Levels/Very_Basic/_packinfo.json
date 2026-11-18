@@ -1,0 +1,40 @@
+{
+  "levels": [
+    {
+      "moves": 2, 
+      "den": 1.23, 
+      "img": "calculator-512.png"
+    }, 
+    {
+      "moves": 9, 
+      "den": 1.0, 
+      "img": "idea-512.png"
+    }, 
+    {
+      "moves": 1, 
+      "den": 1.0, 
+      "img": "key-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "link-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "ruler-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "sinchronize-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "img": "restart-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Very_Basic"
+}

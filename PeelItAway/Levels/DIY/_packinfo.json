@@ -1,0 +1,25 @@
+{
+  "levels": [
+    {
+      "moves": 4, 
+      "img": "garden_shears-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 5, 
+      "img": "plant_under_rain-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "scythe-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "sproud-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "DIY"
+}

@@ -1,0 +1,30 @@
+{
+  "levels": [
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "blunderbuss-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.15, 
+      "img": "boots-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "cannon-512.png"
+    }, 
+    {
+      "moves": 4, 
+      "den": 1.0, 
+      "img": "firing_gun-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "fighter_jet-512.png"
+    }
+  ], 
+  "name": "Military"
+}

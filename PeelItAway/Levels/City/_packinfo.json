@@ -1,0 +1,25 @@
+{
+  "levels": [
+    {
+      "moves": 4, 
+      "den": 0.89, 
+      "img": "equestrian_statue-512.png"
+    }, 
+    {
+      "moves": 6, 
+      "den": 1.34, 
+      "img": "railway_station-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "restaurant-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "sheriff-512.png"
+    }
+  ], 
+  "name": "City"
+}

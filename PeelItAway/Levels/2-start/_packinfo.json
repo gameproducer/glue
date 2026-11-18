@@ -1,0 +1,85 @@
+{
+  "levels": [
+    {
+      "moves": 6, 
+      "den": 1.16, 
+      "img": "roller_coaster-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "img": "turtle-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 6, 
+      "den": 1.0, 
+      "img": "left_footprint-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "mask_snorkel-512.png"
+    }, 
+    {
+      "moves": 7, 
+      "img": "bell_lyre-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "duck-512.png", 
+      "den": 1.2
+    }, 
+    {
+      "moves": 2, 
+      "img": "guitar-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "pitchfork-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "speedometer-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 6, 
+      "img": "stadium-512.png", 
+      "den": 1.22
+    }, 
+    {
+      "moves": 4, 
+      "img": "swiss_army_knife-512.png", 
+      "den": 1.03
+    }, 
+    {
+      "moves": 6, 
+      "img": "no_smoking-512.png", 
+      "den": 0.89
+    }, 
+    {
+      "moves": 4, 
+      "den": 1.0, 
+      "img": "carousel-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "img": "swimming-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "world_cup-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "origami-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Simple"
+}

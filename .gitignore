@@ -39,3 +39,15 @@ yarn-error.log*
 /outputs/
 /work/
 *.tsbuildinfo
+
+# Project recovery files and native build output
+.recovery/
+.sites-runtime/
+.build/
+DerivedData/
+build/
+xcuserdata/
+*.xcuserstate
+
+# Checkout-local dependency cache
+.pnpm-store/

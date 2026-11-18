@@ -1,0 +1,73 @@
+{
+  "levels": [
+    {
+      "moves": 7, 
+      "img": "portrait_mode-512.png", 
+      "den": 1.2
+    }, 
+    {
+      "moves": 4, 
+      "img": "clown_fish-512.png", 
+      "den": 1.1
+    }, 
+    {
+      "moves": 3, 
+      "img": "slug-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "willow-512.png", 
+      "den": 0.85, 
+      "hint": "Make small turns."
+    }, 
+    {
+      "moves": 3, 
+      "img": "eiffel_tower-512.png", 
+      "den": 1.2
+    }, 
+    {
+      "moves": 6, 
+      "den": 1.0, 
+      "img": "cards-512.png", 
+      "hint": "Change direction while pulling."
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "gender-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "airplane_takeoff-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "img": "horseshoe-512.png", 
+      "den": 1.16, 
+      "hint": "Some shapes require several moves."
+    }, 
+    {
+      "moves": 3, 
+      "img": "rugby-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "hintPoint": [
+        343, 
+        52
+      ], 
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "air_element-512.png", 
+      "hint": "Starting spot matters."
+    }, 
+    {
+      "moves": 1, 
+      "den": 0.9, 
+      "img": "checkmark-512.png"
+    }
+  ], 
+  "name": "1-tips"
+}

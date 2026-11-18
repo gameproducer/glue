@@ -1,0 +1,35 @@
+{
+  "levels": [
+    {
+      "moves": 2, 
+      "img": "attach-512.png", 
+      "den": 0.95
+    }, 
+    {
+      "moves": 3, 
+      "img": "barbers_scissors-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "diploma2-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "email-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "sandglass-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "bath-512.png"
+    }
+  ], 
+  "name": "MISC"
+}

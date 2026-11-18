@@ -1,0 +1,45 @@
+{
+  "levels": [
+    {
+      "moves": 2, 
+      "img": "beer_bottle-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "beer_glass-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "bento-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "bread-512.png", 
+      "den": 1.1
+    }, 
+    {
+      "moves": 5, 
+      "img": "cheese-512.png", 
+      "den": 1.11
+    }, 
+    {
+      "moves": 2, 
+      "img": "corkscrew-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 5, 
+      "img": "kebab-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "tea-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Food"
+}

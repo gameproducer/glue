@@ -1,0 +1,35 @@
+{
+  "levels": [
+    {
+      "moves": 4, 
+      "img": "black_cat-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "champagne-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "christmas_tree-512.png", 
+      "den": 1.11
+    }, 
+    {
+      "moves": 1, 
+      "img": "christmas_candy_cane-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 7, 
+      "img": "gingerbread_men-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "wedding_rings-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Holidays"
+}

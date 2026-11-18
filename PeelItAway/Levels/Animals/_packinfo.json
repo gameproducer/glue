@@ -1,0 +1,60 @@
+{
+  "levels": [
+    {
+      "moves": 3, 
+      "img": "caterpillar-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "coral-512.png", 
+      "den": 1.11
+    }, 
+    {
+      "moves": 5, 
+      "img": "eating_slug-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 5, 
+      "img": "falcon-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "giraffe-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "gorilla-512.png", 
+      "den": 1.27
+    }, 
+    {
+      "moves": 3, 
+      "img": "rabbit-512.png", 
+      "den": 1.12
+    }, 
+    {
+      "moves": 5, 
+      "img": "running_rabbit-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "seahorse-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "sheep_on_bike-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 5, 
+      "img": "snail-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Animals"
+}

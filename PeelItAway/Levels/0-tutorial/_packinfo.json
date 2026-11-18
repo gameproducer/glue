@@ -1,0 +1,10 @@
+{
+  "levels": [
+    {
+      "moves": 50, 
+      "img": "funzai_logo-512.png", 
+      "den": 100.0
+    }
+  ], 
+  "name": "Tutorial"
+}

@@ -1,0 +1,20 @@
+{
+  "levels": [
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "geocaching-512.png"
+    }, 
+    {
+      "moves": 6, 
+      "den": 1.0, 
+      "img": "satellites-512.png"
+    }, 
+    {
+      "moves": 7, 
+      "den": 1.0, 
+      "img": "world_map-512.png"
+    }
+  ], 
+  "name": "Maps"
+}

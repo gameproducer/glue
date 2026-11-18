@@ -1,0 +1,120 @@
+{
+  "levels": [
+    {
+      "moves": 4, 
+      "img": "barbell-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "baseball-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "base_jumping-512.png", 
+      "den": 1.15
+    }, 
+    {
+      "moves": 1, 
+      "img": "climbing_shoes-512.png", 
+      "den": 1.12
+    }, 
+    {
+      "moves": 3, 
+      "img": "energy_absorber-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 6, 
+      "img": "exercise-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "finish_flag-512.png", 
+      "den": 1.17
+    }, 
+    {
+      "moves": 3, 
+      "img": "football-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 5, 
+      "img": "golf-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "guru-512.png", 
+      "den": 1.12
+    }, 
+    {
+      "moves": 2, 
+      "img": "hand_biceps-512.png", 
+      "den": 1.277
+    }, 
+    {
+      "moves": 2, 
+      "img": "jump_rope-512.png", 
+      "den": 1.05
+    }, 
+    {
+      "moves": 1, 
+      "img": "olympic_rings-512.png", 
+      "den": 1.05
+    }, 
+    {
+      "moves": 3, 
+      "img": "paddling-512.png", 
+      "den": 0.95
+    }, 
+    {
+      "moves": 3, 
+      "img": "running-512.png", 
+      "den": 0.96
+    }, 
+    {
+      "moves": 3, 
+      "img": "skiing-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "skydiving_gear-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "tennis-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "time_trial_biking-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "trekking-512.png", 
+      "den": 0.9
+    }, 
+    {
+      "moves": 3, 
+      "img": "weightlift-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "yoga-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "medal2-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Sports"
+}

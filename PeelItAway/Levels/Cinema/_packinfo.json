@@ -1,0 +1,45 @@
+{
+  "levels": [
+    {
+      "moves": 3, 
+      "den": 1.5, 
+      "img": "adventures-512.png"
+    }, 
+    {
+      "moves": 4, 
+      "den": 1.32, 
+      "img": "andorian_head-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.22, 
+      "img": "avengers-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "dare_davil-512.png"
+    }, 
+    {
+      "moves": 1, 
+      "den": 1.12, 
+      "img": "hellraiser_pinhead-512.png"
+    }, 
+    {
+      "moves": 1, 
+      "den": 1.0, 
+      "img": "musical-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 0.95, 
+      "img": "the_flash_sign-512.png"
+    }, 
+    {
+      "moves": 4, 
+      "den": 1.0, 
+      "img": "wonder_woman-512.png"
+    }
+  ], 
+  "name": "Cinema"
+}

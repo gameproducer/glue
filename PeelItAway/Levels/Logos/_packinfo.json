@@ -1,0 +1,60 @@
+{
+  "levels": [
+    {
+      "moves": 2, 
+      "den": 1.05, 
+      "img": "box_logo_copyrighted-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.3, 
+      "img": "dropbox_copyrighted-512.png"
+    }, 
+    {
+      "moves": 1, 
+      "den": 1.305, 
+      "img": "firefox_copyrighted-512.png"
+    }, 
+    {
+      "moves": 1, 
+      "den": 1.0, 
+      "img": "haiku-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.25, 
+      "img": "ie_copyrighted-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 2.32, 
+      "img": "pinterest_copyrighted-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "ps1_copyrighted-512.png"
+    }, 
+    {
+      "moves": 5, 
+      "den": 1.16, 
+      "img": "reddit_copyrighted-512.png"
+    }, 
+    {
+      "moves": 4, 
+      "den": 1.166, 
+      "img": "xbox_copyrighted-512.png"
+    }, 
+    {
+      "moves": 6, 
+      "den": 1.18, 
+      "img": "youtube_copyrighted-512.png"
+    }, 
+    {
+      "moves": 5, 
+      "den": 1.0, 
+      "img": "Wordpress-512.png"
+    }
+  ], 
+  "name": "Logos"
+}
