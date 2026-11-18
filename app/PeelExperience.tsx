@@ -6,6 +6,7 @@ import {
   type PeelDiagnostics,
   PeelSimulation,
   type PeelSnapshot,
+  type TearFactors,
   type Vec2,
 } from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
@@ -22,8 +23,13 @@ const DEFAULT_LEVEL = {
   releaseJumpThreshold: 0.28,
   liftedTransparency: 0.5,
 } as const;
-const TENSION_CONTROL_MAX = 0.33;
-const RELEASE_JUMP_CONTROL_MAX = 0.33;
+const TENSION_CONTROL_MAX = 0.66;
+const RELEASE_JUMP_CONTROL_MAX = 0.66;
+const DEFAULT_TEAR_FACTORS: TearFactors = { outward: 0.8, bottleneck: 0.85 };
+const TEAR_FACTOR_CONTROLS = [
+  { key: "outward", label: "Outward pull", hint: "How easily a lifted flap tears when pulled back." },
+  { key: "bottleneck", label: "Thin neck", hint: "How strongly a constriction between wider sections adds tension." },
+] as const;
 const emptySnapshot: PeelSnapshot = {
   moves: 0,
   maxMoves: 4,
@@ -33,6 +39,7 @@ const emptySnapshot: PeelSnapshot = {
   physicsSample: 0,
   tracking: false,
   pulling: false,
+  outwardPulling: false,
   canCommit: false,
   complete: false,
   failed: false,
@@ -150,6 +157,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const tearThresholdStorageKey = `peel.level.${level.id}.tearThreshold`;
   const releaseJumpStorageKey = `peel.level.${level.id}.releaseJumpThreshold`;
   const liftedTransparencyStorageKey = `peel.level.${level.id}.liftedTransparency`;
+  const tearFactorsStorageKey = `peel.level.${level.id}.tearFactors`;
   const levelIndex = LEVELS.findIndex(item => item.id === level.id);
   const hostRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<PeelSimulation | null>(null);
@@ -167,6 +175,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
   const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
   const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
+  const [tearFactors, setTearFactors] = useState(DEFAULT_TEAR_FACTORS);
   const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
   const [miss, setMiss] = useState(false);
@@ -229,16 +238,21 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         let savedThreshold: number = DEFAULT_LEVEL.tearThreshold;
         let savedJumpThreshold: number = DEFAULT_LEVEL.releaseJumpThreshold;
         let savedTransparency: number = DEFAULT_LEVEL.liftedTransparency;
+        const savedTearFactors = { ...DEFAULT_TEAR_FACTORS };
         try {
           savedThreshold = readSavedSetting(tearThresholdStorageKey, savedThreshold, 0, TENSION_CONTROL_MAX);
           savedJumpThreshold = readSavedSetting(releaseJumpStorageKey, savedJumpThreshold, 0, RELEASE_JUMP_CONTROL_MAX);
           savedTransparency = readSavedSetting(liftedTransparencyStorageKey, savedTransparency, 0.05, 0.9);
+          for (const { key } of TEAR_FACTOR_CONTROLS) {
+            savedTearFactors[key] = readSavedSetting(`${tearFactorsStorageKey}.${key}`, savedTearFactors[key], 0, 1);
+          }
         } catch {
           // Storage can be unavailable in locked-down browser contexts; the level default remains valid.
         }
         setTearThreshold(savedThreshold);
         setReleaseJumpThreshold(savedJumpThreshold);
         setLiftedTransparency(savedTransparency);
+        setTearFactors(savedTearFactors);
         const simulation = new PeelSimulation(
           asset.width,
           asset.height,
@@ -248,6 +262,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           savedThreshold,
           savedJumpThreshold,
         );
+        simulation.setTearFactors(savedTearFactors);
         const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect, level.artwork.startsWith("/stickers/"));
         renderer.setLiftedTransparency(savedTransparency);
         simulationRef.current = simulation;
@@ -370,7 +385,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
       activePointer.current = null;
       teardown();
     };
-  }, [level, recordDiagnostic, refresh, tearThresholdStorageKey, releaseJumpStorageKey, liftedTransparencyStorageKey]);
+  }, [level, recordDiagnostic, refresh, tearThresholdStorageKey, releaseJumpStorageKey, liftedTransparencyStorageKey, tearFactorsStorageKey]);
 
   const toggleProfile = () => {
     const next = profile === "cylinder" ? "cone" : "cylinder";
@@ -422,6 +437,18 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
     }
   };
 
+  const changeTearFactor = (key: keyof TearFactors, value: number) => {
+    const next = { ...tearFactors, [key]: value };
+    setTearFactors(next);
+    simulationRef.current?.setTearFactors(next);
+    recordDiagnostic(`tear_factor_${key}`, null, { value });
+    try {
+      window.localStorage.setItem(`${tearFactorsStorageKey}.${key}`, value.toFixed(2));
+    } catch {
+      // The setting remains active for this session when persistent storage is unavailable.
+    }
+  };
+
   const reset = () => {
     simulationRef.current?.reset();
     recordDiagnostic("level_reset");
@@ -450,6 +477,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         curlProfile: profileRef.current,
         tensionThreshold: simulation.snapshot().tearThreshold,
         areaJumpThreshold: simulation.snapshot().releaseJumpThreshold,
+        tearFactors,
         liftedTransparency,
       },
       environment: {
@@ -519,7 +547,8 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
       : snapshot.tracking && !snapshot.pulling
         ? "Cross an exposed edge to pick it up."
         : snapshot.pulling
-          ? snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
+          ? snapshot.outwardPulling ? "Pulling back loads the lifted edge. Sweep forward to continue."
+            : snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
             : snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction." : "Keep sweeping the peel front."
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
@@ -595,7 +624,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
               <input
                 type="range"
                 min="0"
-                max="33"
+                max={Math.round(TENSION_CONTROL_MAX * 100)}
                 step="1"
                 value={Math.round(tearThreshold * 100)}
                 onChange={(event) => changeTearThreshold(Number(event.currentTarget.value) / 100)}
@@ -606,12 +635,27 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
               <input
                 type="range"
                 min="0"
-                max="33"
+                max={Math.round(RELEASE_JUMP_CONTROL_MAX * 100)}
                 step="1"
                 value={Math.round(releaseJumpThreshold * 100)}
                 onChange={(event) => changeReleaseJumpThreshold(Number(event.currentTarget.value) / 100)}
               />
             </label>
+            {TEAR_FACTOR_CONTROLS.map(({ key, label, hint }) => (
+              <label key={key} className="setting-control" title={hint}>
+                <div><span>{label}</span><output>{tearFactors[key] === 0 ? "Off" : `${Math.round(tearFactors[key] * 100)}%`}</output></div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  aria-label={label}
+                  aria-valuetext={tearFactors[key] === 0 ? "Off" : `${Math.round(tearFactors[key] * 100)} percent`}
+                  value={Math.round(tearFactors[key] * 100)}
+                  onChange={(event) => changeTearFactor(key, Number(event.currentTarget.value) / 100)}
+                />
+              </label>
+            ))}
             <label className="setting-control">
               <div><span>Lift transparency</span><output>{Math.round(liftedTransparency * 100)}%</output></div>
               <input

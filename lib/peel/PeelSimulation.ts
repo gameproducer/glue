@@ -8,6 +8,10 @@ export const Cell = {
 
 export type Vec2 = { x: number; y: number };
 export type CurlProfile = "cylinder" | "cone";
+export type TearFactors = { outward: number; bottleneck: number };
+
+const OUTWARD_DEAD_ZONE = 0.018;
+const OUTWARD_LOAD_DISTANCE = 0.18;
 
 export type PeelDiagnostics = {
   current: {
@@ -33,6 +37,8 @@ export type PeelDiagnostics = {
     minimumPiece: number;
     avalancheTear: boolean;
     stressTear: boolean;
+    outwardTear: boolean;
+    bottleneckLoad: number;
   };
 };
 
@@ -45,6 +51,7 @@ export type PeelSnapshot = {
   physicsSample: number;
   tracking: boolean;
   pulling: boolean;
+  outwardPulling: boolean;
   canCommit: boolean;
   complete: boolean;
   failed: boolean;
@@ -76,6 +83,8 @@ const emptyDiagnosticStep = (): PeelDiagnostics["lastStep"] => ({
   minimumPiece: 0,
   avalancheTear: false,
   stressTear: false,
+  outwardTear: false,
+  bottleneckLoad: 0,
 });
 
 /** Connected moving-front solver based on the original Cocos2d-x GlueZone. */
@@ -91,6 +100,7 @@ export class PeelSimulation {
   private readonly gestureBase: Uint8Array;
   private readonly tearCandidate: Uint8Array;
   private readonly grabbedComponent: Uint8Array;
+  private readonly sectionWidths: Uint32Array;
   private componentAdheredCells = 0;
   private readonly visited: Uint8Array;
   private readonly queue: Int32Array;
@@ -101,10 +111,14 @@ export class PeelSimulation {
   private moves = 0;
   private tracking = false;
   private pulling = false;
+  private outwardPulling = false;
+  private heldReach = 0;
+  private heldStress = 0;
   private failed = false;
   private torn = false;
   private tearThreshold: number;
   private releaseJumpThreshold: number;
+  private tearFactors: TearFactors = { outward: 0, bottleneck: 0 };
   private tearOrigin: Vec2 = { x: 0, y: 0 };
   private tearRecoil: Vec2 = { x: 0, y: 0 };
   private tornOffset: Vec2 = { x: 0, y: 0 };
@@ -145,6 +159,7 @@ export class PeelSimulation {
     this.gestureBase = new Uint8Array(count);
     this.tearCandidate = new Uint8Array(count);
     this.grabbedComponent = new Uint8Array(count);
+    this.sectionWidths = new Uint32Array(2 * Math.ceil(Math.hypot(width, height)) + 1);
     this.visited = new Uint8Array(count);
     this.queue = new Int32Array(count);
     this.adhesion = new Float32Array(count);
@@ -189,6 +204,7 @@ export class PeelSimulation {
     this.moves = 0;
     this.tracking = false;
     this.pulling = false;
+    this.outwardPulling = false;
     this.failed = false;
     this.torn = false;
     this.tearOrigin = { x: 0, y: 0 };
@@ -206,6 +222,9 @@ export class PeelSimulation {
     if (this.tracking || this.failed || this.torn || this.releasedCells >= this.totalCells) return false;
     this.tracking = true;
     this.pulling = false;
+    this.outwardPulling = false;
+    this.heldReach = 0;
+    this.heldStress = 0;
     this.gestureOrigin = { ...point };
     this.pointer = { ...point };
     this.lastPointer = { ...point };
@@ -256,17 +275,55 @@ export class PeelSimulation {
     const inward = this.inward.x || this.inward.y ? this.inward : this.inwardAlongThinStroke(dx, dy, pullDistance);
     const inwardDistance = dx * inward.x + dy * inward.y;
     const inwardTravel = travelX * inward.x + travelY * inward.y;
+    const minimumPiece = Math.max(8, Math.round(this.totalCells * 0.002));
+    const minimumAnchor = Math.max(1, Math.min(minimumPiece, Math.ceil(this.componentAdheredCells * 0.015)));
+    const reverseTravel = this.heldReach - inwardTravel;
+    const canLoadOutward = this.tearFactors.outward > 0 && reverseTravel > 1e-6
+      && this.componentAdheredCells - this.pendingNewCells >= minimumAnchor;
+    if (canLoadOutward && !this.liftedCells && inwardTravel < -OUTWARD_DEAD_ZONE
+      && this.gestureBase[this.grabIndex] === Cell.released) {
+      this.liftReleasedFlap(minimumPiece);
+    }
+    if (canLoadOutward && this.liftedCells >= minimumPiece) {
+      this.outwardPulling = reverseTravel > OUTWARD_DEAD_ZONE;
+      const outwardLoad = this.tearFactors.outward * clamp((reverseTravel - OUTWARD_DEAD_ZONE) / OUTWARD_LOAD_DISTANCE);
+      this.stress = Math.max(this.heldStress, outwardLoad);
+      this.lastPointer = { ...point };
+      this.lastTime = time;
+      const outwardTear = outwardLoad > 0 && outwardLoad >= this.tearThreshold;
+      this.lastDiagnosticStep = {
+        ...this.lastDiagnosticStep,
+        previousPendingCells: this.pendingNewCells,
+        pendingNewCells: this.pendingNewCells,
+        liftedCells: this.liftedCells,
+        pullDistance,
+        targetStress: this.stress,
+        minimumPiece,
+        stressTear: outwardTear,
+        outwardTear,
+      };
+      if (outwardTear) {
+        this.direction = { x: -inward.x, y: -inward.y };
+        this.triggerTear();
+      }
+      return;
+    }
+    this.outwardPulling = false;
     if (travel < 0.001 || pullDistance < 0.001 || inwardTravel <= travel * 0.2
       || inwardDistance <= pullDistance * 0.2) {
       if (this.liftedCells > 0) this.state.set(this.gestureBase);
       this.pendingNewCells = 0;
       this.liftedCells = 0;
       this.frontDepth = 0;
+      this.heldReach = 0;
+      this.heldStress = 0;
       this.stress *= 0.8;
       this.lastPointer = { ...point };
       this.lastTime = time;
       return;
     }
+    // In the center of a balanced thin stroke, the first valid sweep picks a side.
+    this.inward = inward;
     this.direction = { x: dx / pullDistance, y: dy / pullDistance };
     this.frontDepth = this.calcFrontDepth(inwardDistance);
     const previousPendingCells = this.pendingNewCells;
@@ -296,19 +353,22 @@ export class PeelSimulation {
     const frameDistance = Math.hypot((point.x - this.lastPointer.x) * this.aspect, point.y - this.lastPointer.y);
     const elapsed = this.lastTime > 0 && time > this.lastTime ? (time - this.lastTime) / 1000 : 1 / 60;
     const speed = frameDistance / Math.max(elapsed, 1 / 240);
+    const hasAnchor = this.componentAdheredCells - this.pendingNewCells >= minimumAnchor;
+    const bottleneckLoad = this.tearFactors.bottleneck > 0 && hasAnchor && this.liftedCells >= minimumPiece
+      ? this.measureBottleneck() : 0;
     const narrowLoad = clamp((18 - frontCells) / 16);
     const resistanceLoad = clamp((averageAdhesion - 0.42) / 0.58);
     const reachLoad = clamp(this.frontDepth / (this.aspect * 0.78));
     const speedLoad = clamp((speed - 1.5) / 5) * 0.12;
-    const targetStress = clamp(narrowLoad * 0.54 + resistanceLoad * 0.28 + reachLoad * 0.18 + speedLoad);
-    this.stress += (targetStress - this.stress) * 0.2;
+    const shapeLoad = narrowLoad * 0.54 * (1 - this.tearFactors.bottleneck)
+      + bottleneckLoad * 0.8 * this.tearFactors.bottleneck;
+    const targetStress = clamp(shapeLoad + resistanceLoad * 0.28 + reachLoad * 0.18 + speedLoad);
+    this.heldStress += (targetStress - this.heldStress) * 0.2;
+    this.stress = this.heldStress;
+    this.heldReach = inwardTravel;
     this.lastPointer = { ...point };
     this.lastTime = time;
 
-    const minimumPiece = Math.max(8, Math.round(this.totalCells * 0.002));
-    const remainingAttached = this.componentAdheredCells - this.pendingNewCells;
-    const minimumAnchor = Math.max(1, Math.min(minimumPiece, Math.ceil(this.componentAdheredCells * 0.015)));
-    const hasAnchor = remainingAttached >= minimumAnchor;
     const avalancheTear = hasAnchor && absoluteGain >= this.releaseJumpThreshold
       && tearCandidateCells >= minimumPiece && this.componentAdheredCells - candidateAdheredCells >= minimumAnchor;
     const stressTear = hasAnchor && this.stress >= this.tearThreshold && this.liftedCells >= minimumPiece;
@@ -328,6 +388,8 @@ export class PeelSimulation {
       minimumPiece,
       avalancheTear,
       stressTear,
+      outwardTear: false,
+      bottleneckLoad,
     };
     if (avalancheTear) {
       this.triggerTear(this.tearCandidate);
@@ -341,13 +403,14 @@ export class PeelSimulation {
     if (this.torn) {
       this.tracking = false;
       this.pulling = false;
+      this.outwardPulling = false;
       this.failed = true;
       this.grabIndex = -1;
       return false;
     }
     const threshold = Math.max(10, Math.round(this.totalCells * 0.0015));
     const releasedWholeComponent = this.pendingNewCells > 0 && this.pendingNewCells === this.componentAdheredCells;
-    const accepted = commit && this.pulling && this.frontDepth > 0.012
+    const accepted = commit && this.pulling && !this.outwardPulling && this.frontDepth > 0.012
       && (this.pendingNewCells >= threshold || releasedWholeComponent);
 
     if (this.pulling) {
@@ -364,6 +427,7 @@ export class PeelSimulation {
     this.liftedCells = 0;
     this.tracking = false;
     this.pulling = false;
+    this.outwardPulling = false;
     this.grabIndex = -1;
     this.frontDepth = 0;
     this.stress *= 0.32;
@@ -382,7 +446,8 @@ export class PeelSimulation {
       physicsSample: this.physicsSample,
       tracking: this.tracking,
       pulling: this.pulling,
-      canCommit: this.pendingNewCells > 0,
+      outwardPulling: this.outwardPulling,
+      canCommit: this.pendingNewCells > 0 && !this.outwardPulling,
       complete: !this.torn && progress >= 0.997,
       failed: this.failed,
       torn: this.torn,
@@ -427,6 +492,10 @@ export class PeelSimulation {
 
   setReleaseJumpThreshold(value: number) {
     this.releaseJumpThreshold = clamp(value);
+  }
+
+  setTearFactors({ outward, bottleneck }: TearFactors) {
+    this.tearFactors = { outward: clamp(outward), bottleneck: clamp(bottleneck) };
   }
 
   private acquire(index: number, origin: Vec2) {
@@ -519,6 +588,70 @@ export class PeelSimulation {
     };
     this.tornOffset = { ...this.tearRecoil };
     this.stress = Math.max(this.stress, this.tearThreshold);
+  }
+
+  private liftReleasedFlap(minimumPiece: number) {
+    this.visited.fill(0);
+    this.queue[0] = this.grabIndex;
+    this.visited[this.grabIndex] = 1;
+    let tail = 1;
+    const visit = (index: number) => {
+      if (this.visited[index] || this.gestureBase[index] !== Cell.released) return;
+      this.visited[index] = 1;
+      this.queue[tail++] = index;
+    };
+    let depth = 0;
+    for (let head = 0; head < tail; head++) {
+      const cell = this.queue[head];
+      const x = cell % this.width;
+      const point = this.cellPoint(cell);
+      depth = Math.max(depth, (point.x - this.grab.x) * this.aspect * this.inward.x
+        + (point.y - this.grab.y) * this.inward.y);
+      if (x > 0) visit(cell - 1);
+      if (x + 1 < this.width) visit(cell + 1);
+      if (cell >= this.width) visit(cell - this.width);
+      if (cell + this.width < this.state.length) visit(cell + this.width);
+    }
+    if (tail < minimumPiece) return;
+    for (let index = 0; index < tail; index++) this.state[this.queue[index]] = Cell.lifted;
+    this.liftedCells = tail;
+    this.direction = this.inward;
+    this.frontDepth = depth + 1 / this.height;
+  }
+
+  private measureBottleneck() {
+    const widths = this.sectionWidths;
+    widths.fill(0);
+    const center = (widths.length - 1) / 2;
+    const slicesPerUnit = (this.height - 1) / 2;
+    const stepX = this.direction.x * this.aspect / (this.width - 1);
+    const stepY = this.direction.y / (this.height - 1);
+    const origin = this.grab.x * this.aspect * this.direction.x + this.grab.y * this.direction.y + this.frontDepth;
+    for (let y = 0; y < this.height; y++) {
+      const row = y * this.width;
+      for (let x = 0; x < this.width; x++) {
+        const cell = row + x;
+        if (!this.grabbedComponent[cell]) continue;
+        const slice = Math.round((x * stepX + y * stepY - origin) * slicesPerUnit);
+        const layer = this.state[cell];
+        if (Math.abs(slice) <= 1 || (slice < 0 ? layer === Cell.lifted : layer === Cell.adhered)) {
+          const index = center + slice;
+          if (index >= 0 && index < widths.length) widths[index]++;
+        }
+      }
+    }
+    let behind = 0;
+    let ahead = 0;
+    for (let i = 0; i + 2 < center - 1; i++) {
+      behind = Math.max(behind, widths[i] + widths[i + 1] + widths[i + 2]);
+    }
+    for (let i = center + 2; i + 2 < widths.length; i++) {
+      ahead = Math.max(ahead, widths[i] + widths[i + 1] + widths[i + 2]);
+    }
+    // A tip has only one wide side. A loaded neck has material on both sides.
+    const shoulders = Math.min(behind, ahead);
+    const neck = widths[center - 1] + widths[center] + widths[center + 1];
+    return shoulders > 0 && neck > 0 ? clamp((0.75 - neck / shoulders) / 0.65) : 0;
   }
 
   private calcFrontDepth(pointerDistance: number) {

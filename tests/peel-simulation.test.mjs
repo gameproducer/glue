@@ -239,3 +239,94 @@ test("a fast pull that frees an entire disconnected figure is a clean release", 
     if (right[index]) assert.equal(simulation.state[index], Cell.adhered);
   }
 });
+
+test("pulling back softly stalls, while a strong reversal tears only the held flap", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.24, 0.66);
+  simulation.setTearFactors({ outward: 0.8, bottleneck: 0.85 });
+
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: -0.3, y: 0.5 }, 200);
+  assert.equal(simulation.snapshot().progress, 0);
+  assert.equal(simulation.snapshot().torn, false);
+  assert.equal(simulation.end(true), false);
+
+  simulation.begin({ x: 0.02, y: 0.5 }, 300);
+  simulation.drag({ x: 0.28, y: 0.5 }, 500);
+  const held = simulation.state.map(cell => cell === Cell.lifted ? 1 : 0);
+  const progress = simulation.snapshot().progress;
+  assert.ok(progress > 0 && progress < 1);
+  simulation.drag({ x: 0.26, y: 0.5 }, 530);
+  assert.equal(simulation.snapshot().outwardPulling, true);
+  assert.equal(simulation.snapshot().progress, progress);
+  assert.equal(simulation.snapshot().torn, false);
+
+  simulation.drag({ x: 0.20, y: 0.5 }, 620);
+  assert.equal(simulation.diagnostics().lastStep.outwardTear, true);
+  assert.equal(simulation.snapshot().areaJump, 0);
+  assert.equal(simulation.snapshot().tearDragging, true);
+  assert.deepEqual(simulation.state.map(cell => cell === Cell.torn ? 1 : 0), held);
+  assert.ok(simulation.state.includes(Cell.adhered));
+});
+
+test("a previously released flap can be re-grabbed and torn by pulling outward", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.24, 0.66);
+  simulation.setTearFactors({ outward: 0.8, bottleneck: 0 });
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: 0.28, y: 0.5 }, 400);
+  assert.equal(simulation.end(true), true);
+  const flap = simulation.state.map(cell => cell === Cell.released ? 1 : 0);
+
+  simulation.begin({ x: 0.16, y: 0.5 }, 500);
+  simulation.drag({ x: 0.08, y: 0.5 }, 700);
+  assert.equal(simulation.diagnostics().lastStep.outwardTear, true);
+  assert.deepEqual(simulation.state.map(cell => cell === Cell.torn ? 1 : 0), flap);
+  assert.ok(simulation.state.includes(Cell.adhered));
+  assert.equal(simulation.end(true), false);
+  assert.equal(simulation.snapshot().failed, true);
+});
+
+test("a thin neck adds width-dependent tension independently of area jump", () => {
+  const width = 128;
+  const height = 70;
+  const pull = (barWidth, bottleneck) => {
+    const mask = Uint8Array.from({ length: width * height }, (_, index) => {
+      const x = index % width;
+      const y = Math.floor(index / width);
+      const plates = Math.hypot(x - 26, y - 35) <= 20 || Math.hypot(x - 100, y - 35) <= 20;
+      const bar = x >= 26 && x <= 100 && Math.abs(y - 35) <= barWidth / 2;
+      return plates || bar ? 1 : 0;
+    });
+    const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.66, 1);
+    simulation.setTearFactors({ outward: 0, bottleneck });
+    simulation.begin({ x: 6 / (width - 1), y: 35 / (height - 1) }, 100);
+    let peak = 0;
+    let frame = 0;
+    while (++frame <= 220) {
+      simulation.drag({ x: 6 / (width - 1) + frame / 100, y: 35 / (height - 1) }, 100 + frame * 60);
+      const snapshot = simulation.snapshot();
+      peak = Math.max(peak, simulation.diagnostics().lastStep.bottleneckLoad);
+      if (snapshot.torn || snapshot.complete) break;
+    }
+    return { simulation, frame, peak };
+  };
+
+  const thin = pull(2, 0.85);
+  const medium = pull(6, 0.85);
+  const wide = pull(28, 0.85);
+  const disabled = pull(2, 0);
+  assert.equal(thin.simulation.snapshot().torn, true);
+  assert.equal(thin.simulation.diagnostics().lastStep.stressTear, true);
+  assert.equal(thin.simulation.diagnostics().lastStep.avalancheTear, false);
+  assert.ok(thin.simulation.state.includes(Cell.adhered));
+  assert.ok(thin.peak > medium.peak && thin.frame < medium.frame);
+  assert.equal(wide.simulation.snapshot().complete, true);
+  assert.equal(wide.simulation.snapshot().torn, false);
+  assert.equal(disabled.peak, 0);
+  assert.ok(disabled.frame > thin.frame);
+});
