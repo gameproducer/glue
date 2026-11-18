@@ -5,7 +5,7 @@ import { nearestStateSources, extendStateTexture } from "./StateTexture";
 import { Cell, type CurlProfile, type PeelSimulation, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
-const DISSOLVE_MS = 1000;
+const DISSOLVE_MS = 1800;
 
 type DissolvingShape = {
   texture: THREE.DataTexture;
@@ -103,12 +103,21 @@ const fragmentShader = /* glsl */ `
   uniform float uLiftedOpacity;
   uniform float uStress;
   uniform float uDissolve;
+  uniform vec2 uDirection;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
 
   float grain(vec2 position) {
     return fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
+  }
+
+  float softNoise(vec2 position) {
+    vec2 cell = floor(position);
+    vec2 t = smoothstep(vec2(0.0), vec2(1.0), fract(position));
+    float low = mix(grain(cell), grain(cell + vec2(1.0, 0.0)), t.x);
+    float high = mix(grain(cell + vec2(0.0, 1.0)), grain(cell + vec2(1.0, 1.0)), t.x);
+    return mix(low, high, t.y);
   }
 
   vec3 spectrum(float phase) {
@@ -190,8 +199,11 @@ const fragmentShader = /* glsl */ `
     color = mix(color, vec3(0.21, 0.18, 0.23), released);
     alpha = mix(alpha, min(alpha, 0.70 * silhouette), released);
     if (uDissolve > 0.0) {
-      float grainStart = grain(floor(vUv * 230.0)) * 0.7;
-      alpha *= 1.0 - smoothstep(grainStart, grainStart + 0.3, uDissolve);
+      float sweep = 0.5 + dot(vUv - 0.5, uDirection) * 0.6;
+      float variation = softNoise(vUv * 7.0) * 0.8 + softNoise(vUv * 21.0) * 0.2;
+      float dissolveStart = 0.10 + sweep * 0.42 + variation * 0.15;
+      float veil = 1.0 - smoothstep(0.0, 1.0, uDissolve) * 0.35;
+      alpha *= veil * (1.0 - smoothstep(dissolveStart, dissolveStart + 0.34, uDissolve));
     }
     gl_FragColor = vec4(color, alpha * layerCoverage);
   }

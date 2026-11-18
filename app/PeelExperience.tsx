@@ -46,6 +46,7 @@ const emptySnapshot: PeelSnapshot = {
   detached: false,
   complete: false,
   failed: false,
+  tearFailure: null,
   torn: false,
   tearDragging: false,
   tearThreshold: DEFAULT_LEVEL.tearThreshold,
@@ -565,6 +566,11 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   };
 
   const percent = Math.min(100, Math.round(snapshot.progress * 100));
+  const failure = snapshot.tearFailure;
+  const failureLabel = failure?.kind === "area-jump" ? "Area jump" : "Tension tear";
+  const failureExplanation = failure?.kind === "area-jump" ? "Too much material released at once."
+    : failure?.kind === "outward" ? "Pulling back loaded the lifted flap."
+    : "The lifted flap reached its tension limit.";
   const status = snapshot.torn
     ? snapshot.tearDragging
       ? "Level failed — move the torn piece, then let go."
@@ -732,6 +738,11 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
             <strong>
               {snapshot.complete ? "Clean release." : "The lifted piece separated."}
             </strong>
+            {failure && (
+              <p className="tear-explanation">
+                <b>{failureLabel}</b> reached {(failure.value * 100).toFixed(1)}% (limit {(failure.threshold * 100).toFixed(1)}%). {failureExplanation}
+              </p>
+            )}
             <button type="button" onClick={reset}>Try again</button>
           </div>
         )}

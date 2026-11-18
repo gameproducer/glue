@@ -157,6 +157,9 @@ test("crossing the tear threshold detaches the lifted piece until release", () =
   const torn = simulation.snapshot();
   assert.equal(torn.torn, true);
   assert.equal(torn.tearDragging, true);
+  assert.equal(torn.tearFailure.kind, "tension");
+  assert.equal(torn.tearFailure.threshold, 0.35);
+  assert.ok(torn.tearFailure.value >= torn.tearFailure.threshold);
   assert.ok(simulation.state.some((value) => value === Cell.torn));
   assert.ok(simulation.state.some((value) => value === Cell.adhered));
 
@@ -164,7 +167,10 @@ test("crossing the tear threshold detaches the lifted piece until release", () =
   assert.ok(Math.hypot(simulation.snapshot().tornOffset.x, simulation.snapshot().tornOffset.y) > 0.2);
   assert.equal(simulation.end(true), false);
   assert.equal(simulation.snapshot().failed, true);
+  assert.deepEqual(simulation.snapshot().tearFailure, torn.tearFailure);
   assert.ok(simulation.state.some((value) => value === Cell.torn));
+  simulation.reset();
+  assert.equal(simulation.snapshot().tearFailure, null);
 });
 
 test("a sudden release avalanche tears at the smaller previous front", () => {
@@ -183,8 +189,14 @@ test("a sudden release avalanche tears at the smaller previous front", () => {
   simulation.drag({ x: 0.96, y: 0.5 }, 760);
 
   const tornCells = simulation.state.filter((value) => value === Cell.torn).length;
-  assert.equal(simulation.snapshot().torn, true);
-  assert.ok(simulation.snapshot().areaJump >= simulation.snapshot().releaseJumpThreshold);
+  const snapshot = simulation.snapshot();
+  assert.equal(snapshot.torn, true);
+  assert.ok(snapshot.areaJump >= snapshot.releaseJumpThreshold);
+  assert.deepEqual(snapshot.tearFailure, {
+    kind: "area-jump",
+    value: snapshot.areaJump,
+    threshold: snapshot.releaseJumpThreshold,
+  });
   assert.ok(simulation.diagnostics().lastStep.gainedCells > 0);
   assert.equal(simulation.diagnostics().lastStep.avalancheTear, true);
   assert.ok(tornCells >= releasedBeforeJump * 0.9);
@@ -417,6 +429,10 @@ test("sustained outward load can reach a 29% tear threshold at 14% sensitivity",
     if (simulation.snapshot().torn) break;
   }
   assert.equal(simulation.diagnostics().lastStep.outwardTear, true);
+  const failure = simulation.snapshot().tearFailure;
+  assert.equal(failure.kind, "outward");
+  assert.equal(failure.threshold, 0.29);
+  assert.ok(failure.value >= failure.threshold);
   assert.ok(simulation.state.includes(Cell.adhered));
   assert.ok(simulation.state.includes(Cell.torn));
 });

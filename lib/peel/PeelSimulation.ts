@@ -9,6 +9,11 @@ export const Cell = {
 export type Vec2 = { x: number; y: number };
 export type CurlProfile = "cylinder" | "cone";
 export type TearFactors = { outward: number; bottleneck: number };
+export type TearFailure = {
+  kind: "tension" | "area-jump" | "outward";
+  value: number;
+  threshold: number;
+};
 
 const OUTWARD_DEAD_ZONE = 0.018;
 const OUTWARD_LOAD_DISTANCE = 0.18;
@@ -56,6 +61,7 @@ export type PeelSnapshot = {
   detached: boolean;
   complete: boolean;
   failed: boolean;
+  tearFailure: TearFailure | null;
   torn: boolean;
   tearDragging: boolean;
   tearThreshold: number;
@@ -120,6 +126,7 @@ export class PeelSimulation {
   private outwardSeconds = 0;
   private strainTravel = 0;
   private failed = false;
+  private tearFailure: TearFailure | null = null;
   private torn = false;
   private tearThreshold: number;
   private releaseJumpThreshold: number;
@@ -214,6 +221,7 @@ export class PeelSimulation {
     this.pulling = false;
     this.outwardPulling = false;
     this.failed = false;
+    this.tearFailure = null;
     this.torn = false;
     this.tearOrigin = { x: 0, y: 0 };
     this.tearRecoil = { x: 0, y: 0 };
@@ -319,7 +327,7 @@ export class PeelSimulation {
       };
       if (outwardTear) {
         this.direction = { x: -inward.x, y: -inward.y };
-        this.triggerTear();
+        this.triggerTear({ kind: "outward", value: outwardLoad, threshold: this.tearThreshold });
       }
       return;
     }
@@ -413,9 +421,9 @@ export class PeelSimulation {
       bottleneckLoad,
     };
     if (avalancheTear) {
-      this.triggerTear(this.tearCandidate);
+      this.triggerTear({ kind: "area-jump", value: absoluteGain, threshold: this.releaseJumpThreshold }, this.tearCandidate);
     } else if (stressTear) {
-      this.triggerTear();
+      this.triggerTear({ kind: "tension", value: this.stress, threshold: this.tearThreshold });
     }
   }
 
@@ -483,6 +491,7 @@ export class PeelSimulation {
       detached: this.detached,
       complete: !this.torn && progress >= 0.997,
       failed: this.failed,
+      tearFailure: this.tearFailure,
       torn: this.torn,
       tearDragging: this.torn && this.tracking,
       tearThreshold: this.tearThreshold,
@@ -615,7 +624,7 @@ export class PeelSimulation {
       ? direction : { x: 0, y: 0 };
   }
 
-  private triggerTear(detachedMask?: Uint8Array) {
+  private triggerTear(failure: TearFailure, detachedMask?: Uint8Array) {
     let detachedReleasedCells = 0;
     for (let index = 0; index < this.state.length; index++) {
       const shouldDetach = detachedMask ? detachedMask[index] !== 0 : this.state[index] === Cell.lifted;
@@ -631,6 +640,7 @@ export class PeelSimulation {
     this.liftedCells = 0;
     this.torn = true;
     this.failed = true;
+    this.tearFailure = failure;
     this.tearOrigin = { ...this.pointer };
     this.tearRecoil = {
       x: this.direction.x * 0.035 / this.aspect,
