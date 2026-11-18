@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fitDistance, includeCurl, MAX_TENSION_STRETCH } from "../lib/render/PeelFraming.ts";
+import { fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance } from "../lib/render/PeelFraming.ts";
 
 test("camera keeps folded vertices and the held point inside a padded portrait or landscape viewport", () => {
   const tangent = Math.tan(31 * Math.PI / 360);
@@ -51,4 +51,25 @@ test("a diagonal fold just entering a corner does not enlarge the viewport abrup
   assert.ok(bounds.x - 2.4 < 0.001);
   assert.ok(bounds.y - 2 < 0.001);
   assert.ok(bounds.z < 0.023);
+});
+
+test("a grip near the edge adds no zoom unless it moves closer to the boundary", () => {
+  assert.equal(outwardEdgePressure(12, 12), 0);
+  assert.equal(outwardEdgePressure(28, 12), 0);
+  assert.ok(outwardEdgePressure(4, 12) > 0);
+  assert.equal(outwardEdgePressure(0, 120), 1);
+});
+
+test("a small lifted patch can rise without zooming the fully flat sticker", () => {
+  const tangent = Math.tan(31 * Math.PI / 360);
+  const rest = fitDistance({ x: 2.4, y: 2.4, z: 0.022 }, tangent, 1000, 680, 28) * 1.04;
+  const fold = { x: 0, y: 0, z: 0 };
+  const center = { x: -1.6, y: 0.08 };
+  includeCurl(fold, 0.55, 0.6, { x: -1.85, y: 0.08 }, { x: 1, y: 0 },
+    0.36, 0.32, false, 0, center);
+  assert.ok(fold.z > 0.2);
+  const target = Math.max(rest, fitDistance(fold, tangent, 1000, 680, 28));
+  assert.equal(stepCameraDistance(rest, target, fitDistance(fold, tangent, 1000, 680, 8)), rest);
+  assert.equal(stepCameraDistance(8, 10, 7), 8.24);
+  assert.equal(stepCameraDistance(8, 10, 9), 9);
 });

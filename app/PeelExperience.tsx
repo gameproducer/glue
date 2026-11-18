@@ -329,17 +329,6 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
             pointerId: event.pointerId,
           });
           const next = simulation.snapshot();
-          renderer.setPeel(
-            next.grab,
-            next.direction,
-            next.frontDepth,
-            profileRef.current,
-            next.stress,
-            next.tearThreshold,
-            next.tornOffset,
-            next.torn,
-          );
-          setSnapshot(next);
           scheduleTextureRefresh();
           if (!wasTorn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
         };
