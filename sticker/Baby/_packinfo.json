@@ -1,0 +1,40 @@
+{
+  "levels": [
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "bottle-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.15, 
+      "img": "brick-512.png"
+    }, 
+    {
+      "moves": 1, 
+      "den": 1.15, 
+      "img": "flying_stork-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "pacifier-512.png"
+    }, 
+    {
+      "moves": 3, 
+      "den": 1.0, 
+      "img": "rattle-512.png"
+    }, 
+    {
+      "moves": 4, 
+      "den": 1.0, 
+      "img": "teddybear-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "tricycle-512.png"
+    }
+  ], 
+  "name": "Baby"
+}

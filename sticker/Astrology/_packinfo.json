@@ -1,0 +1,40 @@
+{
+  "levels": [
+    {
+      "moves": 1, 
+      "img": "aries-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "cancer-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "capricorn-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "fire_element-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "leo-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "scorpio-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "water_element-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Astrology"
+}

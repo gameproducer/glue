@@ -1,0 +1,30 @@
+{
+  "levels": [
+    {
+      "moves": 5, 
+      "img": "delivery-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "food-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "fragile-512.png", 
+      "den": 1.1
+    }, 
+    {
+      "moves": 2, 
+      "img": "price_tag-512.png", 
+      "den": 1.1
+    }, 
+    {
+      "moves": 4, 
+      "img": "shopping_cart-512.png", 
+      "den": 1.05
+    }
+  ], 
+  "name": "Ecommerce"
+}

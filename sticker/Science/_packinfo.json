@@ -1,0 +1,35 @@
+{
+  "levels": [
+    {
+      "moves": 3, 
+      "img": "dna_helix-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 5, 
+      "img": "physics-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "psychology-512.png", 
+      "den": 1.12
+    }, 
+    {
+      "moves": 1, 
+      "img": "square_root2-512.png", 
+      "den": 0.8
+    }, 
+    {
+      "moves": 3, 
+      "img": "test_tube-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 6, 
+      "den": 0.95, 
+      "img": "biohazard-512.png"
+    }
+  ], 
+  "name": "Science"
+}

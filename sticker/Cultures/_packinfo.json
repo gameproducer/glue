@@ -1,0 +1,45 @@
+{
+  "levels": [
+    {
+      "moves": 1, 
+      "img": "anubis-512.png", 
+      "den": 1.16
+    }, 
+    {
+      "moves": 1, 
+      "img": "chili_pepper-512.png", 
+      "den": 0.96
+    }, 
+    {
+      "moves": 6, 
+      "img": "geisha-512.png", 
+      "den": 1.05
+    }, 
+    {
+      "moves": 2, 
+      "img": "great_wall-512.png", 
+      "den": 1.12
+    }, 
+    {
+      "moves": 1, 
+      "img": "mustache-2-512.png", 
+      "den": 0.71
+    }, 
+    {
+      "moves": 4, 
+      "img": "sombrero-512.png", 
+      "den": 0.77
+    }, 
+    {
+      "moves": 4, 
+      "img": "triskelion-512.png", 
+      "den": 0.92
+    }, 
+    {
+      "moves": 2, 
+      "img": "viking_helmet-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Cultures"
+}

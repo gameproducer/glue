@@ -1,0 +1,25 @@
+{
+  "levels": [
+    {
+      "moves": 4, 
+      "den": 1.0, 
+      "img": "big_ben-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "hex_burner-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.0, 
+      "img": "mess_tin-512.png"
+    }, 
+    {
+      "moves": 2, 
+      "den": 1.12, 
+      "img": "statue_of_liberty-512.png"
+    }
+  ], 
+  "name": "Travel"
+}

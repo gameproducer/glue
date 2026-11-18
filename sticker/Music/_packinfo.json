@@ -1,0 +1,55 @@
+{
+  "levels": [
+    {
+      "moves": 2, 
+      "img": "bugle-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "cornet-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 3, 
+      "img": "french_horn-512.png", 
+      "den": 1.05
+    }, 
+    {
+      "moves": 1, 
+      "img": "harp-512.png", 
+      "den": 1.05
+    }, 
+    {
+      "moves": 1, 
+      "img": "note_music-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "treble_clef-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 2, 
+      "img": "trombone-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 4, 
+      "img": "tuba-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 6, 
+      "img": "xylophone-512.png", 
+      "den": 0.6
+    }, 
+    {
+      "moves": 6, 
+      "img": "drum-512.png", 
+      "den": 0.85
+    }
+  ], 
+  "name": "Music"
+}

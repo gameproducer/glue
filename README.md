@@ -29,6 +29,10 @@ See [WEB.md](WEB.md) for interaction details.
 
 `PeelItAway/`, `PeelItAway.xcodeproj/`, and `PeelItAwayTests/` contain the SwiftUI/SpriteKit iPhone/iPad version, shaders, level artwork, and simulation tests. Open the Xcode project to run it. See [NATIVE.md](NATIVE.md).
 
+## Sticker artwork
+
+`sticker/` preserves the original sticker packs, images, and pack metadata for future level work. The active browser prototype currently uses its artwork in `public/`.
+
 ## Source locations and recovery
 
 This project folder is `/Users/dan/Documents/ChatGPT/Peel It Away`. It was restored on 2026-11-18 from the existing Sites source repository and the native sources under `/Users/dan/Projects`. The originals were left intact.

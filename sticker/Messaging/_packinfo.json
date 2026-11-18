@@ -1,0 +1,15 @@
+{
+  "levels": [
+    {
+      "moves": 2, 
+      "img": "cool-512.png", 
+      "den": 1.277
+    }, 
+    {
+      "moves": 2, 
+      "img": "paper_plane-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Messaging"
+}

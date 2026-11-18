@@ -1,0 +1,20 @@
+{
+  "levels": [
+    {
+      "moves": 2, 
+      "img": "flip_flop-512.png", 
+      "den": 1.11
+    }, 
+    {
+      "moves": 3, 
+      "img": "glasses-512.png", 
+      "den": 1.0
+    }, 
+    {
+      "moves": 1, 
+      "img": "needle-512.png", 
+      "den": 1.0
+    }
+  ], 
+  "name": "Clothing"
+}

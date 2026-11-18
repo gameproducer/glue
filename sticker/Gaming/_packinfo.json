@@ -1,0 +1,15 @@
+{
+  "levels": [
+    {
+      "moves": 3, 
+      "den": 1.28, 
+      "img": "dice-512.png"
+    }, 
+    {
+      "moves": 4, 
+      "den": 1.0, 
+      "img": "put_in_motion-512.png"
+    }
+  ], 
+  "name": "Gaming"
+}
