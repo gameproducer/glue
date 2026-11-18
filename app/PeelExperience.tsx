@@ -10,6 +10,7 @@ import {
   type Vec2,
 } from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
+import { PEEL_SOUNDS, PeelAudio, readPeelSound, savePeelSound, type PeelSound } from "@/lib/peel/PeelAudio";
 import { APPEARANCE_CONTROLS, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, readAppearance, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import stickerLevels from "@/lib/peel/levels.json";
@@ -144,6 +145,8 @@ const PACKS = [...new Set(LEVELS.map(level => level.pack))];
 export default function PeelExperience() {
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
+  const [audio] = useState(() => new PeelAudio());
+  useEffect(() => () => audio.dispose(), [audio]);
   useEffect(() => {
     try {
       const saved = localStorage.getItem("peel.selectedLevel");
@@ -156,14 +159,15 @@ export default function PeelExperience() {
     try { localStorage.setItem("peel.selectedLevel", next.id); } catch { /* Storage is optional. */ }
   };
   return <PeelGame key={level.id} level={level} onLevelChange={selectLevel}
-    bottomPanelOpen={bottomPanelOpen} onBottomPanelChange={setBottomPanelOpen} />;
+    bottomPanelOpen={bottomPanelOpen} onBottomPanelChange={setBottomPanelOpen} audio={audio} />;
 }
 
-function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }: {
+function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, audio }: {
   level: Level;
   onLevelChange: (level: Level) => void;
   bottomPanelOpen: boolean;
   onBottomPanelChange: (open: boolean) => void;
+  audio: PeelAudio;
 }) {
   const tearThresholdStorageKey = `peel.level.${level.id}.tearThreshold`;
   const releaseJumpStorageKey = `peel.level.${level.id}.releaseJumpThreshold`;
@@ -186,6 +190,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }
   const [menu, setMenu] = useState<"physics" | "visuals" | null>(null);
   const menuRef = useRef<HTMLElement>(null);
   const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
+  const [peelSound, setPeelSound] = useState<PeelSound>("off");
+  const peelSoundRef = useRef<PeelSound>("off");
   const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
   const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
   const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
@@ -199,6 +205,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }
   const [releasedWhileReversing, setReleasedWhileReversing] = useState(false);
   const [moveLimitToast, setMoveLimitToast] = useState(false);
   const [logStatus, setLogStatus] = useState("Recording locally");
+
+  useEffect(() => {
+    const saved = readPeelSound();
+    peelSoundRef.current = saved;
+    setPeelSound(saved);
+    audio.setMuted(saved === "off");
+  }, [audio]);
 
   useEffect(() => {
     if (!menu) return;
@@ -338,6 +351,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }
             pointerType: event.pointerType,
           });
           if (!point || !accepted) return;
+          if (peelSoundRef.current !== "off") audio.unlock();
+          audio.beginGesture();
           setReleasedWhileReversing(false);
           event.preventDefault();
           activePointer.current = event.pointerId;
@@ -351,7 +366,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }
           const point = renderer.dragToSticker(event.clientX, event.clientY);
           if (!point) return;
           event.preventDefault();
-          const wasTorn = simulation.snapshot().torn;
+          const before = simulation.snapshot();
           const simulationTime = performance.now();
           simulation.drag(point, simulationTime);
           recordDiagnostic("pointer_move", point, {
@@ -359,12 +374,16 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }
             pointerId: event.pointerId,
           });
           const next = simulation.snapshot();
+          if (!next.torn && !next.outwardPulling) {
+            audio.playProgress(peelSoundRef.current, next.progress - before.progress);
+          }
           scheduleTextureRefresh();
-          if (!wasTorn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
+          if (!before.torn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
         };
 
         const finishPointer = (event: PointerEvent, commit: boolean) => {
           if (activePointer.current !== event.pointerId) return;
+          if (commit && peelSoundRef.current !== "off") audio.unlock();
           activePointer.current = null;
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const beforeRelease = simulation.snapshot();
@@ -429,7 +448,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }
       activePointer.current = null;
       teardown();
     };
-  }, [level, recordDiagnostic, refresh, tearThresholdStorageKey, releaseJumpStorageKey, liftedTransparencyStorageKey, tearFactorsStorageKey]);
+  }, [level, audio, recordDiagnostic, refresh, tearThresholdStorageKey, releaseJumpStorageKey, liftedTransparencyStorageKey, tearFactorsStorageKey]);
 
   const toggleProfile = () => {
     const next = profile === "cylinder" ? "cone" : "cylinder";
@@ -499,6 +518,14 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }
     rendererRef.current?.setAppearance(next);
     recordDiagnostic("appearance", null, { key, value });
     try { localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(next)); } catch { /* Storage is optional. */ }
+  };
+
+  const changePeelSound = (sound: PeelSound) => {
+    peelSoundRef.current = sound;
+    setPeelSound(sound);
+    if (sound !== "off") audio.unlock();
+    audio.setMuted(sound === "off");
+    savePeelSound(sound);
   };
 
   const changeZoom = (step: number) => {
@@ -746,6 +773,15 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }
 
         {menu === "visuals" && (
           <aside ref={menuRef} className="physics-settings visual-settings" aria-label="Visual settings">
+            <div className="peel-sound-setting">
+              <label className="setting-control">
+                <span>Peel sound</span>
+                <select value={peelSound} onChange={event => changePeelSound(event.currentTarget.value as PeelSound)}>
+                  {PEEL_SOUNDS.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+                </select>
+              </label>
+              <button type="button" disabled={peelSound === "off"} onClick={() => audio.preview(peelSound)}>Preview</button>
+            </div>
             {APPEARANCE_CONTROLS.map(({ key, label, labels }) => (
               <label key={key} className="setting-control">
                 <span>{label}</span>

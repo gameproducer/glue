@@ -535,6 +535,26 @@ h1 {
   outline-offset: 2px;
 }
 
+.peel-sound-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.peel-sound-setting button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  color: var(--ink);
+  background: #211c2b;
+  cursor: pointer;
+}
+
+.peel-sound-setting button:disabled { opacity: .45; cursor: default; }
+.peel-sound-setting button:focus-visible { outline: 2px solid #9cf3e9; outline-offset: 2px; }
+
 @media (max-width: 760px) {
   .control-bar { flex-wrap: wrap; }
 }

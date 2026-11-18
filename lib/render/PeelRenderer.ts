@@ -5,6 +5,7 @@ import { nearestStateSources, extendStateTexture } from "./StateTexture";
 import { Cell, type CurlProfile, type PeelSimulation, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
+const RELAX_MS = 420;
 const DISSOLVE_MS = 1800;
 
 type DissolvingShape = {
@@ -35,6 +36,8 @@ type PeelUniforms = {
   uCone: { value: number };
   uStress: { value: number };
   uStretch: { value: number };
+  uRelax: { value: number };
+  uFlatOffset: { value: THREE.Vector2 };
   uDissolve: { value: number };
   uTornOffset: { value: THREE.Vector2 };
 };
@@ -48,6 +51,8 @@ const vertexShader = /* glsl */ `
   uniform float uCone;
   uniform float uLayer;
   uniform float uStretch;
+  uniform float uRelax;
+  uniform vec2 uFlatOffset;
   uniform vec2 uTornOffset;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
@@ -79,13 +84,13 @@ const vertexShader = /* glsl */ `
       vec2 front = uGrab + direction * uFrontDepth + lateralAxis * lateral;
       p.xy = front + direction * (extra - radius * sin(theta));
       p.z = 0.018 + radius * (1.0 - cos(theta));
-      vNormalWorld = normalize(vec3(direction * sin(theta), cos(theta)));
-      vCurl = smoothstep(0.0, PI, theta);
+      float relaxedTheta = theta * (1.0 - uRelax);
+      vNormalWorld = vec3(direction * sin(relaxedTheta), cos(relaxedTheta));
+      vCurl = smoothstep(0.0, PI, relaxedTheta);
     } else if (uLayer > 0.5) {
       p.z += 0.018;
     }
-
-
+    p = mix(p, vec3(position.xy + uFlatOffset, 0.14), uRelax);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }
 `;
@@ -399,6 +404,8 @@ export class PeelRenderer {
         uCone: { value: 0 },
         uStress: { value: 0 },
         uStretch: { value: 0 },
+        uRelax: { value: 0 },
+        uFlatOffset: { value: new THREE.Vector2() },
         uDissolve: { value: 0 },
         uTornOffset: { value: new THREE.Vector2() },
       };
@@ -583,9 +590,18 @@ export class PeelRenderer {
       texture.magFilter = THREE.LinearFilter;
       texture.needsUpdate = true;
       const meshes: DissolvingShape["meshes"] = [];
+      const bounds = this.movingBounds;
       for (const [index, source] of this.materials.entries()) {
         if (source.uniforms.uLayer.value !== 2) continue;
         const material = source.clone();
+        const uniforms = material.uniforms as unknown as PeelUniforms;
+        // Match the curled position at the grab so the sheet opens around the player's grip.
+        const depth = uniforms.uFrontDepth.value;
+        const radius = uniforms.uRadius.value;
+        const length = depth * (1 + uniforms.uStretch.value);
+        const theta = Math.min(length / radius, Math.PI);
+        const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
+        const flatOffset = uniforms.uFlatOffset.value.copy(uniforms.uDirection.value).multiplyScalar(shift);
         material.uniforms.uArt.value = source.uniforms.uArt.value;
         material.uniforms.uReleaseHistory.value = this.releaseTexture;
         material.uniforms.uState.value = texture;
@@ -596,9 +612,15 @@ export class PeelRenderer {
         mesh.frustumCulled = false;
         this.scene.add(mesh);
         meshes.push(mesh);
+        if (bounds && this.liftedRegion) {
+          const { x, y, width, height } = this.liftedRegion;
+          bounds.x = Math.max(bounds.x, Math.abs(x + flatOffset.x) + width / 2);
+          bounds.y = Math.max(bounds.y, Math.abs(y + flatOffset.y) + height / 2);
+          bounds.z = Math.max(bounds.z, 0.15);
+        }
       }
       this.heldDissolve = { texture, meshes, started: performance.now(), origin: { ...pointer },
-        offset: { x: 0, y: 0 }, bounds: this.movingBounds };
+        offset: { x: 0, y: 0 }, bounds };
       this.dissolves.push(this.heldDissolve);
     }
     const shape = this.heldDissolve;
@@ -772,12 +794,17 @@ export class PeelRenderer {
     const now = performance.now();
     for (let i = this.dissolves.length - 1; i >= 0; i--) {
       const shape = this.dissolves[i];
-      const elapsed = (now - shape.started) / DISSOLVE_MS;
-      if (elapsed >= 1) {
+      const elapsed = now - shape.started;
+      if (elapsed >= RELAX_MS + DISSOLVE_MS) {
         this.disposeDissolve(shape);
         this.dissolves.splice(i, 1);
       } else {
-        for (const mesh of shape.meshes) mesh.material.uniforms.uDissolve.value = elapsed;
+        const relax = THREE.MathUtils.smoothstep(elapsed, 0, RELAX_MS);
+        const dissolve = Math.max(0, (elapsed - RELAX_MS) / DISSOLVE_MS);
+        for (const mesh of shape.meshes) {
+          mesh.material.uniforms.uRelax.value = relax;
+          mesh.material.uniforms.uDissolve.value = dissolve;
+        }
       }
     }
     this.frameCamera();
