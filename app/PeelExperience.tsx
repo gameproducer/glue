@@ -43,6 +43,7 @@ const emptySnapshot: PeelSnapshot = {
   pulling: false,
   outwardPulling: false,
   canCommit: false,
+  detached: false,
   complete: false,
   failed: false,
   torn: false,
@@ -166,6 +167,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const rendererRef = useRef<PeelRenderer | null>(null);
   const activePointer = useRef<number | null>(null);
   const textureFrame = useRef(0);
+  const moveToastTimer = useRef<number | null>(null);
   const profileRef = useRef<CurlProfile>("cylinder");
   const diagnosticEvents = useRef<DiagnosticEvent[]>([]);
   const diagnosticStartedAt = useRef(0);
@@ -185,6 +187,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const [miss, setMiss] = useState(false);
   const [webglError, setWebglError] = useState(false);
   const [snapshot, setSnapshot] = useState<PeelSnapshot>(emptySnapshot);
+  const [moveLimitToast, setMoveLimitToast] = useState(false);
   const [logStatus, setLogStatus] = useState("Recording locally");
 
   const recordDiagnostic = useCallback((
@@ -223,6 +226,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
       next.tearThreshold,
       next.tornOffset,
       next.torn,
+      next.detached ? next.pointer : undefined,
     );
     setSnapshot(next);
   }, []);
@@ -338,7 +342,13 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           activePointer.current = null;
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const hadGrab = simulation.snapshot().pulling;
+          if (simulation.snapshot().detached) refresh(true);
           const accepted = simulation.end(commit);
+          const finished = simulation.snapshot();
+          if (accepted && finished.moves === finished.maxMoves + 1) {
+            setMoveLimitToast(true);
+            moveToastTimer.current = window.setTimeout(() => setMoveLimitToast(false), 2800);
+          }
           const point = renderer.dragToSticker(event.clientX, event.clientY);
           recordDiagnostic(commit ? "pointer_up" : "pointer_cancel", point, {
             accepted,
@@ -383,6 +393,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
     return () => {
       disposed = true;
       if (textureFrame.current) cancelAnimationFrame(textureFrame.current);
+      if (moveToastTimer.current !== null) window.clearTimeout(moveToastTimer.current);
       textureFrame.current = 0;
       activePointer.current = null;
       teardown();
@@ -466,6 +477,9 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
 
   const reset = () => {
     simulationRef.current?.reset();
+    rendererRef.current?.clearDissolves();
+    if (moveToastTimer.current !== null) window.clearTimeout(moveToastTimer.current);
+    setMoveLimitToast(false);
     recordDiagnostic("level_reset");
     setMiss(false);
     refresh(true);
@@ -557,8 +571,8 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
       : "The lifted piece separated from the sticker."
     : snapshot.complete
     ? "Clean release — the sticker stayed intact."
-    : snapshot.failed
-      ? "The adhesive held. Try broader pulls through the body."
+      : snapshot.detached
+      ? "Shape released."
       : snapshot.tracking && !snapshot.pulling
         ? "Cross an exposed edge to pick it up."
         : snapshot.pulling
@@ -593,6 +607,9 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
       </header>
 
       <section className="stage" aria-label="Sticker peeling prototype">
+        <div role="status" className={moveLimitToast ? "move-limit-toast" : undefined}>
+          {moveLimitToast ? "Move limit exceeded. Keep peeling." : null}
+        </div>
         <div className="surface-glow" aria-hidden="true" />
         <div ref={hostRef} className="renderer-host" />
         {!ready && !webglError && <p className="loading-art">Preparing sticker…</p>}
@@ -711,9 +728,9 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
 
         {!snapshot.tracking && (snapshot.complete || snapshot.failed) && (
           <div className="result-card" role="dialog" aria-modal="false" aria-label="Level result">
-            <span>{snapshot.complete ? "RELEASED" : snapshot.torn ? "TORN" : "OUT OF MOVES"}</span>
+            <span>{snapshot.complete ? "RELEASED" : "TORN"}</span>
             <strong>
-              {snapshot.complete ? "One piece. No tears." : snapshot.torn ? "The lifted piece separated." : `${percent}% came free.`}
+              {snapshot.complete ? "Clean release." : "The lifted piece separated."}
             </strong>
             <button type="button" onClick={reset}>Try again</button>
           </div>

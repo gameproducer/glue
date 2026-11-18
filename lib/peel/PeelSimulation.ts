@@ -53,6 +53,7 @@ export type PeelSnapshot = {
   pulling: boolean;
   outwardPulling: boolean;
   canCommit: boolean;
+  detached: boolean;
   complete: boolean;
   failed: boolean;
   torn: boolean;
@@ -264,6 +265,7 @@ export class PeelSimulation {
     }
 
     this.pointer = { ...point };
+    if (this.detached) return;
 
     if (!this.pulling) {
       const seed = this.traceAccessibleCell(this.gestureOrigin, point);
@@ -428,16 +430,16 @@ export class PeelSimulation {
       return false;
     }
     const threshold = Math.max(10, Math.round(this.totalCells * 0.0015));
-    const releasedWholeComponent = this.pendingNewCells > 0 && this.pendingNewCells === this.componentAdheredCells;
-    const accepted = commit && this.pulling && !this.outwardPulling && this.frontDepth > 0.012
-      && (this.pendingNewCells >= threshold || releasedWholeComponent);
+    const releasedWholeComponent = this.detached;
+    const accepted = releasedWholeComponent || (commit && this.pulling && !this.outwardPulling
+      && this.frontDepth > 0.012 && this.pendingNewCells >= threshold);
 
     if (this.pulling) {
       for (let index = 0; index < this.state.length; index++) {
         const remove = accepted && releasedWholeComponent && this.grabbedComponent[index] !== 0;
         if (remove || (accepted && this.state[index] === Cell.lifted)) {
           this.state[index] = remove ? Cell.outside : Cell.released;
-          this.releasedHistory[index] = 255;
+          if (!remove) this.releasedHistory[index] = 255;
         } else {
           this.state[index] = this.gestureBase[index];
         }
@@ -457,8 +459,12 @@ export class PeelSimulation {
     this.grabIndex = -1;
     this.frontDepth = 0;
     this.stress *= 0.32;
-    this.failed = this.moves >= this.maxMoves && this.releasedCells < this.totalCells * 0.997;
     return accepted;
+  }
+
+  private get detached() {
+    return this.tracking && this.pulling && !this.torn && this.frontDepth > 0.012
+      && this.pendingNewCells > 0 && this.pendingNewCells === this.componentAdheredCells;
   }
 
   snapshot(): PeelSnapshot {
@@ -474,6 +480,7 @@ export class PeelSimulation {
       pulling: this.pulling,
       outwardPulling: this.outwardPulling,
       canCommit: this.pendingNewCells > 0 && !this.outwardPulling,
+      detached: this.detached,
       complete: !this.torn && progress >= 0.997,
       failed: this.failed,
       torn: this.torn,
@@ -503,12 +510,21 @@ export class PeelSimulation {
 
   writeTexture(target: Uint8Array) {
     if (target.length !== this.state.length * 4) throw new Error("State texture has the wrong size");
+    const detached = this.detached;
     for (let index = 0, offset = 0; index < this.state.length; index++, offset += 4) {
-      const value = this.state[index];
+      const value = detached && this.grabbedComponent[index] ? Cell.outside : this.state[index];
       target[offset] = value === Cell.adhered ? 255 : 0;
       target[offset + 1] = value === Cell.released ? 255 : 0;
       target[offset + 2] = value === Cell.lifted ? 255 : 0;
       target[offset + 3] = value === Cell.torn ? 255 : 0;
+    }
+  }
+
+  writeDetachedTexture(target: Uint8Array) {
+    if (target.length !== this.state.length * 4) throw new Error("State texture has the wrong size");
+    if (!this.detached) return;
+    for (let index = 0; index < this.state.length; index++) {
+      target[index * 4 + 2] = this.grabbedComponent[index] ? 255 : 0;
     }
   }
 

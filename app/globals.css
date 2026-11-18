@@ -538,3 +538,21 @@ h1 {
 @media (max-width: 760px) {
   .control-bar { flex-wrap: wrap; }
 }
+
+.move-limit-toast {
+  position: absolute;
+  top: clamp(115px, 20%, 160px);
+  left: 50%;
+  z-index: 7;
+  width: max-content;
+  max-width: 90%;
+  transform: translateX(-50%);
+  padding: 9px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: #211c2b;
+  color: var(--ink);
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
+}

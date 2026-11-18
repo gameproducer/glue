@@ -234,6 +234,21 @@ test("finishing one figure over multiple moves removes it and preserves the othe
   simulation.drag({ x: 0.96, y: 0.5 }, 760);
   assert.ok(simulation.snapshot().areaJump > 0.02);
   assert.equal(simulation.snapshot().torn, false);
+  assert.equal(simulation.snapshot().detached, true);
+  const board = new Uint8Array(mask.length * 4);
+  const dissolve = new Uint8Array(board.length);
+  simulation.writeTexture(board);
+  simulation.writeDetachedTexture(dissolve);
+  for (let index = 0; index < mask.length; index++) {
+    if (left[index]) {
+      assert.deepEqual([...board.subarray(index * 4, index * 4 + 4)], [0, 0, 0, 0]);
+      assert.equal(dissolve[index * 4 + 2], 255);
+    }
+    if (right[index]) assert.equal(board[index * 4], 255);
+  }
+  simulation.drag({ x: -0.1, y: 0.5 }, 780);
+  assert.equal(simulation.snapshot().detached, true);
+  assert.equal(simulation.snapshot().torn, false);
   assert.equal(simulation.end(true), true);
   for (let index = 0; index < mask.length; index++) {
     if (left[index]) assert.equal(simulation.state[index], Cell.outside);
@@ -254,6 +269,23 @@ test("finishing one figure over multiple moves removes it and preserves the othe
   assert.equal(simulation.snapshot().complete, true);
   simulation.reset();
   assert.deepEqual(simulation.state, mask);
+});
+
+test("exceeding the move target still allows further peeling", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 1, mask, 1, 1);
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: 0.28, y: 0.5 }, 400);
+  assert.equal(simulation.end(true), true);
+  simulation.begin({ x: 0.16, y: 0.5 }, 700);
+  simulation.drag({ x: 0.50, y: 0.5 }, 1000);
+  assert.equal(simulation.end(true), true);
+  assert.equal(simulation.snapshot().moves, 2);
+  assert.equal(simulation.snapshot().complete, false);
+  assert.equal(simulation.snapshot().failed, false);
+  assert.equal(simulation.begin({ x: 0.38, y: 0.5 }, 1300), true);
 });
 
 test("pulling back softly stalls, while a strong reversal tears only the held flap", () => {

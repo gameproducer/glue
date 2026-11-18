@@ -5,6 +5,16 @@ import { nearestStateSources, extendStateTexture } from "./StateTexture";
 import { Cell, type CurlProfile, type PeelSimulation, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
+const DISSOLVE_MS = 1000;
+
+type DissolvingShape = {
+  texture: THREE.DataTexture;
+  meshes: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>[];
+  started: number;
+  origin: Vec2;
+  offset: Vec2;
+  bounds: PeelBounds | null;
+};
 
 type PeelUniforms = {
   uArt: { value: THREE.Texture };
@@ -24,6 +34,7 @@ type PeelUniforms = {
   uCone: { value: number };
   uStress: { value: number };
   uStretch: { value: number };
+  uDissolve: { value: number };
   uTornOffset: { value: THREE.Vector2 };
 };
 
@@ -91,6 +102,7 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uFilmColor;
   uniform float uLiftedOpacity;
   uniform float uStress;
+  uniform float uDissolve;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
@@ -177,6 +189,10 @@ const fragmentShader = /* glsl */ `
     float released = smoothstep(0.02, 0.98, texture2D(uReleaseHistory, vUv).r);
     color = mix(color, vec3(0.21, 0.18, 0.23), released);
     alpha = mix(alpha, min(alpha, 0.70 * silhouette), released);
+    if (uDissolve > 0.0) {
+      float grainStart = grain(floor(vUv * 230.0)) * 0.7;
+      alpha *= 1.0 - smoothstep(grainStart, grainStart + 0.3, uDissolve);
+    }
     gl_FragColor = vec4(color, alpha * layerCoverage);
   }
 `;
@@ -250,6 +266,8 @@ export class PeelRenderer {
   private lastReleaseRevision = -1;
   private readonly materials: THREE.ShaderMaterial[] = [];
   private readonly stickerMeshes: THREE.Mesh[] = [];
+  private readonly dissolves: DissolvingShape[] = [];
+  private heldDissolve: DissolvingShape | null = null;
   private readonly shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private readonly resizeObserver: ResizeObserver;
   private readonly originalWhiteArtwork: boolean;
@@ -348,6 +366,7 @@ export class PeelRenderer {
         uCone: { value: 0 },
         uStress: { value: 0 },
         uStretch: { value: 0 },
+        uDissolve: { value: 0 },
         uTornOffset: { value: new THREE.Vector2() },
       };
       const material = new THREE.ShaderMaterial({
@@ -474,6 +493,7 @@ export class PeelRenderer {
     tearThreshold: number,
     tornOffset: Vec2 = { x: 0, y: 0 },
     torn = false,
+    detachedPointer?: Vec2,
   ) {
     const worldGrab = this.uvToWorld(grab);
     const worldDirection = new THREE.Vector2(direction.x, direction.y).normalize();
@@ -507,10 +527,66 @@ export class PeelRenderer {
       uniforms.uStretch.value = stretch;
       uniforms.uTornOffset.value.set(offsetX, offsetY);
     }
+    if (detachedPointer) {
+      this.moveDissolve(detachedPointer);
+      this.movingBounds = null;
+    } else {
+      this.heldDissolve = null;
+    }
     const lift = Math.min(1, depth * 2.2);
     this.shadow.scale.set(1 + lift * 0.08, 1 + lift * 0.12, 1);
     this.shadow.position.set(-direction.x * lift * 0.08 + 0.06, -direction.y * lift * 0.08 - 0.08, -0.055);
     this.shadow.material.uniforms.uOpacity.value = 0.3 + lift * 0.18;
+  }
+
+  private moveDissolve(pointer: Vec2) {
+    if (!this.heldDissolve) {
+      const { width, height } = this.simulation;
+      const data = new Uint8Array(width * height * 4);
+      this.simulation.writeDetachedTexture(data);
+      extendStateTexture(data, this.stateSources);
+      const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+      const meshes: DissolvingShape["meshes"] = [];
+      for (const [index, source] of this.materials.entries()) {
+        if (source.uniforms.uLayer.value !== 2) continue;
+        const material = source.clone();
+        material.uniforms.uArt.value = source.uniforms.uArt.value;
+        material.uniforms.uReleaseHistory.value = this.releaseTexture;
+        material.uniforms.uState.value = texture;
+        material.depthWrite = false;
+        const mesh = new THREE.Mesh(this.stickerMeshes[index].geometry, material);
+        mesh.renderOrder = this.stickerMeshes[index].renderOrder + 6;
+        mesh.position.z = this.stickerMeshes[index].position.z;
+        mesh.frustumCulled = false;
+        this.scene.add(mesh);
+        meshes.push(mesh);
+      }
+      this.heldDissolve = { texture, meshes, started: performance.now(), origin: { ...pointer },
+        offset: { x: 0, y: 0 }, bounds: this.movingBounds };
+      this.dissolves.push(this.heldDissolve);
+    }
+    const shape = this.heldDissolve;
+    shape.offset.x = (pointer.x - shape.origin.x) * this.stickerWidth;
+    shape.offset.y = (pointer.y - shape.origin.y) * this.stickerHeight;
+    for (const mesh of shape.meshes) mesh.position.setX(shape.offset.x).setY(shape.offset.y);
+  }
+
+  clearDissolves() {
+    for (const shape of this.dissolves) this.disposeDissolve(shape);
+    this.dissolves.length = 0;
+    this.heldDissolve = null;
+  }
+
+  private disposeDissolve(shape: DissolvingShape) {
+    for (const mesh of shape.meshes) {
+      this.scene.remove(mesh);
+      mesh.material.dispose();
+    }
+    shape.meshes.length = 0;
+    shape.texture.dispose();
   }
 
   setAppearance(appearance: PeelAppearance) {
@@ -594,6 +670,7 @@ export class PeelRenderer {
     cancelAnimationFrame(this.frame);
     cancelAnimationFrame(this.resizeFrame);
     this.resizeObserver.disconnect();
+    this.clearDissolves();
     for (const mesh of this.stickerMeshes) mesh.geometry.dispose();
     for (const material of this.materials) material.dispose();
     this.shadow.geometry.dispose();
@@ -631,6 +708,11 @@ export class PeelRenderer {
     const fit = (margin: number) => Math.max(
       this.movingBounds ? fitDistance(this.movingBounds, tangent, width, height, margin) : 0,
       gripBounds ? fitDistance(gripBounds, tangent, width, height, margin) : 0,
+      ...this.dissolves.map(shape => shape.bounds ? fitDistance({
+        x: shape.bounds.x + Math.abs(shape.offset.x),
+        y: shape.bounds.y + Math.abs(shape.offset.y),
+        z: shape.bounds.z,
+      }, tangent, width, height, margin) : 0),
     );
     const required = fit(inset);
     if (heldPoint) this.dragFit = Math.max(this.dragFit, required);
@@ -650,10 +732,20 @@ export class PeelRenderer {
   private animate = () => {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
+    const now = performance.now();
+    for (let i = this.dissolves.length - 1; i >= 0; i--) {
+      const shape = this.dissolves[i];
+      const elapsed = (now - shape.started) / DISSOLVE_MS;
+      if (elapsed >= 1) {
+        this.disposeDissolve(shape);
+        this.dissolves.splice(i, 1);
+      } else {
+        for (const mesh of shape.meshes) mesh.material.uniforms.uDissolve.value = elapsed;
+      }
+    }
     this.frameCamera();
     this.renderer.render(this.scene, this.camera);
     this.fpsFrames++;
-    const now = performance.now();
     if (now - this.lastFpsTime > 650) {
       const fps = Math.round(this.fpsFrames * 1000 / (now - this.lastFpsTime));
       this.onFps?.(fps);
