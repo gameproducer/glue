@@ -22,6 +22,7 @@ type PeelUniforms = {
   uStickerColor: { value: THREE.Color };
   uFaceFinish: { value: number };
   uBackFinish: { value: number };
+  uReleaseFinish: { value: number };
   uState: { value: THREE.DataTexture };
   uReleaseHistory: { value: THREE.DataTexture };
   uLayer: { value: number };
@@ -96,6 +97,7 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uStickerColor;
   uniform float uFaceFinish;
   uniform float uBackFinish;
+  uniform float uReleaseFinish;
   uniform sampler2D uState;
   uniform sampler2D uReleaseHistory;
   uniform float uLayer;
@@ -194,10 +196,28 @@ const fragmentShader = /* glsl */ `
 
     #endif
 
-    // The mark belongs to the material itself and follows it through every layer.
-    float released = smoothstep(0.02, 0.98, texture2D(uReleaseHistory, vUv).r);
-    color = mix(color, vec3(0.21, 0.18, 0.23), released);
-    alpha = mix(alpha, min(alpha, 0.70 * silhouette), released);
+    // The flat released layer already gets its coverage from state.g. Applying
+    // the history mask again there weakens the finish at the feathered edge.
+    bool flatReleased = uLayer > 0.5 && uLayer < 1.5;
+    float released = flatReleased ? 1.0
+      : smoothstep(0.02, 0.98, texture2D(uReleaseHistory, vUv).r);
+    if (released > 0.0) {
+      vec3 releaseColor = vec3(0.21, 0.18, 0.23);
+      float releaseAlpha = min(alpha, 0.70 * silhouette);
+      if (uReleaseFinish > 2.5) {
+        float stripe = 0.5 + 0.5 * sin((vUv.x + vUv.y) * 260.0);
+        releaseColor = mix(vec3(0.16, 0.14, 0.20), vec3(0.57, 0.50, 0.65), smoothstep(0.55, 0.86, stripe));
+      } else if (uReleaseFinish > 1.5) {
+        float frost = softNoise(vUv * 45.0) * 0.13 + grain(floor(vUv * 360.0)) * 0.07;
+        releaseColor = vec3(0.40, 0.49, 0.57) + frost;
+        releaseAlpha = min(alpha, 0.64 * silhouette);
+      } else if (uReleaseFinish > 0.5) {
+        releaseColor = color;
+        releaseAlpha = alpha * 0.30;
+      }
+      color = mix(color, releaseColor, released);
+      alpha = mix(alpha, releaseAlpha, released);
+    }
     if (uDissolve > 0.0) {
       float sweep = 0.5 + dot(vUv - 0.5, uDirection) * 0.6;
       float variation = softNoise(vUv * 7.0) * 0.8 + softNoise(vUv * 21.0) * 0.2;
@@ -366,6 +386,7 @@ export class PeelRenderer {
         uStickerColor: { value: new THREE.Color(0xffffff) },
         uFaceFinish: { value: 0 },
         uBackFinish: { value: 0 },
+        uReleaseFinish: { value: 0 },
         uState: { value: this.stateTexture },
         uReleaseHistory: { value: this.releaseTexture },
         uLayer: { value: pass.layer },
@@ -614,6 +635,10 @@ export class PeelRenderer {
       uniforms.uStickerColor.value.set(sticker ?? "#ffffff");
       uniforms.uFaceFinish.value = appearance.face;
       uniforms.uBackFinish.value = appearance.back;
+      uniforms.uReleaseFinish.value = appearance.released;
+    }
+    for (const shape of this.dissolves) {
+      for (const mesh of shape.meshes) mesh.material.uniforms.uReleaseFinish.value = appearance.released;
     }
   }
 

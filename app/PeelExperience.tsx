@@ -188,6 +188,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const [miss, setMiss] = useState(false);
   const [webglError, setWebglError] = useState(false);
   const [snapshot, setSnapshot] = useState<PeelSnapshot>(emptySnapshot);
+  const [releasedWhileReversing, setReleasedWhileReversing] = useState(false);
   const [moveLimitToast, setMoveLimitToast] = useState(false);
   const [logStatus, setLogStatus] = useState("Recording locally");
 
@@ -314,6 +315,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
             pointerType: event.pointerType,
           });
           if (!point || !accepted) return;
+          setReleasedWhileReversing(false);
           event.preventDefault();
           activePointer.current = event.pointerId;
           canvas.setPointerCapture(event.pointerId);
@@ -342,10 +344,14 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           if (activePointer.current !== event.pointerId) return;
           activePointer.current = null;
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-          const hadGrab = simulation.snapshot().pulling;
-          if (simulation.snapshot().detached) refresh(true);
+          const beforeRelease = simulation.snapshot();
+          const hadGrab = beforeRelease.pulling;
+          if (beforeRelease.detached) refresh(true);
           const accepted = simulation.end(commit);
           const finished = simulation.snapshot();
+          if (commit && !accepted && beforeRelease.outwardPulling && !finished.failed) {
+            setReleasedWhileReversing(true);
+          }
           if (accepted && finished.moves === finished.maxMoves + 1) {
             setMoveLimitToast(true);
             moveToastTimer.current = window.setTimeout(() => setMoveLimitToast(false), 2800);
@@ -355,6 +361,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
             accepted,
             commit,
             hadGrab,
+            outwardPulling: beforeRelease.outwardPulling,
             pointerId: event.pointerId,
           });
           renderer.endDrag();
@@ -467,6 +474,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
     const next = { ...appearance, [key]: value };
     setAppearance(next);
     rendererRef.current?.setAppearance(next);
+    recordDiagnostic("appearance", null, { key, value });
     try { localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(next)); } catch { /* Storage is optional. */ }
   };
 
@@ -481,6 +489,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
     rendererRef.current?.clearDissolves();
     if (moveToastTimer.current !== null) window.clearTimeout(moveToastTimer.current);
     setMoveLimitToast(false);
+    setReleasedWhileReversing(false);
     recordDiagnostic("level_reset");
     setMiss(false);
     refresh(true);
@@ -509,6 +518,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         areaJumpThreshold: simulation.snapshot().releaseJumpThreshold,
         tearFactors,
         liftedTransparency,
+        appearance,
       },
       environment: {
         userAgent: navigator.userAgent,
@@ -585,6 +595,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           ? snapshot.outwardPulling ? "Pulling back loads the lifted edge. Sweep forward to continue."
             : snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
             : snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction." : "Keep sweeping the peel front."
+          : releasedWhileReversing ? "Peel progress reverted after pulling back. Let go while sweeping forward to keep it."
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
   return (

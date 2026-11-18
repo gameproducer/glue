@@ -291,13 +291,45 @@ test("exceeding the move target still allows further peeling", () => {
   simulation.begin({ x: 0.02, y: 0.5 }, 100);
   simulation.drag({ x: 0.28, y: 0.5 }, 400);
   assert.equal(simulation.end(true), true);
+  const history = new Uint8Array(mask.length);
+  simulation.writeReleaseHistory(history);
+  const firstRelease = history.slice();
   simulation.begin({ x: 0.16, y: 0.5 }, 700);
   simulation.drag({ x: 0.50, y: 0.5 }, 1000);
   assert.equal(simulation.end(true), true);
   assert.equal(simulation.snapshot().moves, 2);
   assert.equal(simulation.snapshot().complete, false);
   assert.equal(simulation.snapshot().failed, false);
+  simulation.writeReleaseHistory(history);
+  assert.ok(history.some((value, index) => value && !firstRelease[index]));
+  assert.ok(firstRelease.every((value, index) => !value || history[index] === value));
+  assert.deepEqual(history, simulation.state.map(cell => cell === Cell.released ? 255 : 0));
   assert.equal(simulation.begin({ x: 0.38, y: 0.5 }, 1300), true);
+});
+
+test("letting go after reversing preserves the previous release marks", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.9, 0.9);
+  simulation.setTearFactors({ outward: 0.3, bottleneck: 0.52 });
+  const history = new Uint8Array(mask.length);
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: 0.28, y: 0.5 }, 400);
+  assert.equal(simulation.end(true), true);
+  simulation.writeReleaseHistory(history);
+  const firstRelease = history.slice();
+  const progress = simulation.snapshot().progress;
+
+  simulation.begin({ x: 0.16, y: 0.5 }, 700);
+  simulation.drag({ x: 0.50, y: 0.5 }, 1000);
+  assert.ok(simulation.snapshot().progress > progress);
+  simulation.drag({ x: 0.46, y: 0.5 }, 1030);
+  assert.equal(simulation.snapshot().outwardPulling, true);
+  assert.equal(simulation.end(true), false);
+  assert.equal(simulation.snapshot().progress, progress);
+  simulation.writeReleaseHistory(history);
+  assert.deepEqual(history, firstRelease);
 });
 
 test("pulling back softly stalls, while a strong reversal tears only the held flap", () => {
