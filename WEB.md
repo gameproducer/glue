@@ -11,7 +11,7 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:3000`. Catch any exposed sticker edge or cutout and drag away from the center. The curl profile can be switched between cylinder and cone at runtime.
+Open `http://localhost:3000`. Catch an exposed sticker edge or cutout and sweep into the attached material. The curl profile can be switched between cylinder and cone at runtime.
 
 ## Architecture
 

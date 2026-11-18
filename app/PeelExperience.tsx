@@ -519,7 +519,8 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
       : snapshot.tracking && !snapshot.pulling
         ? "Cross an exposed edge to pick it up."
         : snapshot.pulling
-          ? snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction." : "Keep sweeping the peel front."
+          ? snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
+            : snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction." : "Keep sweeping the peel front."
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
   return (

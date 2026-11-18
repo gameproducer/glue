@@ -110,6 +110,8 @@ export class PeelSimulation {
   private tornOffset: Vec2 = { x: 0, y: 0 };
   private grabIndex = -1;
   private gestureOrigin: Vec2 = { x: 0, y: 0 };
+  private pullOrigin: Vec2 = { x: 0, y: 0 };
+  private inward: Vec2 = { x: 0, y: 0 };
   private grab: Vec2 = { x: 0.08, y: 0.5 };
   private pointer: Vec2 = { ...this.grab };
   private direction: Vec2 = { x: 1, y: 0 };
@@ -215,7 +217,7 @@ export class PeelSimulation {
     this.lastDiagnosticStep = emptyDiagnosticStep();
     this.grabIndex = -1;
     const seed = this.nearestAccessibleCell(point);
-    if (seed >= 0) this.acquire(seed);
+    if (seed >= 0) this.acquire(seed, point);
     return true;
   }
 
@@ -242,15 +244,31 @@ export class PeelSimulation {
         this.lastTime = time;
         return;
       }
-      this.acquire(seed);
+      this.acquire(seed, this.cellPoint(seed));
     }
 
     const dx = (point.x - this.grab.x) * this.aspect;
     const dy = point.y - this.grab.y;
     const pullDistance = Math.hypot(dx, dy);
-    if (pullDistance < 0.001) return;
+    const travelX = (point.x - this.pullOrigin.x) * this.aspect;
+    const travelY = point.y - this.pullOrigin.y;
+    const travel = Math.hypot(travelX, travelY);
+    const inward = this.inward.x || this.inward.y ? this.inward : this.inwardAlongThinStroke(dx, dy, pullDistance);
+    const inwardDistance = dx * inward.x + dy * inward.y;
+    const inwardTravel = travelX * inward.x + travelY * inward.y;
+    if (travel < 0.001 || pullDistance < 0.001 || inwardTravel <= travel * 0.2
+      || inwardDistance <= pullDistance * 0.2) {
+      if (this.liftedCells > 0) this.state.set(this.gestureBase);
+      this.pendingNewCells = 0;
+      this.liftedCells = 0;
+      this.frontDepth = 0;
+      this.stress *= 0.8;
+      this.lastPointer = { ...point };
+      this.lastTime = time;
+      return;
+    }
     this.direction = { x: dx / pullDistance, y: dy / pullDistance };
-    this.frontDepth = this.calcFrontDepth(pullDistance);
+    this.frontDepth = this.calcFrontDepth(inwardDistance);
     const previousPendingCells = this.pendingNewCells;
     const previousLiftedCells = this.liftedCells;
     let tearCandidateCells = 0;
@@ -411,15 +429,21 @@ export class PeelSimulation {
     this.releaseJumpThreshold = clamp(value);
   }
 
-  private acquire(index: number) {
+  private acquire(index: number, origin: Vec2) {
     this.grabIndex = index;
     this.grab = this.cellPoint(index);
+    this.pullOrigin = { ...origin };
     this.gestureBase.set(this.state);
     this.grabbedComponent.fill(0);
     this.componentAdheredCells = 0;
     this.grabbedComponent[index] = 1;
     this.queue[0] = index;
     let tail = 1;
+    const grabbingReleased = this.gestureBase[index] === Cell.released;
+    const localRadiusSquared = (4 / (this.height - 1)) ** 2;
+    let closestAdhered = Number.POSITIVE_INFINITY;
+    let inwardX = 0;
+    let inwardY = 0;
     const visit = (next: number) => {
       if (this.grabbedComponent[next] || this.gestureBase[next] === Cell.outside) return;
       this.grabbedComponent[next] = 1;
@@ -428,13 +452,48 @@ export class PeelSimulation {
     for (let head = 0; head < tail; head++) {
       const cell = this.queue[head];
       const x = cell % this.width;
-      if (this.gestureBase[cell] === Cell.adhered) this.componentAdheredCells++;
+      if (this.gestureBase[cell] === Cell.adhered) {
+        this.componentAdheredCells++;
+        const dx = (x / (this.width - 1) - this.grab.x) * this.aspect;
+        const dy = Math.floor(cell / this.width) / (this.height - 1) - this.grab.y;
+        const distance = dx * dx + dy * dy;
+        if (grabbingReleased && distance < closestAdhered) {
+          // A re-grab on a released flap must move toward its remaining adhesive.
+          closestAdhered = distance;
+          inwardX = dx;
+          inwardY = dy;
+        } else if (!grabbingReleased && distance <= localRadiusSquared) {
+          // Use the material near the grip, including around holes and tips.
+          inwardX += dx;
+          inwardY += dy;
+        }
+      }
       if (x > 0) visit(cell - 1);
       if (x + 1 < this.width) visit(cell + 1);
       if (cell >= this.width) visit(cell - this.width);
       if (cell + this.width < this.state.length) visit(cell + this.width);
     }
+    let length = Math.hypot(inwardX, inwardY);
+    if (length < 1e-6 && tail === 1 && !grabbingReleased) {
+      // For an isolated pixel, only a press off its center identifies an edge.
+      inwardX = (this.grab.x - origin.x) * this.aspect;
+      inwardY = this.grab.y - origin.y;
+      length = Math.hypot(inwardX, inwardY);
+    }
+    this.inward = length < 1e-6 ? { x: 0, y: 0 } : { x: inwardX / length, y: inwardY / length };
     this.pulling = true;
+  }
+
+  private inwardAlongThinStroke(dx: number, dy: number, distance: number): Vec2 {
+    if (distance < 0.001) return { x: 0, y: 0 };
+    const direction = { x: dx / distance, y: dy / distance };
+    const probe = 1.25 / (this.height - 1);
+    const x = Math.round((this.grab.x + direction.x * probe / this.aspect) * (this.width - 1));
+    const y = Math.round((this.grab.y + direction.y * probe) * (this.height - 1));
+    if (x < 0 || x >= this.width || y < 0 || y >= this.height) return { x: 0, y: 0 };
+    const cell = y * this.width + x;
+    return cell !== this.grabIndex && this.grabbedComponent[cell] && this.gestureBase[cell] === Cell.adhered
+      ? direction : { x: 0, y: 0 };
   }
 
   private triggerTear(detachedMask?: Uint8Array) {
