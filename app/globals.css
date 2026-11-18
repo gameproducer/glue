@@ -539,6 +539,47 @@ h1 {
   .control-bar { flex-wrap: wrap; }
 }
 
+.bottom-panel-toggle { display: none; }
+
+@media (max-width: 650px), (max-width: 950px) and (pointer: coarse) {
+  .bottom-panel-toggle {
+    position: absolute;
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    z-index: 9;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .bottom-panel-toggle svg {
+    width: 30px;
+    height: 30px;
+    padding: 5px;
+    border: 1px solid var(--hairline);
+    border-radius: 50%;
+    background: var(--panel);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .bottom-panel-toggle[aria-expanded="false"] svg { transform: rotate(180deg); }
+  .bottom-panel-toggle:focus-visible { outline: 2px solid #9cf3e9; border-radius: 50%; }
+
+  .mobile-panel-collapsed :is(.control-bar, .bottom-panel-charts, .log-eraser-button, .interaction-hint, .debug-panel, .physics-settings) {
+    display: none;
+  }
+}
+
 .move-limit-toast {
   position: absolute;
   top: clamp(115px, 20%, 160px);

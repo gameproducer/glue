@@ -143,6 +143,7 @@ const PACKS = [...new Set(LEVELS.map(level => level.pack))];
 
 export default function PeelExperience() {
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
   useEffect(() => {
     try {
       const saved = localStorage.getItem("peel.selectedLevel");
@@ -154,10 +155,16 @@ export default function PeelExperience() {
     setLevel(next);
     try { localStorage.setItem("peel.selectedLevel", next.id); } catch { /* Storage is optional. */ }
   };
-  return <PeelGame key={level.id} level={level} onLevelChange={selectLevel} />;
+  return <PeelGame key={level.id} level={level} onLevelChange={selectLevel}
+    bottomPanelOpen={bottomPanelOpen} onBottomPanelChange={setBottomPanelOpen} />;
 }
 
-function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (level: Level) => void }) {
+function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange }: {
+  level: Level;
+  onLevelChange: (level: Level) => void;
+  bottomPanelOpen: boolean;
+  onBottomPanelChange: (open: boolean) => void;
+}) {
   const tearThresholdStorageKey = `peel.level.${level.id}.tearThreshold`;
   const releaseJumpStorageKey = `peel.level.${level.id}.releaseJumpThreshold`;
   const liftedTransparencyStorageKey = `peel.level.${level.id}.liftedTransparency`;
@@ -177,6 +184,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const [profile, setProfile] = useState<CurlProfile>("cylinder");
   const [debug, setDebug] = useState(false);
   const [menu, setMenu] = useState<"physics" | "visuals" | null>(null);
+  const menuRef = useRef<HTMLElement>(null);
   const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
   const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
   const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
@@ -191,6 +199,21 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const [releasedWhileReversing, setReleasedWhileReversing] = useState(false);
   const [moveLimitToast, setMoveLimitToast] = useState(false);
   const [logStatus, setLogStatus] = useState("Recording locally");
+
+  useEffect(() => {
+    if (!menu) return;
+    const dismissOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || menuRef.current?.contains(target) || target.closest("[data-settings-trigger]")) return;
+      setMenu(null);
+      if (hostRef.current?.contains(target)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    document.addEventListener("pointerdown", dismissOutside, true);
+    return () => document.removeEventListener("pointerdown", dismissOutside, true);
+  }, [menu]);
 
   const recordDiagnostic = useCallback((
     type: string,
@@ -599,7 +622,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
   return (
-    <main className={`prototype-shell ${miss ? "miss" : ""}`}>
+    <main className={`prototype-shell${miss ? " miss" : ""}${bottomPanelOpen ? "" : " mobile-panel-collapsed"}`}>
       <header className="prototype-header">
         <div className="brand-block">
           <p className="eyebrow">Interactive material study</p>
@@ -636,22 +659,24 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
             <span>Choose another level or reload with WebGL enabled.</span>
           </div>
         )}
-        <RollingSignalChart
-          label="Tension"
-          value={snapshot.stress}
-          threshold={tearThreshold}
-          position="tension"
-          scaleMax={TENSION_CONTROL_MAX}
-        />
-        <RollingSignalChart
-          label="Area jump"
-          value={snapshot.areaJump}
-          threshold={releaseJumpThreshold}
-          position="area-jump"
-          pulse
-          sampleId={snapshot.physicsSample}
-          scaleMax={RELEASE_JUMP_CONTROL_MAX}
-        />
+        <div id="peel-charts" className="bottom-panel-charts">
+          <RollingSignalChart
+            label="Tension"
+            value={snapshot.stress}
+            threshold={tearThreshold}
+            position="tension"
+            scaleMax={TENSION_CONTROL_MAX}
+          />
+          <RollingSignalChart
+            label="Area jump"
+            value={snapshot.areaJump}
+            threshold={releaseJumpThreshold}
+            position="area-jump"
+            pulse
+            sampleId={snapshot.physicsSample}
+            scaleMax={RELEASE_JUMP_CONTROL_MAX}
+          />
+        </div>
         <button
           type="button"
           className="log-eraser-button"
@@ -667,7 +692,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         <p className="interaction-hint" aria-live="polite">{status}</p>
 
         {menu === "physics" && (
-          <aside className="physics-settings" aria-label="Level material settings">
+          <aside ref={menuRef} className="physics-settings" aria-label="Level material settings">
             <label className="setting-control">
               <div><span>Tension tear</span><output>{Math.round(tearThreshold * 100)}%</output></div>
               <input
@@ -720,7 +745,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         )}
 
         {menu === "visuals" && (
-          <aside className="physics-settings visual-settings" aria-label="Visual settings">
+          <aside ref={menuRef} className="physics-settings visual-settings" aria-label="Visual settings">
             {APPEARANCE_CONTROLS.map(({ key, label, labels }) => (
               <label key={key} className="setting-control">
                 <span>{label}</span>
@@ -771,7 +796,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         )}
       </section>
 
-      <footer className="control-bar" aria-label="Prototype settings">
+      <footer id="peel-controls" className="control-bar" aria-label="Prototype settings">
         <div className="zoom-controls" role="group" aria-label="Level zoom">
           <button type="button" onClick={() => changeZoom(-1)} disabled={!ready || zoomIndex === 0} aria-label="Zoom out">−</button>
           <output aria-label="Manual zoom">{ZOOM_STEPS[zoomIndex]}%</output>
@@ -783,16 +808,31 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         <button type="button" onClick={toggleDebug} aria-pressed={debug}>
           <span>Debug</span>{debug ? "On" : "Off"}
         </button>
-        <button type="button" onClick={() => setMenu(current => current === "physics" ? null : "physics")} aria-expanded={menu === "physics"}>
+        <button type="button" data-settings-trigger onClick={() => setMenu(current => current === "physics" ? null : "physics")} aria-expanded={menu === "physics"}>
           <span>Physics</span>Tune
         </button>
-        <button type="button" onClick={() => setMenu(current => current === "visuals" ? null : "visuals")} aria-expanded={menu === "visuals"}>
+        <button type="button" data-settings-trigger onClick={() => setMenu(current => current === "visuals" ? null : "visuals")} aria-expanded={menu === "visuals"}>
           <span>Visuals</span>Style
         </button>
         <button type="button" onClick={reset}>
           <span>Level</span>Reset
         </button>
       </footer>
+      <button
+        type="button"
+        className="bottom-panel-toggle"
+        aria-controls="peel-controls peel-charts"
+        aria-expanded={bottomPanelOpen}
+        aria-label={bottomPanelOpen ? "Hide bottom panel" : "Show bottom panel"}
+        onClick={() => {
+          if (bottomPanelOpen) setMenu(null);
+          onBottomPanelChange(!bottomPanelOpen);
+        }}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
     </main>
   );
 }
