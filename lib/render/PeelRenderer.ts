@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { nearestStateSources, extendStateTexture } from "./StateTexture";
 import type { CurlProfile, PeelSimulation, Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
@@ -102,7 +103,7 @@ const fragmentShader = /* glsl */ `
     float layerCoverage = smoothstep(0.02, 0.98, layerMask);
     if (layerCoverage < 0.01) discard;
     vec4 frontInk = texture2D(uArt, vUv);
-    if (frontInk.a < 0.04) discard;
+    if (frontInk.a <= 0.0) discard;
 
     vec3 normal = normalize(gl_FrontFacing ? vNormalWorld : -vNormalWorld);
     vec3 lightDirection = normalize(vec3(-0.38, 0.55, 0.74));
@@ -205,6 +206,7 @@ export class PeelRenderer {
   private readonly raycaster = new THREE.Raycaster();
   private readonly hitPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private readonly stateData: Uint8Array;
+  private readonly stateSources: Int32Array;
   private readonly stateTexture: THREE.DataTexture;
   private readonly materials: THREE.ShaderMaterial[] = [];
   private readonly stickerMeshes: THREE.Mesh[] = [];
@@ -251,7 +253,9 @@ export class PeelRenderer {
     this.scene.add(key);
 
     this.stateData = new Uint8Array(simulation.width * simulation.height * 4);
+    this.stateSources = nearestStateSources(simulation.state, simulation.width, simulation.height);
     simulation.writeTexture(this.stateData);
+    extendStateTexture(this.stateData, this.stateSources);
     this.stateTexture = new THREE.DataTexture(this.stateData, simulation.width, simulation.height, THREE.RGBAFormat);
     // The channels identify layers, while interpolation supplies sub-cell coverage
     // so diagonal release fronts do not expose the simulation grid as stair steps.
@@ -325,6 +329,7 @@ export class PeelRenderer {
 
   updateState() {
     this.simulation.writeTexture(this.stateData);
+    extendStateTexture(this.stateData, this.stateSources);
     this.stateTexture.needsUpdate = true;
   }
 
