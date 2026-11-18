@@ -3,11 +3,14 @@ export const PEEL_SOUNDS = [
   { id: "silk", label: "Silk peel (ASMR)" },
   { id: "paper", label: "Paper crackle (ASMR)" },
   { id: "chime", label: "Soft chime" },
+  { id: "bass", label: "Deep bass" },
+  { id: "psychedelic", label: "Psychedelic bass" },
 ] as const;
 
 export type PeelSound = (typeof PEEL_SOUNDS)[number]["id"];
 const STORAGE_KEY = "peel.sound";
 const GRAIN_GAP = 0.04;
+const BASS_GRAIN_GAP = 0.12;
 
 const profiles = {
   silk: { frequency: 900, q: 0.52, duration: 0.115, volume: 0.16 },
@@ -72,7 +75,7 @@ export class PeelAudio {
     if (this.accumulated < 0.002 || now < this.nextGrain) return;
     const strength = Math.min(1, 0.34 + Math.sqrt(this.accumulated) * 3.1);
     this.grain(sound, now, strength);
-    this.nextGrain = now + GRAIN_GAP;
+    this.nextGrain = now + (sound === "bass" || sound === "psychedelic" ? BASS_GRAIN_GAP : GRAIN_GAP);
     this.accumulated = 0;
   }
 
@@ -82,9 +85,11 @@ export class PeelAudio {
     if (!this.context) return;
     const now = this.context.currentTime;
     if (now < this.previewingUntil) return;
-    const pattern = [0, 0.07, 0.13, 0.17, 0.205, 0.255, 0.32, 0.41, 0.52];
+    const pattern = sound === "bass" || sound === "psychedelic"
+      ? [0, 0.17, 0.32, 0.51]
+      : [0, 0.07, 0.13, 0.17, 0.205, 0.255, 0.32, 0.41, 0.52];
     for (const [index, offset] of pattern.entries()) {
-      this.grain(sound, now + offset + 0.025, Math.sin((index + 2) / 12 * Math.PI) * 0.7 + 0.2);
+      this.grain(sound, now + offset + 0.025, Math.sin((index + 2) / (pattern.length + 3) * Math.PI) * 0.7 + 0.2);
     }
     this.previewingUntil = now + 0.7;
   }
@@ -92,6 +97,10 @@ export class PeelAudio {
   private grain(sound: Exclude<PeelSound, "off">, time: number, strength: number) {
     const { context, noise, output } = this;
     if (!context || !noise || !output) return;
+    if (sound === "bass" || sound === "psychedelic") {
+      this.bassGrain(context, output, sound === "psychedelic", time, strength);
+      return;
+    }
     const profile = profiles[sound];
     const duration = profile.duration * (0.85 + Math.random() * 0.3);
     const source = context.createBufferSource();
@@ -122,6 +131,46 @@ export class PeelAudio {
       tone.stop(time + 0.14);
       tone.onended = () => { tone.disconnect(); toneEnvelope.disconnect(); };
     }
+  }
+
+  private bassGrain(context: AudioContext, output: GainNode, psychedelic: boolean, time: number, strength: number) {
+    const tone = context.createOscillator();
+    const filter = context.createBiquadFilter();
+    const envelope = context.createGain();
+    const modulator = psychedelic ? context.createOscillator() : null;
+    const modulation = modulator ? context.createGain() : null;
+    const pitch = 52 + strength * 15 + Math.random() * 4;
+    const duration = psychedelic ? 0.24 : 0.16;
+    const end = time + duration;
+
+    tone.type = psychedelic ? "sawtooth" : "triangle";
+    tone.frequency.setValueAtTime(pitch, time);
+    tone.frequency.exponentialRampToValueAtTime(pitch * (psychedelic ? 0.72 : 0.87), end);
+    filter.type = "lowpass";
+    filter.frequency.value = psychedelic ? 215 : 175;
+    filter.Q.value = psychedelic ? 4 : 0.65;
+    envelope.gain.setValueAtTime(0, time);
+    envelope.gain.linearRampToValueAtTime((psychedelic ? 0.105 : 0.14) * strength, time + 0.02);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, end);
+    tone.connect(filter).connect(envelope).connect(output);
+
+    if (modulator && modulation) {
+      modulator.frequency.setValueAtTime(8 + 4 * strength, time);
+      modulation.gain.value = 125;
+      modulator.connect(modulation).connect(filter.frequency);
+      modulator.start(time);
+      modulator.stop(end);
+    }
+
+    tone.start(time);
+    tone.stop(end);
+    tone.onended = () => {
+      tone.disconnect();
+      filter.disconnect();
+      envelope.disconnect();
+      modulator?.disconnect();
+      modulation?.disconnect();
+    };
   }
 
   dispose() {
