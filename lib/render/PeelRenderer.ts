@@ -5,6 +5,7 @@ const STICKER_WIDTH = 4.8;
 
 type PeelUniforms = {
   uArt: { value: THREE.Texture };
+  uWhiteArtwork: { value: number };
   uState: { value: THREE.DataTexture };
   uLayer: { value: number };
   uFilmColor: { value: THREE.Color };
@@ -83,6 +84,7 @@ const vertexShader = /* glsl */ `
 const fragmentShader = /* glsl */ `
   precision highp float;
   uniform sampler2D uArt;
+  uniform float uWhiteArtwork;
   uniform sampler2D uState;
   uniform float uLayer;
   uniform vec3 uFilmColor;
@@ -110,7 +112,8 @@ const fragmentShader = /* glsl */ `
     vec3 color;
     float alpha;
 
-    vec3 printedColor = frontInk.rgb * (0.61 + diffuse * 0.43);
+    vec3 artworkColor = mix(frontInk.rgb, vec3(1.0), uWhiteArtwork);
+    vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
     color = printedColor;
@@ -224,6 +227,7 @@ export class PeelRenderer {
     private readonly simulation: PeelSimulation,
     artwork: HTMLImageElement,
     artworkAspect: number,
+    whiteArtwork = false,
   ) {
     this.stickerHeight = this.stickerWidth / artworkAspect;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -268,6 +272,7 @@ export class PeelRenderer {
     for (const pass of layerPasses) {
       const uniforms: PeelUniforms = {
         uArt: { value: art },
+        uWhiteArtwork: { value: whiteArtwork ? 1 : 0 },
         uState: { value: this.stateTexture },
         uLayer: { value: pass.layer },
         uFilmColor: { value: new THREE.Color(0xf05fa8) },

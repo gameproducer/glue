@@ -249,7 +249,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           savedThreshold,
           savedJumpThreshold,
         );
-        const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect);
+        const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect, level.artwork.startsWith("/stickers/"));
         renderer.setLiftedTransparency(savedTransparency);
         simulationRef.current = simulation;
         rendererRef.current = renderer;
