@@ -15,6 +15,7 @@
 - Web rendering and shaders: `lib/render/PeelRenderer.ts`.
 - Web input and controls: `app/PeelExperience.tsx`.
 - Run `pnpm test`, `pnpm exec tsc --noEmit`, and `pnpm build` after relevant code or dependency changes.
+- Primary source repository: `https://github.com/gameproducer/glue` (Git remote `origin`, branch `main`). The `sites` remote is retained for Sites synchronization.
 - Preserve `.openai/hosting.json` and the existing Sites project identity.
 - See `PROJECT_STATUS.md` for recovery context and verification limits.
 - Saving source does not authorize changing the live deployment or its audience.

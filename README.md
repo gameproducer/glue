@@ -37,6 +37,6 @@ The prior web folder had incomplete Git metadata, missing app/configuration file
 
 See [PROJECT_STATUS.md](PROJECT_STATUS.md) for recovery details and verification results, and [AGENTS.md](AGENTS.md) for development preferences.
 
-The web project has an existing Sites source repository. Its live URL is https://peel-material-study.gameproducer.chatgpt.site. Saving this backup does not deploy changes.
+The primary repository is [gameproducer/glue](https://github.com/gameproducer/glue), configured as the Git remote `origin`. The original Sites source repository remains configured as `sites`. Its live URL is https://peel-material-study.gameproducer.chatgpt.site. Saving source to GitHub does not deploy changes.
 
 Dependency directories, build caches, local secrets, and recovery scratch files are excluded from Git. The lockfile and source assets are included so dependencies and build output can be regenerated.

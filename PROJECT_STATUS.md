@@ -26,6 +26,8 @@ Continue with the web prototype at this repository root. React/TypeScript handle
 
 ## Repository and hosting
 
-Save this complete project to the existing Sites source repository. The live site is https://peel-material-study.gameproducer.chatgpt.site. This task saves source and a version only; it does not deploy or change access.
+The primary repository is [gameproducer/glue](https://github.com/gameproducer/glue), configured as `origin`. The complete project and recovered Git history are maintained on its `main` branch. The original Sites source repository remains configured as `sites`.
+
+The initial complete backup was also pushed to Sites at commit `b4737f324ae19618d23b599c9ba294b3b1221a30` and saved as version **15**, without deployment. Subsequent GitHub repository documentation changes do not change that saved version. The live site is https://peel-material-study.gameproducer.chatgpt.site. Saving source to GitHub does not deploy or change access.
 
 Sites uses short-lived repository credentials. Do not store tokens in the project or Git configuration. Future synchronization can obtain fresh repository access through the Sites tools.
