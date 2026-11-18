@@ -97,6 +97,7 @@ export class PeelSimulation {
   readonly maxMoves: number;
 
   private readonly initialState: Uint8Array;
+  private readonly releasedHistory: Uint8Array;
   private readonly gestureBase: Uint8Array;
   private readonly tearCandidate: Uint8Array;
   private readonly grabbedComponent: Uint8Array;
@@ -106,6 +107,7 @@ export class PeelSimulation {
   private readonly queue: Int32Array;
   private totalCells = 0;
   private releasedCells = 0;
+  private releasedHistoryRevision = 0;
   private pendingNewCells = 0;
   private liftedCells = 0;
   private moves = 0;
@@ -158,6 +160,7 @@ export class PeelSimulation {
     const count = width * height;
     this.state = new Uint8Array(count);
     this.initialState = new Uint8Array(count);
+    this.releasedHistory = new Uint8Array(count);
     this.gestureBase = new Uint8Array(count);
     this.tearCandidate = new Uint8Array(count);
     this.grabbedComponent = new Uint8Array(count);
@@ -200,6 +203,8 @@ export class PeelSimulation {
 
   reset() {
     this.state.set(this.initialState);
+    this.releasedHistory.fill(0);
+    this.releasedHistoryRevision++;
     this.releasedCells = 0;
     this.pendingNewCells = 0;
     this.liftedCells = 0;
@@ -429,10 +434,16 @@ export class PeelSimulation {
 
     if (this.pulling) {
       for (let index = 0; index < this.state.length; index++) {
-        this.state[index] = this.state[index] === Cell.lifted && accepted ? Cell.released : this.gestureBase[index];
+        if (accepted && this.state[index] === Cell.lifted) {
+          this.state[index] = Cell.released;
+          this.releasedHistory[index] = 255;
+        } else {
+          this.state[index] = this.gestureBase[index];
+        }
       }
     }
     if (accepted) {
+      this.releasedHistoryRevision++;
       this.releasedCells += this.pendingNewCells;
       this.moves++;
     }
@@ -498,6 +509,14 @@ export class PeelSimulation {
       target[offset + 2] = value === Cell.lifted ? 255 : 0;
       target[offset + 3] = value === Cell.torn ? 255 : 0;
     }
+  }
+
+  get releaseHistoryRevision() {
+    return this.releasedHistoryRevision;
+  }
+
+  writeReleaseHistory(target: Uint8Array) {
+    target.set(this.releasedHistory);
   }
 
   setTearThreshold(value: number) {

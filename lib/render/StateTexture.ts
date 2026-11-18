@@ -32,13 +32,13 @@ export function nearestStateSources(state: Uint8Array, width: number, height: nu
   return sources;
 }
 
-export function extendStateTexture(texture: Uint8Array, sources: Int32Array) {
-  if (texture.length !== sources.length * 4) throw new Error("Texture dimensions do not match");
+export function extendStateTexture(texture: Uint8Array, sources: Int32Array, channels = 4) {
+  if (texture.length !== sources.length * channels) throw new Error("Texture dimensions do not match");
   for (let index = 0; index < sources.length; index++) {
     const source = sources[index];
     if (source < 0 || source === index) continue;
-    for (let channel = 0; channel < 4; channel++) {
-      texture[index * 4 + channel] = texture[source * 4 + channel];
+    for (let channel = 0; channel < channels; channel++) {
+      texture[index * channels + channel] = texture[source * channels + channel];
     }
   }
 }

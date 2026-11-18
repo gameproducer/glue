@@ -372,3 +372,36 @@ test("sustained outward load can reach a 29% tear threshold at 14% sensitivity",
   assert.ok(simulation.state.includes(Cell.adhered));
   assert.ok(simulation.state.includes(Cell.torn));
 });
+
+test("the release mark follows a flap through re-grab and tear until reset", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.24, 0.66);
+  simulation.setTearFactors({ outward: 0.8, bottleneck: 0 });
+  const history = new Uint8Array(mask.length);
+
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: 0.28, y: 0.5 }, 400);
+  simulation.writeReleaseHistory(history);
+  assert.ok(!history.some(Boolean), "an uncommitted lift should leave no dark mark");
+  assert.equal(simulation.end(true), true);
+  const expected = simulation.state.map(cell => cell === Cell.released ? 255 : 0);
+  simulation.writeReleaseHistory(history);
+  assert.deepEqual(history, expected);
+
+  simulation.begin({ x: 0.16, y: 0.5 }, 500);
+  simulation.drag({ x: 0.145, y: 0.5 }, 550);
+  assert.ok(simulation.state.some((cell, index) => cell === Cell.lifted && expected[index]));
+  simulation.writeReleaseHistory(history);
+  assert.deepEqual(history, expected);
+  simulation.drag({ x: 0.08, y: 0.5 }, 700);
+  assert.equal(simulation.snapshot().torn, true);
+  simulation.end(true);
+  simulation.writeReleaseHistory(history);
+  assert.deepEqual(history, expected);
+
+  simulation.reset();
+  simulation.writeReleaseHistory(history);
+  assert.ok(!history.some(Boolean));
+});

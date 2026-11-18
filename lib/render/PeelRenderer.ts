@@ -13,6 +13,7 @@ type PeelUniforms = {
   uFaceFinish: { value: number };
   uBackFinish: { value: number };
   uState: { value: THREE.DataTexture };
+  uReleaseHistory: { value: THREE.DataTexture };
   uLayer: { value: number };
   uFilmColor: { value: THREE.Color };
   uLiftedOpacity: { value: number };
@@ -85,6 +86,7 @@ const fragmentShader = /* glsl */ `
   uniform float uFaceFinish;
   uniform float uBackFinish;
   uniform sampler2D uState;
+  uniform sampler2D uReleaseHistory;
   uniform float uLayer;
   uniform vec3 uFilmColor;
   uniform float uLiftedOpacity;
@@ -169,13 +171,12 @@ const fragmentShader = /* glsl */ `
     vec3 color = printedColor;
     float alpha = silhouette;
 
-    // Released material is still on the table, but no longer attached.
-    if (uLayer > 0.5 && uLayer < 1.5) {
-      color = mix(color, vec3(0.075, 0.045, 0.12), 0.46);
-      alpha *= 0.52;
-    }
     #endif
 
+    // The mark belongs to the material itself and follows it through every layer.
+    float released = smoothstep(0.02, 0.98, texture2D(uReleaseHistory, vUv).r);
+    color = mix(color, vec3(0.21, 0.18, 0.23), released);
+    alpha = mix(alpha, min(alpha, 0.70 * silhouette), released);
     gl_FragColor = vec4(color, alpha * layerCoverage);
   }
 `;
@@ -244,6 +245,9 @@ export class PeelRenderer {
   private readonly stateData: Uint8Array;
   private readonly stateSources: Int32Array;
   private readonly stateTexture: THREE.DataTexture;
+  private readonly releaseData: Uint8Array;
+  private readonly releaseTexture: THREE.DataTexture;
+  private lastReleaseRevision = -1;
   private readonly materials: THREE.ShaderMaterial[] = [];
   private readonly stickerMeshes: THREE.Mesh[] = [];
   private readonly shadow: THREE.Mesh;
@@ -308,6 +312,12 @@ export class PeelRenderer {
     this.stateTexture.magFilter = THREE.LinearFilter;
     this.stateTexture.needsUpdate = true;
 
+    this.releaseData = new Uint8Array(simulation.width * simulation.height);
+    this.releaseTexture = new THREE.DataTexture(this.releaseData, simulation.width, simulation.height, THREE.RedFormat);
+    this.releaseTexture.minFilter = THREE.LinearFilter;
+    this.releaseTexture.magFilter = THREE.LinearFilter;
+    this.updateReleaseHistory();
+
     const art = makeArtTexture(artwork);
     const geometry = new THREE.PlaneGeometry(this.stickerWidth, this.stickerHeight, 124, 100);
     const layerPasses = [
@@ -326,6 +336,7 @@ export class PeelRenderer {
         uFaceFinish: { value: 0 },
         uBackFinish: { value: 0 },
         uState: { value: this.stateTexture },
+        uReleaseHistory: { value: this.releaseTexture },
         uLayer: { value: pass.layer },
         uFilmColor: { value: new THREE.Color(0xf05fa8) },
         uLiftedOpacity: { value: 0.5 },
@@ -380,6 +391,16 @@ export class PeelRenderer {
     this.simulation.writeTexture(this.stateData);
     extendStateTexture(this.stateData, this.stateSources);
     this.stateTexture.needsUpdate = true;
+    this.updateReleaseHistory();
+  }
+
+  private updateReleaseHistory() {
+    const revision = this.simulation.releaseHistoryRevision;
+    if (revision === this.lastReleaseRevision) return;
+    this.simulation.writeReleaseHistory(this.releaseData);
+    extendStateTexture(this.releaseData, this.stateSources, 1);
+    this.releaseTexture.needsUpdate = true;
+    this.lastReleaseRevision = revision;
   }
 
   setPeel(
@@ -506,6 +527,7 @@ export class PeelRenderer {
     this.shadow.geometry.dispose();
     (this.shadow.material as THREE.Material).dispose();
     this.stateTexture.dispose();
+    this.releaseTexture.dispose();
     this.renderer.dispose();
     this.domElement.remove();
   }
