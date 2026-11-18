@@ -114,18 +114,43 @@ const fragmentShader = /* glsl */ `
       layerCoverage = max(layerCoverage, foldOverlap);
     }
     if (layerCoverage < 0.01) discard;
-    vec4 frontInk = texture2D(uArt, vUv);
-    if (frontInk.a <= 0.0) discard;
+    float silhouette = texture2D(uArt, vUv).a;
+    if (silhouette <= 0.0) discard;
 
-    vec3 normal = normalize(gl_FrontFacing ? vNormalWorld : -vNormalWorld);
+    // Three.js reverses WebGL winding for BackSide materials, so
+    // gl_FrontFacing does not identify the sticker's physical side.
+    #ifdef PEEL_BACK_FACE
+      vec3 normal = normalize(-vNormalWorld);
+    #else
+      vec3 normal = normalize(vNormalWorld);
+    #endif
     vec3 lightDirection = normalize(vec3(-0.38, 0.55, 0.74));
     float diffuse = max(dot(normal, lightDirection), 0.0);
     float grazing = pow(1.0 - abs(normal.z), 2.0);
     float specular = pow(max(dot(reflect(-lightDirection, normal), vec3(0.0, 0.0, 1.0)), 0.0), 26.0);
-    vec3 color;
-    float alpha;
-
-    vec3 artworkColor = mix(frontInk.rgb, uStickerColor, uWhiteArtwork);
+    #ifdef PEEL_BACK_FACE
+    vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
+    filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
+    filmColor = mix(filmColor, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
+    float filmAlpha = silhouette * uLiftedOpacity * mix(0.92, 1.0, grazing);
+    if (uBackFinish > 2.5) {
+      vec2 grid = abs(fract(vUv * 56.0) - 0.5);
+      float thread = 1.0 - smoothstep(0.06, 0.19, min(grid.x, grid.y));
+      filmColor = mix(filmColor, vec3(0.68, 0.94, 0.9), thread * 0.75);
+      filmAlpha *= 0.4 + thread * 0.6;
+    } else if (uBackFinish > 1.5) {
+      vec3 prism = spectrum((vUv.x - vUv.y * 0.63) * 13.0 + vCurl * 5.0);
+      filmColor = mix(filmColor, prism, 0.73);
+      filmAlpha *= 0.72 + grazing * 0.28;
+    } else if (uBackFinish > 0.5) {
+      float speckle = grain(floor(vUv * 430.0));
+      filmColor = vec3(0.57, 0.72, 0.83) + vec3(speckle * 0.17 + grazing * 0.12);
+      filmAlpha *= 0.76 + speckle * 0.24;
+    }
+    vec3 color = filmColor;
+    float alpha = filmAlpha;
+    #else
+    vec3 artworkColor = mix(texture2D(uArt, vUv).rgb, uStickerColor, uWhiteArtwork);
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
@@ -141,39 +166,15 @@ const fragmentShader = /* glsl */ `
       float satin = exp(-band * band);
       printedColor = printedColor * 0.85 + artworkColor * satin * 0.26;
     }
-    color = printedColor;
-    alpha = frontInk.a;
+    vec3 color = printedColor;
+    float alpha = silhouette;
 
-    if (uLayer > 1.5) {
-      float monochrome = gl_FrontFacing ? 0.0 : 1.0;
-      vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
-      filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
-      filmColor = mix(filmColor, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
-      float filmAlpha = frontInk.a * uLiftedOpacity * mix(0.92, 1.0, grazing);
-      if (uBackFinish > 2.5) {
-        vec2 grid = abs(fract(vUv * 56.0) - 0.5);
-        float thread = 1.0 - smoothstep(0.06, 0.19, min(grid.x, grid.y));
-        filmColor = mix(filmColor, vec3(0.68, 0.94, 0.9), thread * 0.75);
-        filmAlpha *= 0.4 + thread * 0.6;
-      } else if (uBackFinish > 1.5) {
-        vec3 prism = spectrum((vUv.x - vUv.y * 0.63) * 13.0 + vCurl * 5.0);
-        filmColor = mix(filmColor, prism, 0.73);
-        filmAlpha *= 0.72 + grazing * 0.28;
-      } else if (uBackFinish > 0.5) {
-        float speckle = grain(floor(vUv * 430.0));
-        filmColor = vec3(0.57, 0.72, 0.83) + vec3(speckle * 0.17 + grazing * 0.12);
-        filmAlpha *= 0.76 + speckle * 0.24;
-      }
-      color = mix(printedColor, filmColor, monochrome);
-      alpha = mix(frontInk.a, filmAlpha, monochrome);
-    } else {
-
-      // Released material settles close to the surface, but no longer reads as attached.
-      if (uLayer > 0.5 && uLayer < 1.5) {
-        color = mix(color, vec3(0.075, 0.045, 0.12), 0.46);
-        alpha *= 0.52;
-      }
+    // Released material is still on the table, but no longer attached.
+    if (uLayer > 0.5 && uLayer < 1.5) {
+      color = mix(color, vec3(0.075, 0.045, 0.12), 0.46);
+      alpha *= 0.52;
     }
+    #endif
 
     gl_FragColor = vec4(color, alpha * layerCoverage);
   }
@@ -312,10 +313,10 @@ export class PeelRenderer {
     const layerPasses = [
       { layer: 0, side: THREE.FrontSide, depthWrite: true, renderOrder: 0 },
       { layer: 1, side: THREE.FrontSide, depthWrite: false, renderOrder: 1 },
-      { layer: 2, side: THREE.BackSide, depthWrite: false, renderOrder: 2 },
-      { layer: 2, side: THREE.FrontSide, depthWrite: true, renderOrder: 3 },
-      { layer: 3, side: THREE.BackSide, depthWrite: false, renderOrder: 4 },
-      { layer: 3, side: THREE.FrontSide, depthWrite: true, renderOrder: 5 },
+      { layer: 2, side: THREE.FrontSide, depthWrite: true, renderOrder: 2 },
+      { layer: 3, side: THREE.FrontSide, depthWrite: true, renderOrder: 3 },
+      { layer: 2, side: THREE.BackSide, depthWrite: false, renderOrder: 4 },
+      { layer: 3, side: THREE.BackSide, depthWrite: false, renderOrder: 5 },
     ] as const;
     for (const pass of layerPasses) {
       const uniforms: PeelUniforms = {
@@ -341,6 +342,7 @@ export class PeelRenderer {
         uniforms,
         vertexShader,
         fragmentShader,
+        defines: pass.side === THREE.BackSide ? { PEEL_BACK_FACE: 1 } : {},
         transparent: true,
         side: pass.side,
         depthWrite: pass.depthWrite,
