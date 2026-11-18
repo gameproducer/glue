@@ -116,30 +116,6 @@ h1 {
   transform: translate(-50%, -50%);
 }
 
-.grab-guide {
-  position: absolute;
-  top: 52%;
-  left: max(7%, calc(50% - min(40vw, 390px)));
-  z-index: 4;
-  width: 16px;
-  height: 16px;
-  border: 1.5px solid white;
-  border-radius: 50%;
-  box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.11), 0 0 25px rgba(255, 255, 255, 0.5);
-  pointer-events: none;
-  animation: guidePulse 1.7s ease-in-out infinite;
-}
-
-.grab-guide::after {
-  position: absolute;
-  top: 50%;
-  left: 22px;
-  width: 48px;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(255,255,255,.7), transparent);
-  content: "";
-}
-
 .loading-art {
   position: absolute;
   top: 50%;
@@ -460,11 +436,6 @@ h1 {
 
 .webgl-fallback strong { color: var(--ink); }
 
-@keyframes guidePulse {
-  0%, 100% { opacity: .62; transform: scale(.9); }
-  50% { opacity: 1; transform: scale(1.12); }
-}
-
 @keyframes missNudge {
   from { transform: translateX(-3px); }
   to { transform: translateX(3px); }
@@ -479,7 +450,6 @@ h1 {
   .prototype-shell { padding: 20px 16px 16px; }
   .stage { margin: -20px -16px -16px; }
   .readouts { font-size: 8px; }
-  .grab-guide { left: 7%; }
   .control-bar { gap: 5px; }
   .control-bar button { min-width: 0; gap: 5px; padding: 10px 11px; font-size: 8px; }
   .tension-chart { right: 8px; bottom: 78px; width: 150px; }
@@ -495,7 +465,7 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .grab-guide, .result-card, .miss .renderer-host { animation: none; }
+  .result-card, .miss .renderer-host { animation: none; }
   .control-bar button, .log-eraser-button { transition: none; }
 }
 

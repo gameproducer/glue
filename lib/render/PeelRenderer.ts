@@ -49,7 +49,10 @@ const vertexShader = /* glsl */ `
     vCurl = 0.0;
     vNormalWorld = vec3(0.0, 0.0, 1.0);
 
-    if (uLayer > 1.5 && q > 0.0) {
+    if (uLayer > 2.5) {
+      p.xy += uTornOffset;
+      p.z += 0.08;
+    } else if (uLayer > 1.5 && q > 0.0) {
       float coneScale = mix(1.0, clamp(1.0 + lateral * 0.24, 0.58, 1.46), uCone);
       float radius = max(0.12, uRadius * coneScale);
       float theta = min(q / radius, PI);
@@ -67,16 +70,13 @@ const vertexShader = /* glsl */ `
       curled += lateralAxis * (-lateral * 0.05 * uCone * gripWeight);
 
       p.xy = curled;
-      p.z = z + gripWeight * 0.035;
+      p.z = 0.018 + z + gripWeight * 0.035;
       vNormalWorld = normalize(vec3(direction * sin(theta), cos(theta)));
       vCurl = smoothstep(0.0, PI, theta);
     } else if (uLayer > 0.5) {
       p.z += 0.018;
     }
 
-    if (uLayer > 2.5) {
-      p.xy += uTornOffset;
-    }
 
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }
@@ -101,6 +101,12 @@ const fragmentShader = /* glsl */ `
       ? state.r
       : (uLayer < 1.5 ? state.g : (uLayer < 2.5 ? state.b : state.a));
     float layerCoverage = smoothstep(0.02, 0.98, layerMask);
+    if (uLayer < 0.5) {
+      // Keep the surface opaque beneath the curl's feathered edge so the
+      // background cannot show through where the two layers meet.
+      float foldOverlap = step(0.02, state.r) * step(0.02, state.b);
+      layerCoverage = max(layerCoverage, foldOverlap);
+    }
     if (layerCoverage < 0.01) discard;
     vec4 frontInk = texture2D(uArt, vUv);
     if (frontInk.a <= 0.0) discard;

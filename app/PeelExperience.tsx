@@ -169,7 +169,6 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
   const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
-  const [started, setStarted] = useState(false);
   const [miss, setMiss] = useState(false);
   const [webglError, setWebglError] = useState(false);
   const [snapshot, setSnapshot] = useState<PeelSnapshot>(emptySnapshot);
@@ -306,7 +305,6 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
             pointerId: event.pointerId,
           });
           const next = simulation.snapshot();
-          if (next.pulling) setStarted(true);
           renderer.setPeel(
             next.grab,
             next.pointer,
@@ -339,8 +337,6 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
             setMiss(true);
             window.setTimeout(() => setMiss(false), 420);
           }
-          const ended = simulation.snapshot();
-          if (ended.moves === 0 && !ended.torn) setStarted(false);
           if (navigator.vibrate && accepted) navigator.vibrate(12);
         };
 
@@ -429,7 +425,6 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const reset = () => {
     simulationRef.current?.reset();
     recordDiagnostic("level_reset");
-    setStarted(false);
     setMiss(false);
     refresh(true);
   };
@@ -515,7 +510,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const percent = Math.min(100, Math.round(snapshot.progress * 100));
   const status = snapshot.torn
     ? snapshot.tearDragging
-      ? "Torn — move the detached piece, then release it."
+      ? "Level failed — move the torn piece, then let go."
       : "The lifted piece separated from the sticker."
     : snapshot.complete
     ? "Clean release — the sticker stayed intact."
@@ -555,7 +550,6 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
       <section className="stage" aria-label="Sticker peeling prototype">
         <div className="surface-glow" aria-hidden="true" />
         <div ref={hostRef} className="renderer-host" />
-        {!started && ready && !webglError && <i className="grab-guide" aria-hidden="true" />}
         {!ready && !webglError && <p className="loading-art">Preparing sticker…</p>}
         {webglError && (
           <div className="webgl-fallback" role="alert">
@@ -642,7 +636,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           </aside>
         )}
 
-        {(snapshot.complete || snapshot.failed) && (
+        {!snapshot.tearDragging && (snapshot.complete || snapshot.failed) && (
           <div className="result-card" role="dialog" aria-modal="false" aria-label="Level result">
             <span>{snapshot.complete ? "RELEASED" : snapshot.torn ? "TORN" : "OUT OF MOVES"}</span>
             <strong>

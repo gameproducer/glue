@@ -90,6 +90,8 @@ export class PeelSimulation {
   private readonly initialState: Uint8Array;
   private readonly gestureBase: Uint8Array;
   private readonly tearCandidate: Uint8Array;
+  private readonly grabbedComponent: Uint8Array;
+  private componentAdheredCells = 0;
   private readonly visited: Uint8Array;
   private readonly queue: Int32Array;
   private totalCells = 0;
@@ -140,6 +142,7 @@ export class PeelSimulation {
     this.initialState = new Uint8Array(count);
     this.gestureBase = new Uint8Array(count);
     this.tearCandidate = new Uint8Array(count);
+    this.grabbedComponent = new Uint8Array(count);
     this.visited = new Uint8Array(count);
     this.queue = new Int32Array(count);
     this.adhesion = new Float32Array(count);
@@ -251,13 +254,16 @@ export class PeelSimulation {
     const previousPendingCells = this.pendingNewCells;
     const previousLiftedCells = this.liftedCells;
     let tearCandidateCells = 0;
+    let candidateAdheredCells = 0;
     this.tearCandidate.fill(0);
     for (let index = 0; index < this.state.length; index++) {
+      if (!this.grabbedComponent[index]) continue;
       const wasHeld = this.state[index] === Cell.lifted;
       const wasReleasedAtGestureStart = previousLiftedCells === 0 && this.gestureBase[index] === Cell.released;
       if (wasHeld || wasReleasedAtGestureStart) {
         this.tearCandidate[index] = 1;
         tearCandidateCells++;
+        if (this.gestureBase[index] === Cell.adhered) candidateAdheredCells++;
       }
     }
     const { frontCells, averageAdhesion } = this.rebuildLifted();
@@ -282,12 +288,12 @@ export class PeelSimulation {
     this.lastTime = time;
 
     const minimumPiece = Math.max(8, Math.round(this.totalCells * 0.002));
-    const avalancheTear = absoluteGain >= this.releaseJumpThreshold && tearCandidateCells >= minimumPiece;
-    const stressTear = (
-      this.stress >= this.tearThreshold
-      && this.liftedCells >= minimumPiece
-      && this.liftedCells < this.totalCells * 0.985
-    );
+    const remainingAttached = this.componentAdheredCells - this.pendingNewCells;
+    const minimumAnchor = Math.max(1, Math.min(minimumPiece, Math.ceil(this.componentAdheredCells * 0.015)));
+    const hasAnchor = remainingAttached >= minimumAnchor;
+    const avalancheTear = hasAnchor && absoluteGain >= this.releaseJumpThreshold
+      && tearCandidateCells >= minimumPiece && this.componentAdheredCells - candidateAdheredCells >= minimumAnchor;
+    const stressTear = hasAnchor && this.stress >= this.tearThreshold && this.liftedCells >= minimumPiece;
     this.lastDiagnosticStep = {
       previousPendingCells,
       pendingNewCells: this.pendingNewCells,
@@ -322,7 +328,9 @@ export class PeelSimulation {
       return false;
     }
     const threshold = Math.max(10, Math.round(this.totalCells * 0.0015));
-    const accepted = commit && this.pulling && this.pendingNewCells >= threshold && this.frontDepth > 0.012;
+    const releasedWholeComponent = this.pendingNewCells > 0 && this.pendingNewCells === this.componentAdheredCells;
+    const accepted = commit && this.pulling && this.frontDepth > 0.012
+      && (this.pendingNewCells >= threshold || releasedWholeComponent);
 
     if (this.pulling) {
       for (let index = 0; index < this.state.length; index++) {
@@ -357,7 +365,7 @@ export class PeelSimulation {
       tracking: this.tracking,
       pulling: this.pulling,
       canCommit: this.pendingNewCells > 0,
-      complete: progress >= 0.997,
+      complete: !this.torn && progress >= 0.997,
       failed: this.failed,
       torn: this.torn,
       tearDragging: this.torn && this.tracking,
@@ -407,6 +415,25 @@ export class PeelSimulation {
     this.grabIndex = index;
     this.grab = this.cellPoint(index);
     this.gestureBase.set(this.state);
+    this.grabbedComponent.fill(0);
+    this.componentAdheredCells = 0;
+    this.grabbedComponent[index] = 1;
+    this.queue[0] = index;
+    let tail = 1;
+    const visit = (next: number) => {
+      if (this.grabbedComponent[next] || this.gestureBase[next] === Cell.outside) return;
+      this.grabbedComponent[next] = 1;
+      this.queue[tail++] = next;
+    };
+    for (let head = 0; head < tail; head++) {
+      const cell = this.queue[head];
+      const x = cell % this.width;
+      if (this.gestureBase[cell] === Cell.adhered) this.componentAdheredCells++;
+      if (x > 0) visit(cell - 1);
+      if (x + 1 < this.width) visit(cell + 1);
+      if (cell >= this.width) visit(cell - this.width);
+      if (cell + this.width < this.state.length) visit(cell + this.width);
+    }
     this.pulling = true;
   }
 
@@ -425,10 +452,11 @@ export class PeelSimulation {
     this.pendingNewCells = 0;
     this.liftedCells = 0;
     this.torn = true;
+    this.failed = true;
     this.tearOrigin = { ...this.pointer };
     this.tearRecoil = {
-      x: this.direction.x * 0.01 / this.aspect,
-      y: this.direction.y * 0.01,
+      x: this.direction.x * 0.035 / this.aspect,
+      y: this.direction.y * 0.035,
     };
     this.tornOffset = { ...this.tearRecoil };
     this.stress = Math.max(this.stress, this.tearThreshold);

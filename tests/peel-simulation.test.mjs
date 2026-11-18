@@ -165,3 +165,25 @@ test("tear controls accept zero as a deliberate threshold", () => {
   assert.equal(simulation.snapshot().tearThreshold, 0);
   assert.equal(simulation.snapshot().releaseJumpThreshold, 0);
 });
+
+test("a fast pull that frees an entire disconnected figure is a clean release", () => {
+  const width = 72;
+  const height = 36;
+  const left = rectangleMask(width, height, 3, 30, 6, 29);
+  const right = rectangleMask(width, height, 48, 68, 6, 29);
+  const mask = left.map((value, index) => value || right[index]);
+  const simulation = new PeelSimulation(width, height, 41, 4, mask, 0.9, 0.02);
+
+  assert.equal(simulation.begin({ x: 0.02, y: 0.5 }, 100), true);
+  simulation.drag({ x: 0.16, y: 0.5 }, 420);
+  assert.equal(simulation.end(true), true);
+  assert.equal(simulation.begin({ x: 0.08, y: 0.5 }, 700), true);
+  simulation.drag({ x: 0.96, y: 0.5 }, 760);
+  assert.ok(simulation.snapshot().areaJump > 0.02);
+  assert.equal(simulation.snapshot().torn, false);
+  assert.equal(simulation.end(true), true);
+  for (let index = 0; index < mask.length; index++) {
+    if (left[index]) assert.equal(simulation.state[index], Cell.released);
+    if (right[index]) assert.equal(simulation.state[index], Cell.adhered);
+  }
+});
