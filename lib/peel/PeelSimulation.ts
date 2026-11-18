@@ -356,21 +356,20 @@ export class PeelSimulation {
     let tearCandidateCells = 0;
     let candidateAdheredCells = 0;
     this.tearCandidate.fill(0);
-    for (let index = 0; index < this.state.length; index++) {
-      if (!this.grabbedComponent[index]) continue;
-      const wasHeld = this.state[index] === Cell.lifted;
-      const wasReleasedAtGestureStart = previousLiftedCells === 0 && this.gestureBase[index] === Cell.released;
-      if (wasHeld || wasReleasedAtGestureStart) {
+    if (previousLiftedCells > 0) {
+      for (let index = 0; index < this.state.length; index++) {
+        if (this.state[index] !== Cell.lifted) continue;
         this.tearCandidate[index] = 1;
         tearCandidateCells++;
         if (this.gestureBase[index] === Cell.adhered) candidateAdheredCells++;
       }
+    } else if (this.gestureBase[this.grabIndex] === Cell.released) {
+      tearCandidateCells = this.queueReleasedFlap();
+      for (let i = 0; i < tearCandidateCells; i++) this.tearCandidate[this.queue[i]] = 1;
     }
-    const { frontCells, averageAdhesion } = this.rebuildLifted();
+    const { frontCells, averageAdhesion, queuedCells } = this.rebuildLifted();
 
-    // A large one-frame expansion is a release avalanche. It is treated as a
-    // fracture at the previous front, rather than allowing a small held region
-    // to pull nearly the entire sticker free instantaneously.
+    // Detect sudden growth independently of how much was lifted before this update.
     const gainedCells = Math.max(0, this.pendingNewCells - previousPendingCells);
     const absoluteGain = gainedCells / Math.max(1, this.totalCells);
     this.areaJump = absoluteGain;
@@ -381,7 +380,9 @@ export class PeelSimulation {
     const hasAnchor = this.componentAdheredCells - this.pendingNewCells >= minimumAnchor;
     const bottleneckLoad = this.tearFactors.bottleneck > 0 && hasAnchor && this.liftedCells >= minimumPiece
       ? this.measureBottleneck() : 0;
-    const narrowLoad = clamp((18 - frontCells) / 16);
+    // A newly forming local front is short by construction. Ramp in the
+    // narrow-front load as the adhesive line develops beyond the grip.
+    const narrowLoad = clamp((18 - frontCells) / 16) * clamp(this.frontDepth / 0.045);
     const resistanceLoad = clamp((averageAdhesion - 0.42) / 0.58);
     const reachLoad = clamp(this.frontDepth / (this.aspect * 0.78));
     const speedLoad = clamp((speed - 1.5) / 5) * 0.12;
@@ -398,8 +399,21 @@ export class PeelSimulation {
     this.lastPointer = { ...point };
     this.lastTime = time;
 
-    const avalancheTear = hasAnchor && absoluteGain >= this.releaseJumpThreshold
-      && tearCandidateCells >= minimumPiece && this.componentAdheredCells - candidateAdheredCells >= minimumAnchor;
+    const avalancheTear = hasAnchor && gainedCells > 0 && absoluteGain >= this.releaseJumpThreshold
+      && this.liftedCells >= minimumPiece;
+    if (avalancheTear && (tearCandidateCells < minimumPiece
+      || this.componentAdheredCells - candidateAdheredCells < minimumAnchor)) {
+      // With no viable previous flap, take a connected patch at the grip from
+      // the current breadth-first traversal. The rest falls back to the board.
+      this.tearCandidate.fill(0);
+      tearCandidateCells = 0;
+      for (let i = 0; i < queuedCells && tearCandidateCells < minimumPiece; i++) {
+        const index = this.queue[i];
+        if (this.state[index] !== Cell.lifted) continue;
+        this.tearCandidate[index] = 1;
+        tearCandidateCells++;
+      }
+    }
     const stressTear = hasAnchor && this.stress >= this.tearThreshold && this.liftedCells >= minimumPiece;
     this.lastDiagnosticStep = {
       previousPendingCells,
@@ -437,10 +451,8 @@ export class PeelSimulation {
       this.grabIndex = -1;
       return false;
     }
-    const threshold = Math.max(10, Math.round(this.totalCells * 0.0015));
     const releasedWholeComponent = this.detached;
-    const accepted = releasedWholeComponent || (commit && this.pulling && !this.outwardPulling
-      && this.frontDepth > 0.012 && this.pendingNewCells >= threshold);
+    const accepted = releasedWholeComponent || (commit && this.canCommitPartial);
 
     if (this.pulling) {
       for (let index = 0; index < this.state.length; index++) {
@@ -475,6 +487,12 @@ export class PeelSimulation {
       && this.pendingNewCells > 0 && this.pendingNewCells === this.componentAdheredCells;
   }
 
+  private get canCommitPartial() {
+    const minimumCells = Math.max(10, Math.round(this.totalCells * 0.0015));
+    return this.tracking && this.pulling && !this.torn && !this.outwardPulling
+      && this.frontDepth > 0.012 && this.pendingNewCells >= minimumCells;
+  }
+
   snapshot(): PeelSnapshot {
     const progress = (this.releasedCells + this.pendingNewCells) / Math.max(1, this.totalCells);
     return {
@@ -487,7 +505,7 @@ export class PeelSimulation {
       tracking: this.tracking,
       pulling: this.pulling,
       outwardPulling: this.outwardPulling,
-      canCommit: this.pendingNewCells > 0 && !this.outwardPulling,
+      canCommit: this.detached || this.canCommitPartial,
       detached: this.detached,
       complete: !this.torn && progress >= 0.997,
       failed: this.failed,
@@ -650,7 +668,7 @@ export class PeelSimulation {
     this.stress = Math.max(this.stress, this.tearThreshold);
   }
 
-  private liftReleasedFlap(minimumPiece: number) {
+  private queueReleasedFlap() {
     this.visited.fill(0);
     this.queue[0] = this.grabIndex;
     this.visited[this.grabIndex] = 1;
@@ -660,20 +678,28 @@ export class PeelSimulation {
       this.visited[index] = 1;
       this.queue[tail++] = index;
     };
-    let depth = 0;
     for (let head = 0; head < tail; head++) {
       const cell = this.queue[head];
       const x = cell % this.width;
-      const point = this.cellPoint(cell);
-      depth = Math.max(depth, (point.x - this.grab.x) * this.aspect * this.inward.x
-        + (point.y - this.grab.y) * this.inward.y);
       if (x > 0) visit(cell - 1);
       if (x + 1 < this.width) visit(cell + 1);
       if (cell >= this.width) visit(cell - this.width);
       if (cell + this.width < this.state.length) visit(cell + this.width);
     }
+    return tail;
+  }
+
+  private liftReleasedFlap(minimumPiece: number) {
+    const tail = this.queueReleasedFlap();
     if (tail < minimumPiece) return;
-    for (let index = 0; index < tail; index++) this.state[this.queue[index]] = Cell.lifted;
+    let depth = 0;
+    for (let index = 0; index < tail; index++) {
+      const cell = this.queue[index];
+      const point = this.cellPoint(cell);
+      depth = Math.max(depth, (point.x - this.grab.x) * this.aspect * this.inward.x
+        + (point.y - this.grab.y) * this.inward.y);
+      this.state[cell] = Cell.lifted;
+    }
     this.liftedCells = tail;
     this.direction = this.inward;
     this.frontDepth = depth + 1 / this.height;
@@ -741,6 +767,9 @@ export class PeelSimulation {
     const grabY = this.grab.y;
     const frontX = grabX + this.direction.x * this.frontDepth;
     const frontY = grabY + this.direction.y * this.frontDepth;
+    // A shallow front must start locally. An infinite peel line could grab a
+    // distant lobe on the rear side even when the pointer barely moved.
+    const pickupRadiusSquared = (2 / (this.height - 1) + 4 * this.frontDepth) ** 2;
     const edgeTolerance = 0.7 / this.height;
     const dx4 = [-1, 1, 0, 0];
     const dy4 = [0, 0, -1, 1];
@@ -753,6 +782,7 @@ export class PeelSimulation {
       const y = Math.floor(index / this.width);
       const metricX = x / (this.width - 1) * this.aspect;
       const metricY = y / (this.height - 1);
+      if (base === Cell.adhered && (metricX - grabX) ** 2 + (metricY - grabY) ** 2 > pickupRadiusSquared) continue;
       const signed = (metricX - frontX) * this.direction.x + (metricY - frontY) * this.direction.y;
       const adhesiveDelay = (this.adhesion[index] - 0.58) * 0.012;
       if (index !== this.grabIndex && signed > edgeTolerance - adhesiveDelay) continue;
@@ -783,7 +813,7 @@ export class PeelSimulation {
       if (touchesFront) frontCells++;
     }
 
-    return { frontCells, averageAdhesion: adhesionSum / Math.max(1, this.pendingNewCells) };
+    return { frontCells, averageAdhesion: adhesionSum / Math.max(1, this.pendingNewCells), queuedCells: tail };
   }
 
   private traceAccessibleCell(start: Vec2, end: Vec2) {

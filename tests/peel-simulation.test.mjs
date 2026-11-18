@@ -94,7 +94,7 @@ test("a sweep only peels the connected component reached from its edge", () => {
   const mask = rectangleMask(width, height, 2, 20, 6, 21);
   const rightPiece = rectangleMask(width, height, 29, 44, 8, 19);
   for (let i = 0; i < mask.length; i++) mask[i] ||= rightPiece[i];
-  const simulation = new PeelSimulation(width, height, 1234, 4, mask);
+  const simulation = new PeelSimulation(width, height, 1234, 4, mask, 0.78, 1);
 
   assert.equal(simulation.begin({ x: 0, y: 0.5 }, 100), true);
   simulation.drag({ x: 0.34, y: 0.5 }, 420);
@@ -112,7 +112,7 @@ test("pull direction changes the moving-front result", () => {
   const height = 24;
   const mask = rectangleMask(width, height, 3, 60, 9, 14);
   const run = (point) => {
-    const simulation = new PeelSimulation(width, height, 77, 4, mask);
+    const simulation = new PeelSimulation(width, height, 77, 4, mask, 0.78, 1);
     simulation.begin({ x: 3 / (width - 1), y: 11 / (height - 1) }, 100);
     simulation.drag(point, 500);
     return simulation.snapshot().progress;
@@ -120,7 +120,20 @@ test("pull direction changes the moving-front result", () => {
 
   const alongArm = run({ x: 0.72, y: 11 / (height - 1) });
   const acrossArm = run({ x: 3 / (width - 1), y: 0.92 });
-  assert.ok(Math.abs(alongArm - acrossArm) > 0.18);
+  assert.ok(alongArm > acrossArm + 0.10);
+});
+
+test("a tiny grab at an inner edge cannot pick up a distant connected lobe", () => {
+  const size = 208;
+  const mask = rectangleMask(size, size, 10, 190, 15, 190);
+  for (let y = 60; y <= 145; y++) mask.fill(0, y * size + 91, y * size + 121);
+  const grab = { x: 90 / 207, y: 101 / 207 };
+  const simulation = new PeelSimulation(size, size, 41, 4, mask, 0.24, 0.09);
+  simulation.begin(grab, 100);
+  simulation.drag({ ...grab, x: grab.x - 0.004 }, 151);
+  assert.ok(simulation.snapshot().progress > 0 && simulation.snapshot().progress < 0.02);
+  assert.equal(simulation.snapshot().torn, false);
+  assert.equal(simulation.state[101 * size + 160], Cell.adhered);
 });
 
 test("released material persists and can seed the next pull", () => {
@@ -221,6 +234,43 @@ test("release-jump tearing has an independent threshold", () => {
   assert.equal(simulation.snapshot().releaseJumpThreshold, 0.98);
 });
 
+test("a large first lift can tear off a small piece at the grip", () => {
+  const width = 72;
+  const height = 36;
+  const mask = rectangleMask(width, height, 3, 68, 6, 29);
+  const grab = { x: 3 / 71, y: 18 / 35 };
+  const simulation = new PeelSimulation(width, height, 41, 4, mask, 0.9, 0.09);
+  simulation.begin(grab, 100);
+  simulation.drag({ x: 0.48, y: grab.y }, 140);
+  const { lastStep } = simulation.diagnostics();
+  assert.equal(lastStep.previousPendingCells, 0);
+  assert.equal(simulation.snapshot().tearFailure.kind, "area-jump");
+  assert.equal(simulation.state[18 * width + 3], Cell.torn);
+  assert.equal(simulation.state.filter(cell => cell === Cell.torn).length, lastStep.minimumPiece);
+  assert.equal(simulation.state.filter(cell => cell === Cell.adhered).length, 66 * 24 - lastStep.minimumPiece);
+});
+
+test("settling a partial lift counts once and writes the released layer and mark", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask);
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: 0.28, y: 0.5 }, 400);
+  assert.equal(simulation.snapshot().canCommit, true);
+  const progress = simulation.snapshot().progress;
+  assert.equal(simulation.end(), true);
+  assert.equal(simulation.end(), false);
+  assert.equal(simulation.snapshot().moves, 1);
+  assert.equal(simulation.snapshot().progress, progress);
+  const history = new Uint8Array(mask.length);
+  const texture = new Uint8Array(mask.length * 4);
+  simulation.writeReleaseHistory(history);
+  simulation.writeTexture(texture);
+  assert.ok(history.some(Boolean));
+  assert.ok(history.every((value, index) => value === texture[index * 4 + 1]));
+});
+
 test("tear controls accept zero as a deliberate threshold", () => {
   const simulation = new PeelSimulation();
   simulation.setTearThreshold(0);
@@ -236,12 +286,13 @@ test("finishing one figure over multiple moves removes it and preserves the othe
   const left = rectangleMask(width, height, 3, 30, 6, 29);
   const right = rectangleMask(width, height, 48, 68, 6, 29);
   const mask = left.map((value, index) => value || right[index]);
-  const simulation = new PeelSimulation(width, height, 41, 4, mask, 0.9, 0.02);
+  const simulation = new PeelSimulation(width, height, 41, 4, mask, 0.9);
 
   assert.equal(simulation.begin({ x: 0.02, y: 0.5 }, 100), true);
   simulation.drag({ x: 0.16, y: 0.5 }, 420);
   assert.equal(simulation.end(true), true);
   assert.ok(simulation.state.includes(Cell.released));
+  simulation.setReleaseJumpThreshold(0.02);
   assert.equal(simulation.begin({ x: 0.08, y: 0.5 }, 700), true);
   simulation.drag({ x: 0.96, y: 0.5 }, 760);
   assert.ok(simulation.snapshot().areaJump > 0.02);

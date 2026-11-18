@@ -381,30 +381,34 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           if (!before.torn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
         };
 
-        const finishPointer = (event: PointerEvent, commit: boolean) => {
+        const finishPointer = (event: PointerEvent) => {
           if (activePointer.current !== event.pointerId) return;
-          if (commit && peelSoundRef.current !== "off") audio.unlock();
+          const releasedByPlayer = event.type === "pointerup";
+          if (releasedByPlayer && peelSoundRef.current !== "off") audio.unlock();
           activePointer.current = null;
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const beforeRelease = simulation.snapshot();
           const hadGrab = beforeRelease.pulling;
           if (beforeRelease.detached) refresh(true);
-          const accepted = simulation.end(commit);
+          // Browser interruptions settle the last valid lift like a normal release.
+          const accepted = simulation.end();
           const finished = simulation.snapshot();
-          if (commit && !accepted && beforeRelease.outwardPulling && !finished.failed) {
+          if (!accepted && beforeRelease.outwardPulling && !finished.failed) {
             setReleasedWhileReversing(true);
           }
           if (accepted && finished.moves === finished.maxMoves + 1) {
             setMoveLimitToast(true);
             moveToastTimer.current = window.setTimeout(() => setMoveLimitToast(false), 2800);
           }
-          const point = renderer.dragToSticker(event.clientX, event.clientY);
-          recordDiagnostic(commit ? "pointer_up" : "pointer_cancel", point, {
+          const point = releasedByPlayer ? renderer.dragToSticker(event.clientX, event.clientY) : beforeRelease.pointer;
+          recordDiagnostic(releasedByPlayer ? "pointer_up" : "pointer_cancel", point, {
             accepted,
-            commit,
+            commit: true,
             hadGrab,
             outwardPulling: beforeRelease.outwardPulling,
             pointerId: event.pointerId,
+            source: event.type,
+            canCommit: beforeRelease.canCommit,
           });
           renderer.endDrag();
           refresh(true);
@@ -415,20 +419,18 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           if (navigator.vibrate && accepted) navigator.vibrate(12);
         };
 
-        const onPointerUp = (event: PointerEvent) => finishPointer(event, true);
-        const onPointerCancel = (event: PointerEvent) => finishPointer(event, false);
         canvas.addEventListener("pointerdown", onPointerDown);
         canvas.addEventListener("pointermove", onPointerMove, { passive: false });
-        canvas.addEventListener("pointerup", onPointerUp);
-        canvas.addEventListener("pointercancel", onPointerCancel);
-        canvas.addEventListener("lostpointercapture", onPointerCancel);
+        canvas.addEventListener("pointerup", finishPointer);
+        canvas.addEventListener("pointercancel", finishPointer);
+        canvas.addEventListener("lostpointercapture", finishPointer);
 
         teardown = () => {
           canvas.removeEventListener("pointerdown", onPointerDown);
           canvas.removeEventListener("pointermove", onPointerMove);
-          canvas.removeEventListener("pointerup", onPointerUp);
-          canvas.removeEventListener("pointercancel", onPointerCancel);
-          canvas.removeEventListener("lostpointercapture", onPointerCancel);
+          canvas.removeEventListener("pointerup", finishPointer);
+          canvas.removeEventListener("pointercancel", finishPointer);
+          canvas.removeEventListener("lostpointercapture", finishPointer);
           renderer.dispose();
           rendererRef.current = null;
           simulationRef.current = null;
@@ -644,7 +646,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         : snapshot.pulling
           ? snapshot.outwardPulling ? "Pulling back loads the lifted edge. Sweep forward to continue."
             : snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
-            : snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction." : "Keep sweeping the peel front."
+            : snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction."
+            : snapshot.canCommit ? "Let go to keep this peel, or keep sweeping." : "Keep sweeping the peel front."
           : releasedWhileReversing ? "Peel progress reverted after pulling back. Let go while sweeping forward to keep it."
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
