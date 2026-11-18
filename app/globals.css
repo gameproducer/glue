@@ -498,3 +498,28 @@ h1 {
   .grab-guide, .result-card, .miss .renderer-host { animation: none; }
   .control-bar button, .log-eraser-button { transition: none; }
 }
+
+.level-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(48vw, 370px);
+  pointer-events: auto;
+}
+.level-switcher label { display: grid; gap: 6px; min-width: 0; }
+.level-switcher label > span { font: 10px var(--font-geist-mono), monospace; color: var(--muted); }
+.level-switcher select {
+  width: 100%; min-width: 0; padding: 10px 8px; border: 1px solid var(--hairline);
+  border-radius: 10px; color: var(--ink); background: #201b29; font: inherit; text-transform: capitalize;
+}
+.level-switcher button {
+  flex-shrink: 0; width: 36px; height: 44px; border: 1px solid var(--hairline);
+  border-radius: 10px; color: var(--ink); background: #201b29; font-size: 26px; cursor: pointer;
+}
+.level-switcher button:disabled { opacity: .3; cursor: default; }
+.level-switcher :focus-visible { outline: 2px solid #9cf3e9; outline-offset: 3px; }
+@media (max-width: 650px) {
+  .prototype-header { flex-wrap: wrap; gap: 14px; }
+  .level-switcher { order: 3; width: 100%; max-width: none; justify-content: center; }
+  .level-switcher label { flex: 1; max-width: 300px; }
+}

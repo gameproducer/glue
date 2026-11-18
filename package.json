@@ -6,10 +6,10 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
-    "build": "vinext build",
+    "dev": "node scripts/prepare-levels.mjs && vinext dev",
+    "build": "node scripts/prepare-levels.mjs && vinext build",
     "start": "vinext start",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+    "test": "node scripts/prepare-levels.mjs && node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "react": "19.2.6",

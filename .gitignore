@@ -51,3 +51,6 @@ xcuserdata/
 
 # Checkout-local dependency cache
 .pnpm-store/
+
+# Generated from sticker/ before development and builds
+/public/stickers/

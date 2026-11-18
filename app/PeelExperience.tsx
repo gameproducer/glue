@@ -10,8 +10,11 @@ import {
 } from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
+import stickerLevels from "@/lib/peel/levels.json";
 
-const ACTIVE_LEVEL = {
+const DEFAULT_LEVEL = {
+  pack: "Prototype",
+  maxMoves: 4,
   id: "octopus-v1",
   name: "Octopus",
   artwork: "/octopus-sticker.webp",
@@ -21,10 +24,6 @@ const ACTIVE_LEVEL = {
 } as const;
 const TENSION_CONTROL_MAX = 0.33;
 const RELEASE_JUMP_CONTROL_MAX = 0.33;
-const tearThresholdStorageKey = `peel.level.${ACTIVE_LEVEL.id}.tearThreshold`;
-const releaseJumpStorageKey = `peel.level.${ACTIVE_LEVEL.id}.releaseJumpThreshold`;
-const liftedTransparencyStorageKey = `peel.level.${ACTIVE_LEVEL.id}.liftedTransparency`;
-
 const emptySnapshot: PeelSnapshot = {
   moves: 0,
   maxMoves: 4,
@@ -39,8 +38,8 @@ const emptySnapshot: PeelSnapshot = {
   failed: false,
   torn: false,
   tearDragging: false,
-  tearThreshold: ACTIVE_LEVEL.tearThreshold,
-  releaseJumpThreshold: ACTIVE_LEVEL.releaseJumpThreshold,
+  tearThreshold: DEFAULT_LEVEL.tearThreshold,
+  releaseJumpThreshold: DEFAULT_LEVEL.releaseJumpThreshold,
   tornOffset: { x: 0, y: 0 },
   grab: { x: 0.08, y: 0.5 },
   pointer: { x: 0.08, y: 0.5 },
@@ -127,7 +126,31 @@ function RollingSignalChart({
   );
 }
 
+type Level = { id: string; name: string; pack: string; artwork: string; maxMoves: number };
+const LEVELS: Level[] = [DEFAULT_LEVEL, ...stickerLevels];
+const PACKS = [...new Set(LEVELS.map(level => level.pack))];
+
 export default function PeelExperience() {
+  const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("peel.selectedLevel");
+      const found = LEVELS.find(item => item.id === saved);
+      if (found) setLevel(found);
+    } catch { /* Storage is optional. */ }
+  }, []);
+  const selectLevel = (next: Level) => {
+    setLevel(next);
+    try { localStorage.setItem("peel.selectedLevel", next.id); } catch { /* Storage is optional. */ }
+  };
+  return <PeelGame key={level.id} level={level} onLevelChange={selectLevel} />;
+}
+
+function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (level: Level) => void }) {
+  const tearThresholdStorageKey = `peel.level.${level.id}.tearThreshold`;
+  const releaseJumpStorageKey = `peel.level.${level.id}.releaseJumpThreshold`;
+  const liftedTransparencyStorageKey = `peel.level.${level.id}.liftedTransparency`;
+  const levelIndex = LEVELS.findIndex(item => item.id === level.id);
   const hostRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<PeelSimulation | null>(null);
   const rendererRef = useRef<PeelRenderer | null>(null);
@@ -141,9 +164,9 @@ export default function PeelExperience() {
   const [profile, setProfile] = useState<CurlProfile>("cylinder");
   const [debug, setDebug] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [tearThreshold, setTearThreshold] = useState<number>(ACTIVE_LEVEL.tearThreshold);
-  const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(ACTIVE_LEVEL.releaseJumpThreshold);
-  const [liftedTransparency, setLiftedTransparency] = useState<number>(ACTIVE_LEVEL.liftedTransparency);
+  const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
+  const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
+  const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
   const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
   const [started, setStarted] = useState(false);
@@ -198,15 +221,15 @@ export default function PeelExperience() {
 
     void (async () => {
       try {
-        const asset = await loadStickerAsset(ACTIVE_LEVEL.artwork);
+        const asset = await loadStickerAsset(level.artwork);
         if (disposed || !hostRef.current) return;
         const readSavedSetting = (key: string, fallback: number, minimum: number, maximum: number) => {
-          const stored = Number(window.localStorage.getItem(key));
+          const stored = Number(window.localStorage.getItem(key) ?? Number.NaN);
           return Number.isFinite(stored) && stored >= minimum && stored <= maximum ? stored : fallback;
         };
-        let savedThreshold: number = ACTIVE_LEVEL.tearThreshold;
-        let savedJumpThreshold: number = ACTIVE_LEVEL.releaseJumpThreshold;
-        let savedTransparency: number = ACTIVE_LEVEL.liftedTransparency;
+        let savedThreshold: number = DEFAULT_LEVEL.tearThreshold;
+        let savedJumpThreshold: number = DEFAULT_LEVEL.releaseJumpThreshold;
+        let savedTransparency: number = DEFAULT_LEVEL.liftedTransparency;
         try {
           savedThreshold = readSavedSetting(tearThresholdStorageKey, savedThreshold, 0, TENSION_CONTROL_MAX);
           savedJumpThreshold = readSavedSetting(releaseJumpStorageKey, savedJumpThreshold, 0, RELEASE_JUMP_CONTROL_MAX);
@@ -221,7 +244,7 @@ export default function PeelExperience() {
           asset.width,
           asset.height,
           0x5045454c,
-          4,
+          level.maxMoves,
           asset.mask,
           savedThreshold,
           savedJumpThreshold,
@@ -242,7 +265,7 @@ export default function PeelExperience() {
         });
         renderer.onFps = setFps;
         const canvas = renderer.domElement;
-        canvas.setAttribute("aria-label", "Interactive octopus sticker. Sweep from an exposed edge through the sticker to peel it.");
+        canvas.setAttribute("aria-label", `Interactive ${level.name} sticker. Sweep from an exposed edge through the sticker to peel it.`);
 
         const scheduleTextureRefresh = () => {
           if (textureFrame.current) return;
@@ -347,9 +370,11 @@ export default function PeelExperience() {
     return () => {
       disposed = true;
       if (textureFrame.current) cancelAnimationFrame(textureFrame.current);
+      textureFrame.current = 0;
+      activePointer.current = null;
       teardown();
     };
-  }, [recordDiagnostic, refresh]);
+  }, [level, recordDiagnostic, refresh, tearThresholdStorageKey, releaseJumpStorageKey, liftedTransparencyStorageKey]);
 
   const toggleProfile = () => {
     const next = profile === "cylinder" ? "cone" : "cylinder";
@@ -419,9 +444,9 @@ export default function PeelExperience() {
       exportedAt: new Date().toISOString(),
       durationMs: Number((performance.now() - diagnosticStartedAt.current).toFixed(3)),
       level: {
-        id: ACTIVE_LEVEL.id,
-        name: ACTIVE_LEVEL.name,
-        artwork: ACTIVE_LEVEL.artwork,
+        id: level.id,
+        name: level.name,
+        artwork: level.artwork,
         seed: "0x5045454c",
         gridWidth: simulation.width,
         gridHeight: simulation.height,
@@ -509,6 +534,18 @@ export default function PeelExperience() {
           <p className="eyebrow">Interactive material study</p>
           <h1>PEEL</h1>
         </div>
+        <nav className="level-switcher" aria-label="Choose sticker level">
+          <button type="button" aria-label="Previous level" disabled={levelIndex === 0} onClick={() => onLevelChange(LEVELS[levelIndex - 1])}>‹</button>
+          <label>
+            <span>LEVEL {levelIndex + 1} / {LEVELS.length}</span>
+            <select aria-label="Sticker level" value={level.id} onChange={event => onLevelChange(LEVELS.find(item => item.id === event.target.value)!)}>
+              {PACKS.map(pack => <optgroup key={pack} label={pack}>
+                {LEVELS.filter(item => item.pack === pack).map(item => <option key={item.id} value={item.id}>{item.name} · {item.maxMoves} moves</option>)}
+              </optgroup>)}
+            </select>
+          </label>
+          <button type="button" aria-label="Next level" disabled={levelIndex === LEVELS.length - 1} onClick={() => onLevelChange(LEVELS[levelIndex + 1])}>›</button>
+        </nav>
         <div className="readouts" aria-label="Level status">
           <span>MOVES&nbsp; {snapshot.moves} / {snapshot.maxMoves}</span>
           <span>RELEASED&nbsp; {String(percent).padStart(2, "0")}%</span>
@@ -522,8 +559,8 @@ export default function PeelExperience() {
         {!ready && !webglError && <p className="loading-art">Preparing sticker…</p>}
         {webglError && (
           <div className="webgl-fallback" role="alert">
-            <strong>3D graphics are unavailable.</strong>
-            <span>Open this page in a browser with WebGL enabled.</span>
+            <strong>Couldn’t prepare this sticker.</strong>
+            <span>Choose another level or reload with WebGL enabled.</span>
           </div>
         )}
         <RollingSignalChart
@@ -591,7 +628,7 @@ export default function PeelExperience() {
                 onChange={(event) => changeLiftedTransparency(Number(event.currentTarget.value) / 100)}
               />
             </label>
-            <small>Autosaved for {ACTIVE_LEVEL.name}</small>
+            <small>Autosaved for {level.name}</small>
             <section className="log-tools" aria-label="Diagnostic recording">
               <header><span>Diagnostic log</span><output>{diagnosticEvents.current.length} events</output></header>
               <p>Local only. Reproduce the fast release, then copy or download the complete trace.</p>

@@ -31,7 +31,7 @@ See [WEB.md](WEB.md) for interaction details.
 
 ## Sticker artwork
 
-`sticker/` preserves the original sticker packs, images, and pack metadata for future level work. The active browser prototype currently uses its artwork in `public/`.
+`sticker/` preserves the original sticker packs, images, and pack metadata for future level work. The browser game exposes all 190 listed levels through a grouped dropdown and previous/next buttons. Artwork is prepared automatically from the pack metadata before development, tests, and builds.
 
 ## Source locations and recovery
 

@@ -1,0 +1,1522 @@
+[
+  {
+    "id": "0-tutorial/funzai_logo-512.png",
+    "pack": "Tutorial",
+    "name": "funzai logo",
+    "artwork": "/stickers/0-tutorial/funzai_logo-512.png",
+    "maxMoves": 50,
+    "density": 100
+  },
+  {
+    "id": "1-tips/portrait_mode-512.png",
+    "pack": "1-tips",
+    "name": "portrait mode",
+    "artwork": "/stickers/1-tips/portrait_mode-512.png",
+    "maxMoves": 7,
+    "density": 1.2
+  },
+  {
+    "id": "1-tips/clown_fish-512.png",
+    "pack": "1-tips",
+    "name": "clown fish",
+    "artwork": "/stickers/1-tips/clown_fish-512.png",
+    "maxMoves": 4,
+    "density": 1.1
+  },
+  {
+    "id": "1-tips/slug-512.png",
+    "pack": "1-tips",
+    "name": "slug",
+    "artwork": "/stickers/1-tips/slug-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "1-tips/willow-512.png",
+    "pack": "1-tips",
+    "name": "willow",
+    "artwork": "/stickers/1-tips/willow-512.png",
+    "maxMoves": 2,
+    "density": 0.85
+  },
+  {
+    "id": "1-tips/eiffel_tower-512.png",
+    "pack": "1-tips",
+    "name": "eiffel tower",
+    "artwork": "/stickers/1-tips/eiffel_tower-512.png",
+    "maxMoves": 3,
+    "density": 1.2
+  },
+  {
+    "id": "1-tips/cards-512.png",
+    "pack": "1-tips",
+    "name": "cards",
+    "artwork": "/stickers/1-tips/cards-512.png",
+    "maxMoves": 6,
+    "density": 1
+  },
+  {
+    "id": "1-tips/gender-512.png",
+    "pack": "1-tips",
+    "name": "gender",
+    "artwork": "/stickers/1-tips/gender-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "1-tips/airplane_takeoff-512.png",
+    "pack": "1-tips",
+    "name": "airplane takeoff",
+    "artwork": "/stickers/1-tips/airplane_takeoff-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "1-tips/horseshoe-512.png",
+    "pack": "1-tips",
+    "name": "horseshoe",
+    "artwork": "/stickers/1-tips/horseshoe-512.png",
+    "maxMoves": 3,
+    "density": 1.16
+  },
+  {
+    "id": "1-tips/rugby-512.png",
+    "pack": "1-tips",
+    "name": "rugby",
+    "artwork": "/stickers/1-tips/rugby-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "1-tips/air_element-512.png",
+    "pack": "1-tips",
+    "name": "air element",
+    "artwork": "/stickers/1-tips/air_element-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "1-tips/checkmark-512.png",
+    "pack": "1-tips",
+    "name": "checkmark",
+    "artwork": "/stickers/1-tips/checkmark-512.png",
+    "maxMoves": 1,
+    "density": 0.9
+  },
+  {
+    "id": "2-start/roller_coaster-512.png",
+    "pack": "Simple",
+    "name": "roller coaster",
+    "artwork": "/stickers/2-start/roller_coaster-512.png",
+    "maxMoves": 6,
+    "density": 1.16
+  },
+  {
+    "id": "2-start/turtle-512.png",
+    "pack": "Simple",
+    "name": "turtle",
+    "artwork": "/stickers/2-start/turtle-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "2-start/left_footprint-512.png",
+    "pack": "Simple",
+    "name": "left footprint",
+    "artwork": "/stickers/2-start/left_footprint-512.png",
+    "maxMoves": 6,
+    "density": 1
+  },
+  {
+    "id": "2-start/mask_snorkel-512.png",
+    "pack": "Simple",
+    "name": "mask snorkel",
+    "artwork": "/stickers/2-start/mask_snorkel-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "2-start/bell_lyre-512.png",
+    "pack": "Simple",
+    "name": "bell lyre",
+    "artwork": "/stickers/2-start/bell_lyre-512.png",
+    "maxMoves": 7,
+    "density": 1
+  },
+  {
+    "id": "2-start/duck-512.png",
+    "pack": "Simple",
+    "name": "duck",
+    "artwork": "/stickers/2-start/duck-512.png",
+    "maxMoves": 1,
+    "density": 1.2
+  },
+  {
+    "id": "2-start/guitar-512.png",
+    "pack": "Simple",
+    "name": "guitar",
+    "artwork": "/stickers/2-start/guitar-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "2-start/pitchfork-512.png",
+    "pack": "Simple",
+    "name": "pitchfork",
+    "artwork": "/stickers/2-start/pitchfork-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "2-start/speedometer-512.png",
+    "pack": "Simple",
+    "name": "speedometer",
+    "artwork": "/stickers/2-start/speedometer-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "2-start/stadium-512.png",
+    "pack": "Simple",
+    "name": "stadium",
+    "artwork": "/stickers/2-start/stadium-512.png",
+    "maxMoves": 6,
+    "density": 1.22
+  },
+  {
+    "id": "2-start/swiss_army_knife-512.png",
+    "pack": "Simple",
+    "name": "swiss army knife",
+    "artwork": "/stickers/2-start/swiss_army_knife-512.png",
+    "maxMoves": 4,
+    "density": 1.03
+  },
+  {
+    "id": "2-start/no_smoking-512.png",
+    "pack": "Simple",
+    "name": "no smoking",
+    "artwork": "/stickers/2-start/no_smoking-512.png",
+    "maxMoves": 6,
+    "density": 0.89
+  },
+  {
+    "id": "2-start/carousel-512.png",
+    "pack": "Simple",
+    "name": "carousel",
+    "artwork": "/stickers/2-start/carousel-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "2-start/swimming-512.png",
+    "pack": "Simple",
+    "name": "swimming",
+    "artwork": "/stickers/2-start/swimming-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "2-start/world_cup-512.png",
+    "pack": "Simple",
+    "name": "world cup",
+    "artwork": "/stickers/2-start/world_cup-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "2-start/origami-512.png",
+    "pack": "Simple",
+    "name": "origami",
+    "artwork": "/stickers/2-start/origami-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Animals/caterpillar-512.png",
+    "pack": "Animals",
+    "name": "caterpillar",
+    "artwork": "/stickers/Animals/caterpillar-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Animals/coral-512.png",
+    "pack": "Animals",
+    "name": "coral",
+    "artwork": "/stickers/Animals/coral-512.png",
+    "maxMoves": 3,
+    "density": 1.11
+  },
+  {
+    "id": "Animals/eating_slug-512.png",
+    "pack": "Animals",
+    "name": "eating slug",
+    "artwork": "/stickers/Animals/eating_slug-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Animals/falcon-512.png",
+    "pack": "Animals",
+    "name": "falcon",
+    "artwork": "/stickers/Animals/falcon-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Animals/giraffe-512.png",
+    "pack": "Animals",
+    "name": "giraffe",
+    "artwork": "/stickers/Animals/giraffe-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Animals/gorilla-512.png",
+    "pack": "Animals",
+    "name": "gorilla",
+    "artwork": "/stickers/Animals/gorilla-512.png",
+    "maxMoves": 2,
+    "density": 1.27
+  },
+  {
+    "id": "Animals/rabbit-512.png",
+    "pack": "Animals",
+    "name": "rabbit",
+    "artwork": "/stickers/Animals/rabbit-512.png",
+    "maxMoves": 3,
+    "density": 1.12
+  },
+  {
+    "id": "Animals/running_rabbit-512.png",
+    "pack": "Animals",
+    "name": "running rabbit",
+    "artwork": "/stickers/Animals/running_rabbit-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Animals/seahorse-512.png",
+    "pack": "Animals",
+    "name": "seahorse",
+    "artwork": "/stickers/Animals/seahorse-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Animals/sheep_on_bike-512.png",
+    "pack": "Animals",
+    "name": "sheep on bike",
+    "artwork": "/stickers/Animals/sheep_on_bike-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Animals/snail-512.png",
+    "pack": "Animals",
+    "name": "snail",
+    "artwork": "/stickers/Animals/snail-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Astrology/aries-512.png",
+    "pack": "Astrology",
+    "name": "aries",
+    "artwork": "/stickers/Astrology/aries-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Astrology/cancer-512.png",
+    "pack": "Astrology",
+    "name": "cancer",
+    "artwork": "/stickers/Astrology/cancer-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Astrology/capricorn-512.png",
+    "pack": "Astrology",
+    "name": "capricorn",
+    "artwork": "/stickers/Astrology/capricorn-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Astrology/fire_element-512.png",
+    "pack": "Astrology",
+    "name": "fire element",
+    "artwork": "/stickers/Astrology/fire_element-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Astrology/leo-512.png",
+    "pack": "Astrology",
+    "name": "leo",
+    "artwork": "/stickers/Astrology/leo-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Astrology/scorpio-512.png",
+    "pack": "Astrology",
+    "name": "scorpio",
+    "artwork": "/stickers/Astrology/scorpio-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Astrology/water_element-512.png",
+    "pack": "Astrology",
+    "name": "water element",
+    "artwork": "/stickers/Astrology/water_element-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Baby/bottle-512.png",
+    "pack": "Baby",
+    "name": "bottle",
+    "artwork": "/stickers/Baby/bottle-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Baby/brick-512.png",
+    "pack": "Baby",
+    "name": "brick",
+    "artwork": "/stickers/Baby/brick-512.png",
+    "maxMoves": 3,
+    "density": 1.15
+  },
+  {
+    "id": "Baby/flying_stork-512.png",
+    "pack": "Baby",
+    "name": "flying stork",
+    "artwork": "/stickers/Baby/flying_stork-512.png",
+    "maxMoves": 1,
+    "density": 1.15
+  },
+  {
+    "id": "Baby/pacifier-512.png",
+    "pack": "Baby",
+    "name": "pacifier",
+    "artwork": "/stickers/Baby/pacifier-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Baby/rattle-512.png",
+    "pack": "Baby",
+    "name": "rattle",
+    "artwork": "/stickers/Baby/rattle-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Baby/teddybear-512.png",
+    "pack": "Baby",
+    "name": "teddybear",
+    "artwork": "/stickers/Baby/teddybear-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Baby/tricycle-512.png",
+    "pack": "Baby",
+    "name": "tricycle",
+    "artwork": "/stickers/Baby/tricycle-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Cinema/adventures-512.png",
+    "pack": "Cinema",
+    "name": "adventures",
+    "artwork": "/stickers/Cinema/adventures-512.png",
+    "maxMoves": 3,
+    "density": 1.5
+  },
+  {
+    "id": "Cinema/andorian_head-512.png",
+    "pack": "Cinema",
+    "name": "andorian head",
+    "artwork": "/stickers/Cinema/andorian_head-512.png",
+    "maxMoves": 4,
+    "density": 1.32
+  },
+  {
+    "id": "Cinema/avengers-512.png",
+    "pack": "Cinema",
+    "name": "avengers",
+    "artwork": "/stickers/Cinema/avengers-512.png",
+    "maxMoves": 2,
+    "density": 1.22
+  },
+  {
+    "id": "Cinema/dare_davil-512.png",
+    "pack": "Cinema",
+    "name": "dare davil",
+    "artwork": "/stickers/Cinema/dare_davil-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Cinema/hellraiser_pinhead-512.png",
+    "pack": "Cinema",
+    "name": "hellraiser pinhead",
+    "artwork": "/stickers/Cinema/hellraiser_pinhead-512.png",
+    "maxMoves": 1,
+    "density": 1.12
+  },
+  {
+    "id": "Cinema/musical-512.png",
+    "pack": "Cinema",
+    "name": "musical",
+    "artwork": "/stickers/Cinema/musical-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Cinema/the_flash_sign-512.png",
+    "pack": "Cinema",
+    "name": "the flash sign",
+    "artwork": "/stickers/Cinema/the_flash_sign-512.png",
+    "maxMoves": 3,
+    "density": 0.95
+  },
+  {
+    "id": "Cinema/wonder_woman-512.png",
+    "pack": "Cinema",
+    "name": "wonder woman",
+    "artwork": "/stickers/Cinema/wonder_woman-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "City/equestrian_statue-512.png",
+    "pack": "City",
+    "name": "equestrian statue",
+    "artwork": "/stickers/City/equestrian_statue-512.png",
+    "maxMoves": 4,
+    "density": 0.89
+  },
+  {
+    "id": "City/railway_station-512.png",
+    "pack": "City",
+    "name": "railway station",
+    "artwork": "/stickers/City/railway_station-512.png",
+    "maxMoves": 6,
+    "density": 1.34
+  },
+  {
+    "id": "City/restaurant-512.png",
+    "pack": "City",
+    "name": "restaurant",
+    "artwork": "/stickers/City/restaurant-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "City/sheriff-512.png",
+    "pack": "City",
+    "name": "sheriff",
+    "artwork": "/stickers/City/sheriff-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Clothing/flip_flop-512.png",
+    "pack": "Clothing",
+    "name": "flip flop",
+    "artwork": "/stickers/Clothing/flip_flop-512.png",
+    "maxMoves": 2,
+    "density": 1.11
+  },
+  {
+    "id": "Clothing/glasses-512.png",
+    "pack": "Clothing",
+    "name": "glasses",
+    "artwork": "/stickers/Clothing/glasses-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Clothing/needle-512.png",
+    "pack": "Clothing",
+    "name": "needle",
+    "artwork": "/stickers/Clothing/needle-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Cultures/anubis-512.png",
+    "pack": "Cultures",
+    "name": "anubis",
+    "artwork": "/stickers/Cultures/anubis-512.png",
+    "maxMoves": 1,
+    "density": 1.16
+  },
+  {
+    "id": "Cultures/chili_pepper-512.png",
+    "pack": "Cultures",
+    "name": "chili pepper",
+    "artwork": "/stickers/Cultures/chili_pepper-512.png",
+    "maxMoves": 1,
+    "density": 0.96
+  },
+  {
+    "id": "Cultures/geisha-512.png",
+    "pack": "Cultures",
+    "name": "geisha",
+    "artwork": "/stickers/Cultures/geisha-512.png",
+    "maxMoves": 6,
+    "density": 1.05
+  },
+  {
+    "id": "Cultures/great_wall-512.png",
+    "pack": "Cultures",
+    "name": "great wall",
+    "artwork": "/stickers/Cultures/great_wall-512.png",
+    "maxMoves": 2,
+    "density": 1.12
+  },
+  {
+    "id": "Cultures/mustache-2-512.png",
+    "pack": "Cultures",
+    "name": "mustache-2",
+    "artwork": "/stickers/Cultures/mustache-2-512.png",
+    "maxMoves": 1,
+    "density": 0.71
+  },
+  {
+    "id": "Cultures/sombrero-512.png",
+    "pack": "Cultures",
+    "name": "sombrero",
+    "artwork": "/stickers/Cultures/sombrero-512.png",
+    "maxMoves": 4,
+    "density": 0.77
+  },
+  {
+    "id": "Cultures/triskelion-512.png",
+    "pack": "Cultures",
+    "name": "triskelion",
+    "artwork": "/stickers/Cultures/triskelion-512.png",
+    "maxMoves": 4,
+    "density": 0.92
+  },
+  {
+    "id": "Cultures/viking_helmet-512.png",
+    "pack": "Cultures",
+    "name": "viking helmet",
+    "artwork": "/stickers/Cultures/viking_helmet-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "DIY/garden_shears-512.png",
+    "pack": "DIY",
+    "name": "garden shears",
+    "artwork": "/stickers/DIY/garden_shears-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "DIY/plant_under_rain-512.png",
+    "pack": "DIY",
+    "name": "plant under rain",
+    "artwork": "/stickers/DIY/plant_under_rain-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "DIY/scythe-512.png",
+    "pack": "DIY",
+    "name": "scythe",
+    "artwork": "/stickers/DIY/scythe-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "DIY/sproud-512.png",
+    "pack": "DIY",
+    "name": "sproud",
+    "artwork": "/stickers/DIY/sproud-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Ecommerce/delivery-512.png",
+    "pack": "Ecommerce",
+    "name": "delivery",
+    "artwork": "/stickers/Ecommerce/delivery-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Ecommerce/food-512.png",
+    "pack": "Ecommerce",
+    "name": "food",
+    "artwork": "/stickers/Ecommerce/food-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Ecommerce/fragile-512.png",
+    "pack": "Ecommerce",
+    "name": "fragile",
+    "artwork": "/stickers/Ecommerce/fragile-512.png",
+    "maxMoves": 1,
+    "density": 1.1
+  },
+  {
+    "id": "Ecommerce/price_tag-512.png",
+    "pack": "Ecommerce",
+    "name": "price tag",
+    "artwork": "/stickers/Ecommerce/price_tag-512.png",
+    "maxMoves": 2,
+    "density": 1.1
+  },
+  {
+    "id": "Ecommerce/shopping_cart-512.png",
+    "pack": "Ecommerce",
+    "name": "shopping cart",
+    "artwork": "/stickers/Ecommerce/shopping_cart-512.png",
+    "maxMoves": 4,
+    "density": 1.05
+  },
+  {
+    "id": "Food/beer_bottle-512.png",
+    "pack": "Food",
+    "name": "beer bottle",
+    "artwork": "/stickers/Food/beer_bottle-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Food/beer_glass-512.png",
+    "pack": "Food",
+    "name": "beer glass",
+    "artwork": "/stickers/Food/beer_glass-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Food/bento-512.png",
+    "pack": "Food",
+    "name": "bento",
+    "artwork": "/stickers/Food/bento-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Food/bread-512.png",
+    "pack": "Food",
+    "name": "bread",
+    "artwork": "/stickers/Food/bread-512.png",
+    "maxMoves": 1,
+    "density": 1.1
+  },
+  {
+    "id": "Food/cheese-512.png",
+    "pack": "Food",
+    "name": "cheese",
+    "artwork": "/stickers/Food/cheese-512.png",
+    "maxMoves": 5,
+    "density": 1.11
+  },
+  {
+    "id": "Food/corkscrew-512.png",
+    "pack": "Food",
+    "name": "corkscrew",
+    "artwork": "/stickers/Food/corkscrew-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Food/kebab-512.png",
+    "pack": "Food",
+    "name": "kebab",
+    "artwork": "/stickers/Food/kebab-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Food/tea-512.png",
+    "pack": "Food",
+    "name": "tea",
+    "artwork": "/stickers/Food/tea-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Gaming/dice-512.png",
+    "pack": "Gaming",
+    "name": "dice",
+    "artwork": "/stickers/Gaming/dice-512.png",
+    "maxMoves": 3,
+    "density": 1.28
+  },
+  {
+    "id": "Gaming/put_in_motion-512.png",
+    "pack": "Gaming",
+    "name": "put in motion",
+    "artwork": "/stickers/Gaming/put_in_motion-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Holidays/black_cat-512.png",
+    "pack": "Holidays",
+    "name": "black cat",
+    "artwork": "/stickers/Holidays/black_cat-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Holidays/champagne-512.png",
+    "pack": "Holidays",
+    "name": "champagne",
+    "artwork": "/stickers/Holidays/champagne-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Holidays/christmas_tree-512.png",
+    "pack": "Holidays",
+    "name": "christmas tree",
+    "artwork": "/stickers/Holidays/christmas_tree-512.png",
+    "maxMoves": 2,
+    "density": 1.11
+  },
+  {
+    "id": "Holidays/christmas_candy_cane-512.png",
+    "pack": "Holidays",
+    "name": "christmas candy cane",
+    "artwork": "/stickers/Holidays/christmas_candy_cane-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Holidays/gingerbread_men-512.png",
+    "pack": "Holidays",
+    "name": "gingerbread men",
+    "artwork": "/stickers/Holidays/gingerbread_men-512.png",
+    "maxMoves": 7,
+    "density": 1
+  },
+  {
+    "id": "Holidays/wedding_rings-512.png",
+    "pack": "Holidays",
+    "name": "wedding rings",
+    "artwork": "/stickers/Holidays/wedding_rings-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Logos/box_logo_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "box logo copyrighted",
+    "artwork": "/stickers/Logos/box_logo_copyrighted-512.png",
+    "maxMoves": 2,
+    "density": 1.05
+  },
+  {
+    "id": "Logos/dropbox_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "dropbox copyrighted",
+    "artwork": "/stickers/Logos/dropbox_copyrighted-512.png",
+    "maxMoves": 2,
+    "density": 1.3
+  },
+  {
+    "id": "Logos/firefox_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "firefox copyrighted",
+    "artwork": "/stickers/Logos/firefox_copyrighted-512.png",
+    "maxMoves": 1,
+    "density": 1.305
+  },
+  {
+    "id": "Logos/haiku-512.png",
+    "pack": "Logos",
+    "name": "haiku",
+    "artwork": "/stickers/Logos/haiku-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Logos/ie_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "ie copyrighted",
+    "artwork": "/stickers/Logos/ie_copyrighted-512.png",
+    "maxMoves": 3,
+    "density": 1.25
+  },
+  {
+    "id": "Logos/pinterest_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "pinterest copyrighted",
+    "artwork": "/stickers/Logos/pinterest_copyrighted-512.png",
+    "maxMoves": 2,
+    "density": 2.32
+  },
+  {
+    "id": "Logos/ps1_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "ps1 copyrighted",
+    "artwork": "/stickers/Logos/ps1_copyrighted-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Logos/reddit_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "reddit copyrighted",
+    "artwork": "/stickers/Logos/reddit_copyrighted-512.png",
+    "maxMoves": 5,
+    "density": 1.16
+  },
+  {
+    "id": "Logos/xbox_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "xbox copyrighted",
+    "artwork": "/stickers/Logos/xbox_copyrighted-512.png",
+    "maxMoves": 4,
+    "density": 1.166
+  },
+  {
+    "id": "Logos/youtube_copyrighted-512.png",
+    "pack": "Logos",
+    "name": "youtube copyrighted",
+    "artwork": "/stickers/Logos/youtube_copyrighted-512.png",
+    "maxMoves": 6,
+    "density": 1.18
+  },
+  {
+    "id": "Logos/Wordpress-512.png",
+    "pack": "Logos",
+    "name": "Wordpress",
+    "artwork": "/stickers/Logos/Wordpress-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Maps/geocaching-512.png",
+    "pack": "Maps",
+    "name": "geocaching",
+    "artwork": "/stickers/Maps/geocaching-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Maps/satellites-512.png",
+    "pack": "Maps",
+    "name": "satellites",
+    "artwork": "/stickers/Maps/satellites-512.png",
+    "maxMoves": 6,
+    "density": 1
+  },
+  {
+    "id": "Maps/world_map-512.png",
+    "pack": "Maps",
+    "name": "world map",
+    "artwork": "/stickers/Maps/world_map-512.png",
+    "maxMoves": 7,
+    "density": 1
+  },
+  {
+    "id": "Messaging/cool-512.png",
+    "pack": "Messaging",
+    "name": "cool",
+    "artwork": "/stickers/Messaging/cool-512.png",
+    "maxMoves": 2,
+    "density": 1.277
+  },
+  {
+    "id": "Messaging/paper_plane-512.png",
+    "pack": "Messaging",
+    "name": "paper plane",
+    "artwork": "/stickers/Messaging/paper_plane-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Military/blunderbuss-512.png",
+    "pack": "Military",
+    "name": "blunderbuss",
+    "artwork": "/stickers/Military/blunderbuss-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Military/boots-512.png",
+    "pack": "Military",
+    "name": "boots",
+    "artwork": "/stickers/Military/boots-512.png",
+    "maxMoves": 2,
+    "density": 1.15
+  },
+  {
+    "id": "Military/cannon-512.png",
+    "pack": "Military",
+    "name": "cannon",
+    "artwork": "/stickers/Military/cannon-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Military/firing_gun-512.png",
+    "pack": "Military",
+    "name": "firing gun",
+    "artwork": "/stickers/Military/firing_gun-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Military/fighter_jet-512.png",
+    "pack": "Military",
+    "name": "fighter jet",
+    "artwork": "/stickers/Military/fighter_jet-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "MISC/attach-512.png",
+    "pack": "MISC",
+    "name": "attach",
+    "artwork": "/stickers/MISC/attach-512.png",
+    "maxMoves": 2,
+    "density": 0.95
+  },
+  {
+    "id": "MISC/barbers_scissors-512.png",
+    "pack": "MISC",
+    "name": "barbers scissors",
+    "artwork": "/stickers/MISC/barbers_scissors-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "MISC/diploma2-512.png",
+    "pack": "MISC",
+    "name": "diploma2",
+    "artwork": "/stickers/MISC/diploma2-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "MISC/email-512.png",
+    "pack": "MISC",
+    "name": "email",
+    "artwork": "/stickers/MISC/email-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "MISC/sandglass-512.png",
+    "pack": "MISC",
+    "name": "sandglass",
+    "artwork": "/stickers/MISC/sandglass-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "MISC/bath-512.png",
+    "pack": "MISC",
+    "name": "bath",
+    "artwork": "/stickers/MISC/bath-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Music/bugle-512.png",
+    "pack": "Music",
+    "name": "bugle",
+    "artwork": "/stickers/Music/bugle-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Music/cornet-512.png",
+    "pack": "Music",
+    "name": "cornet",
+    "artwork": "/stickers/Music/cornet-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Music/french_horn-512.png",
+    "pack": "Music",
+    "name": "french horn",
+    "artwork": "/stickers/Music/french_horn-512.png",
+    "maxMoves": 3,
+    "density": 1.05
+  },
+  {
+    "id": "Music/harp-512.png",
+    "pack": "Music",
+    "name": "harp",
+    "artwork": "/stickers/Music/harp-512.png",
+    "maxMoves": 1,
+    "density": 1.05
+  },
+  {
+    "id": "Music/note_music-512.png",
+    "pack": "Music",
+    "name": "note music",
+    "artwork": "/stickers/Music/note_music-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Music/treble_clef-512.png",
+    "pack": "Music",
+    "name": "treble clef",
+    "artwork": "/stickers/Music/treble_clef-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Music/trombone-512.png",
+    "pack": "Music",
+    "name": "trombone",
+    "artwork": "/stickers/Music/trombone-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Music/tuba-512.png",
+    "pack": "Music",
+    "name": "tuba",
+    "artwork": "/stickers/Music/tuba-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Music/xylophone-512.png",
+    "pack": "Music",
+    "name": "xylophone",
+    "artwork": "/stickers/Music/xylophone-512.png",
+    "maxMoves": 6,
+    "density": 0.6
+  },
+  {
+    "id": "Music/drum-512.png",
+    "pack": "Music",
+    "name": "drum",
+    "artwork": "/stickers/Music/drum-512.png",
+    "maxMoves": 6,
+    "density": 0.85
+  },
+  {
+    "id": "Plants/maple_leaf-512.png",
+    "pack": "Plants",
+    "name": "maple leaf",
+    "artwork": "/stickers/Plants/maple_leaf-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Science/dna_helix-512.png",
+    "pack": "Science",
+    "name": "dna helix",
+    "artwork": "/stickers/Science/dna_helix-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Science/physics-512.png",
+    "pack": "Science",
+    "name": "physics",
+    "artwork": "/stickers/Science/physics-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Science/psychology-512.png",
+    "pack": "Science",
+    "name": "psychology",
+    "artwork": "/stickers/Science/psychology-512.png",
+    "maxMoves": 3,
+    "density": 1.12
+  },
+  {
+    "id": "Science/square_root2-512.png",
+    "pack": "Science",
+    "name": "square root2",
+    "artwork": "/stickers/Science/square_root2-512.png",
+    "maxMoves": 1,
+    "density": 0.8
+  },
+  {
+    "id": "Science/test_tube-512.png",
+    "pack": "Science",
+    "name": "test tube",
+    "artwork": "/stickers/Science/test_tube-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Science/biohazard-512.png",
+    "pack": "Science",
+    "name": "biohazard",
+    "artwork": "/stickers/Science/biohazard-512.png",
+    "maxMoves": 6,
+    "density": 0.95
+  },
+  {
+    "id": "Sports/barbell-512.png",
+    "pack": "Sports",
+    "name": "barbell",
+    "artwork": "/stickers/Sports/barbell-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Sports/baseball-512.png",
+    "pack": "Sports",
+    "name": "baseball",
+    "artwork": "/stickers/Sports/baseball-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Sports/base_jumping-512.png",
+    "pack": "Sports",
+    "name": "base jumping",
+    "artwork": "/stickers/Sports/base_jumping-512.png",
+    "maxMoves": 2,
+    "density": 1.15
+  },
+  {
+    "id": "Sports/climbing_shoes-512.png",
+    "pack": "Sports",
+    "name": "climbing shoes",
+    "artwork": "/stickers/Sports/climbing_shoes-512.png",
+    "maxMoves": 1,
+    "density": 1.12
+  },
+  {
+    "id": "Sports/energy_absorber-512.png",
+    "pack": "Sports",
+    "name": "energy absorber",
+    "artwork": "/stickers/Sports/energy_absorber-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Sports/exercise-512.png",
+    "pack": "Sports",
+    "name": "exercise",
+    "artwork": "/stickers/Sports/exercise-512.png",
+    "maxMoves": 6,
+    "density": 1
+  },
+  {
+    "id": "Sports/finish_flag-512.png",
+    "pack": "Sports",
+    "name": "finish flag",
+    "artwork": "/stickers/Sports/finish_flag-512.png",
+    "maxMoves": 2,
+    "density": 1.17
+  },
+  {
+    "id": "Sports/football-512.png",
+    "pack": "Sports",
+    "name": "football",
+    "artwork": "/stickers/Sports/football-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Sports/golf-512.png",
+    "pack": "Sports",
+    "name": "golf",
+    "artwork": "/stickers/Sports/golf-512.png",
+    "maxMoves": 5,
+    "density": 1
+  },
+  {
+    "id": "Sports/guru-512.png",
+    "pack": "Sports",
+    "name": "guru",
+    "artwork": "/stickers/Sports/guru-512.png",
+    "maxMoves": 3,
+    "density": 1.12
+  },
+  {
+    "id": "Sports/hand_biceps-512.png",
+    "pack": "Sports",
+    "name": "hand biceps",
+    "artwork": "/stickers/Sports/hand_biceps-512.png",
+    "maxMoves": 2,
+    "density": 1.277
+  },
+  {
+    "id": "Sports/jump_rope-512.png",
+    "pack": "Sports",
+    "name": "jump rope",
+    "artwork": "/stickers/Sports/jump_rope-512.png",
+    "maxMoves": 2,
+    "density": 1.05
+  },
+  {
+    "id": "Sports/olympic_rings-512.png",
+    "pack": "Sports",
+    "name": "olympic rings",
+    "artwork": "/stickers/Sports/olympic_rings-512.png",
+    "maxMoves": 1,
+    "density": 1.05
+  },
+  {
+    "id": "Sports/paddling-512.png",
+    "pack": "Sports",
+    "name": "paddling",
+    "artwork": "/stickers/Sports/paddling-512.png",
+    "maxMoves": 3,
+    "density": 0.95
+  },
+  {
+    "id": "Sports/running-512.png",
+    "pack": "Sports",
+    "name": "running",
+    "artwork": "/stickers/Sports/running-512.png",
+    "maxMoves": 3,
+    "density": 0.96
+  },
+  {
+    "id": "Sports/skiing-512.png",
+    "pack": "Sports",
+    "name": "skiing",
+    "artwork": "/stickers/Sports/skiing-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Sports/skydiving_gear-512.png",
+    "pack": "Sports",
+    "name": "skydiving gear",
+    "artwork": "/stickers/Sports/skydiving_gear-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Sports/tennis-512.png",
+    "pack": "Sports",
+    "name": "tennis",
+    "artwork": "/stickers/Sports/tennis-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Sports/time_trial_biking-512.png",
+    "pack": "Sports",
+    "name": "time trial biking",
+    "artwork": "/stickers/Sports/time_trial_biking-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Sports/trekking-512.png",
+    "pack": "Sports",
+    "name": "trekking",
+    "artwork": "/stickers/Sports/trekking-512.png",
+    "maxMoves": 4,
+    "density": 0.9
+  },
+  {
+    "id": "Sports/weightlift-512.png",
+    "pack": "Sports",
+    "name": "weightlift",
+    "artwork": "/stickers/Sports/weightlift-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Sports/yoga-512.png",
+    "pack": "Sports",
+    "name": "yoga",
+    "artwork": "/stickers/Sports/yoga-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Sports/medal2-512.png",
+    "pack": "Sports",
+    "name": "medal2",
+    "artwork": "/stickers/Sports/medal2-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Transport/airplane_mode_on-512.png",
+    "pack": "Transport",
+    "name": "airplane mode on",
+    "artwork": "/stickers/Transport/airplane_mode_on-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Transport/ancore-512.png",
+    "pack": "Transport",
+    "name": "ancore",
+    "artwork": "/stickers/Transport/ancore-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Transport/bicycle-512.png",
+    "pack": "Transport",
+    "name": "bicycle",
+    "artwork": "/stickers/Transport/bicycle-512.png",
+    "maxMoves": 5,
+    "density": 0.97
+  },
+  {
+    "id": "Transport/go_kart-512.png",
+    "pack": "Transport",
+    "name": "go kart",
+    "artwork": "/stickers/Transport/go_kart-512.png",
+    "maxMoves": 2,
+    "density": 0.8
+  },
+  {
+    "id": "Transport/helicopter-512.png",
+    "pack": "Transport",
+    "name": "helicopter",
+    "artwork": "/stickers/Transport/helicopter-512.png",
+    "maxMoves": 4,
+    "density": 0.75
+  },
+  {
+    "id": "Transport/line_splitting-512.png",
+    "pack": "Transport",
+    "name": "line splitting",
+    "artwork": "/stickers/Transport/line_splitting-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Transport/motorcycle-512.png",
+    "pack": "Transport",
+    "name": "motorcycle",
+    "artwork": "/stickers/Transport/motorcycle-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Transport/scooter-512.png",
+    "pack": "Transport",
+    "name": "scooter",
+    "artwork": "/stickers/Transport/scooter-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Transport/under_construction-512.png",
+    "pack": "Transport",
+    "name": "under construction",
+    "artwork": "/stickers/Transport/under_construction-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Transport/yacht-512.png",
+    "pack": "Transport",
+    "name": "yacht",
+    "artwork": "/stickers/Transport/yacht-512.png",
+    "maxMoves": 3,
+    "density": 1
+  },
+  {
+    "id": "Travel/big_ben-512.png",
+    "pack": "Travel",
+    "name": "big ben",
+    "artwork": "/stickers/Travel/big_ben-512.png",
+    "maxMoves": 4,
+    "density": 1
+  },
+  {
+    "id": "Travel/hex_burner-512.png",
+    "pack": "Travel",
+    "name": "hex burner",
+    "artwork": "/stickers/Travel/hex_burner-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Travel/mess_tin-512.png",
+    "pack": "Travel",
+    "name": "mess tin",
+    "artwork": "/stickers/Travel/mess_tin-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Travel/statue_of_liberty-512.png",
+    "pack": "Travel",
+    "name": "statue of liberty",
+    "artwork": "/stickers/Travel/statue_of_liberty-512.png",
+    "maxMoves": 2,
+    "density": 1.12
+  },
+  {
+    "id": "Very_Basic/calculator-512.png",
+    "pack": "Very_Basic",
+    "name": "calculator",
+    "artwork": "/stickers/Very_Basic/calculator-512.png",
+    "maxMoves": 2,
+    "density": 1.23
+  },
+  {
+    "id": "Very_Basic/idea-512.png",
+    "pack": "Very_Basic",
+    "name": "idea",
+    "artwork": "/stickers/Very_Basic/idea-512.png",
+    "maxMoves": 9,
+    "density": 1
+  },
+  {
+    "id": "Very_Basic/key-512.png",
+    "pack": "Very_Basic",
+    "name": "key",
+    "artwork": "/stickers/Very_Basic/key-512.png",
+    "maxMoves": 1,
+    "density": 1
+  },
+  {
+    "id": "Very_Basic/link-512.png",
+    "pack": "Very_Basic",
+    "name": "link",
+    "artwork": "/stickers/Very_Basic/link-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Very_Basic/ruler-512.png",
+    "pack": "Very_Basic",
+    "name": "ruler",
+    "artwork": "/stickers/Very_Basic/ruler-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Very_Basic/sinchronize-512.png",
+    "pack": "Very_Basic",
+    "name": "sinchronize",
+    "artwork": "/stickers/Very_Basic/sinchronize-512.png",
+    "maxMoves": 2,
+    "density": 1
+  },
+  {
+    "id": "Very_Basic/restart-512.png",
+    "pack": "Very_Basic",
+    "name": "restart",
+    "artwork": "/stickers/Very_Basic/restart-512.png",
+    "maxMoves": 2,
+    "density": 1
+  }
+]

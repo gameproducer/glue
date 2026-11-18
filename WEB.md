@@ -26,3 +26,11 @@ pnpm test
 pnpm exec tsc --noEmit
 pnpm build
 ```
+
+## Level packs
+
+Use the level dropdown at the top of the game to choose a sticker, grouped by pack. The adjacent arrows move to the previous or next level. Switching starts a fresh attempt and resets the recording; the selected level and its physics settings are remembered locally. Each level uses the move limit in its pack metadata.
+
+The 190 original levels come from `sticker/_packlist.json` and each pack's `_packinfo.json`. The Octopus prototype is also available. Development, test, and production build scripts run `scripts/prepare-levels.mjs` to validate the catalog and copy listed PNGs to generated `public/stickers/`. Add new levels to the pack metadata and restart development or rebuild.
+
+The original `den` value is retained as catalog metadata; the current web simulation has no matching density parameter, so it is not used to change physics.
