@@ -330,3 +330,27 @@ test("a thin neck adds width-dependent tension independently of area jump", () =
   assert.equal(disabled.peak, 0);
   assert.ok(disabled.frame > thin.frame);
 });
+
+test("continuing a pull once the flap starts stretching quickly tears the flap", () => {
+  const width = 64;
+  const height = 40;
+  const threshold = 0.66;
+  const mask = rectangleMask(width, height, 3, 60, 18, 21);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, threshold, 1);
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  let stretchFrame = 0;
+  let tearFrame = 0;
+  for (let frame = 1; frame < 60; frame++) {
+    simulation.drag({ x: 0.02 + frame / 100, y: 0.5 }, 100 + frame * 60);
+    const snapshot = simulation.snapshot();
+    if (snapshot.torn) {
+      tearFrame = frame;
+      break;
+    }
+    if (snapshot.stress >= threshold * 0.9 && !stretchFrame) stretchFrame = frame;
+  }
+  assert.ok(stretchFrame > 0 && tearFrame > stretchFrame && tearFrame - stretchFrame <= 5);
+  assert.ok(simulation.diagnostics().lastStep.targetStress < threshold);
+  assert.equal(simulation.snapshot().tearDragging, true);
+  assert.ok(simulation.state.includes(Cell.adhered));
+});

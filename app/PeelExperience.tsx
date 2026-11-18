@@ -23,6 +23,7 @@ const DEFAULT_LEVEL = {
   releaseJumpThreshold: 0.28,
   liftedTransparency: 0.5,
 } as const;
+const ZOOM_STEPS = [60, 75, 90, 100, 115, 135, 160];
 const TENSION_CONTROL_MAX = 0.66;
 const RELEASE_JUMP_CONTROL_MAX = 0.66;
 const DEFAULT_TEAR_FACTORS: TearFactors = { outward: 0.8, bottleneck: 0.85 };
@@ -176,6 +177,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
   const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
   const [tearFactors, setTearFactors] = useState(DEFAULT_TEAR_FACTORS);
+  const [zoomIndex, setZoomIndex] = useState(ZOOM_STEPS.indexOf(100));
   const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
   const [miss, setMiss] = useState(false);
@@ -212,12 +214,13 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
     if (updateTexture) renderer?.updateState();
     renderer?.setPeel(
       next.grab,
-      next.pointer,
       next.direction,
       next.frontDepth,
       profileRef.current,
       next.stress,
+      next.tearThreshold,
       next.tornOffset,
+      next.torn,
     );
     setSnapshot(next);
   }, []);
@@ -304,12 +307,13 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           event.preventDefault();
           activePointer.current = event.pointerId;
           canvas.setPointerCapture(event.pointerId);
+          renderer.beginDrag(event.clientX, event.clientY, point);
           refresh(false);
         };
 
         const onPointerMove = (event: PointerEvent) => {
           if (activePointer.current !== event.pointerId) return;
-          const point = renderer.screenToSticker(event.clientX, event.clientY);
+          const point = renderer.dragToSticker(event.clientX, event.clientY);
           if (!point) return;
           event.preventDefault();
           const wasTorn = simulation.snapshot().torn;
@@ -322,12 +326,13 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           const next = simulation.snapshot();
           renderer.setPeel(
             next.grab,
-            next.pointer,
             next.direction,
             next.frontDepth,
             profileRef.current,
             next.stress,
+            next.tearThreshold,
             next.tornOffset,
+            next.torn,
           );
           setSnapshot(next);
           scheduleTextureRefresh();
@@ -340,13 +345,14 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const hadGrab = simulation.snapshot().pulling;
           const accepted = simulation.end(commit);
-          const point = renderer.screenToSticker(event.clientX, event.clientY);
+          const point = renderer.dragToSticker(event.clientX, event.clientY);
           recordDiagnostic(commit ? "pointer_up" : "pointer_cancel", point, {
             accepted,
             commit,
             hadGrab,
             pointerId: event.pointerId,
           });
+          renderer.endDrag();
           refresh(true);
           if (!accepted && !hadGrab) {
             setMiss(true);
@@ -361,12 +367,14 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         canvas.addEventListener("pointermove", onPointerMove, { passive: false });
         canvas.addEventListener("pointerup", onPointerUp);
         canvas.addEventListener("pointercancel", onPointerCancel);
+        canvas.addEventListener("lostpointercapture", onPointerCancel);
 
         teardown = () => {
           canvas.removeEventListener("pointerdown", onPointerDown);
           canvas.removeEventListener("pointermove", onPointerMove);
           canvas.removeEventListener("pointerup", onPointerUp);
           canvas.removeEventListener("pointercancel", onPointerCancel);
+          canvas.removeEventListener("lostpointercapture", onPointerCancel);
           renderer.dispose();
           rendererRef.current = null;
           simulationRef.current = null;
@@ -447,6 +455,12 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
     } catch {
       // The setting remains active for this session when persistent storage is unavailable.
     }
+  };
+
+  const changeZoom = (step: number) => {
+    const index = Math.max(0, Math.min(ZOOM_STEPS.length - 1, zoomIndex + step));
+    rendererRef.current?.setZoom(ZOOM_STEPS[index] / 100);
+    setZoomIndex(index);
   };
 
   const reset = () => {
@@ -705,6 +719,11 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
       </section>
 
       <footer className="control-bar" aria-label="Prototype settings">
+        <div className="zoom-controls" role="group" aria-label="Level zoom">
+          <button type="button" onClick={() => changeZoom(-1)} disabled={!ready || zoomIndex === 0} aria-label="Zoom out">−</button>
+          <output aria-label="Manual zoom">{ZOOM_STEPS[zoomIndex]}%</output>
+          <button type="button" onClick={() => changeZoom(1)} disabled={!ready || zoomIndex === ZOOM_STEPS.length - 1} aria-label="Zoom in">+</button>
+        </div>
         <button type="button" onClick={toggleProfile} aria-label={`Curl profile: ${profile}`}>
           <span>Curl</span>{profile}
         </button>

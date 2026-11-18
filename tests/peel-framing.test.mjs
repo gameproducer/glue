@@ -1,0 +1,45 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { fitDistance, includeCurl, MAX_TENSION_STRETCH } from "../lib/render/PeelFraming.ts";
+
+test("camera keeps folded vertices and the held point inside a padded portrait or landscape viewport", () => {
+  const tangent = Math.tan(31 * Math.PI / 360);
+  const inset = 24;
+  for (const [width, height] of [[390, 720], [1200, 650]]) {
+    for (const [dx, dy] of [[1, 0], [0, -1], [-0.6, 0.8]]) {
+      for (const cone of [false, true]) {
+        const radius = cone ? 0.28 : 0.32;
+        const direction = { x: dx, y: dy };
+        const grab = { x: -0.9, y: 0.3 };
+        const depth = 2.3;
+        const cursor = { x: dx * 4.7, y: dy * 4.7, z: 0 };
+        const bounds = { x: 2.4, y: 2, z: 0 };
+        includeCurl(bounds, 4.8, 4, grab, direction, depth, radius, cone, MAX_TENSION_STRETCH);
+        bounds.x = Math.max(bounds.x, Math.abs(cursor.x));
+        bounds.y = Math.max(bounds.y, Math.abs(cursor.y));
+        const distance = fitDistance(bounds, tangent, width, height, inset);
+        const check = ({ x, y, z }) => {
+          const scale = height / (2 * tangent * (distance - z));
+          assert.ok(Math.abs(x) * scale <= width / 2 - inset + 1e-8);
+          assert.ok(Math.abs(y) * scale <= height / 2 - inset + 1e-8);
+        };
+        check(cursor);
+        for (let i = 0; i <= 24; i++) {
+          for (let j = 0; j <= 20; j++) {
+            const x = i / 5 - 2.4;
+            const y = j / 5 - 2;
+            const along = (x - grab.x) * dx + (y - grab.y) * dy;
+            const across = -(x - grab.x) * dy + (y - grab.y) * dx;
+            const q = Math.max(0, depth - along) * (1 + MAX_TENSION_STRETCH);
+            const r = Math.max(0.12, radius * (cone ? Math.min(1.46, Math.max(0.58, 1 + across * 0.24)) : 1));
+            const angle = Math.min(q / r, Math.PI);
+            const folded = depth + Math.max(0, q - Math.PI * r) - r * Math.sin(angle);
+            check(q > 0
+              ? { x: grab.x + folded * dx - across * dy, y: grab.y + folded * dy + across * dx, z: 0.022 + r * (1 - Math.cos(angle)) }
+              : { x, y, z: 0.022 });
+          }
+        }
+      }
+    }
+  }
+});

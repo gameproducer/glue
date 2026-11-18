@@ -114,6 +114,7 @@ export class PeelSimulation {
   private outwardPulling = false;
   private heldReach = 0;
   private heldStress = 0;
+  private strainTravel = 0;
   private failed = false;
   private torn = false;
   private tearThreshold: number;
@@ -225,6 +226,7 @@ export class PeelSimulation {
     this.outwardPulling = false;
     this.heldReach = 0;
     this.heldStress = 0;
+    this.strainTravel = 0;
     this.gestureOrigin = { ...point };
     this.pointer = { ...point };
     this.lastPointer = { ...point };
@@ -285,6 +287,7 @@ export class PeelSimulation {
       this.liftReleasedFlap(minimumPiece);
     }
     if (canLoadOutward && this.liftedCells >= minimumPiece) {
+      this.strainTravel = 0;
       this.outwardPulling = reverseTravel > OUTWARD_DEAD_ZONE;
       const outwardLoad = this.tearFactors.outward * clamp((reverseTravel - OUTWARD_DEAD_ZONE) / OUTWARD_LOAD_DISTANCE);
       this.stress = Math.max(this.heldStress, outwardLoad);
@@ -317,6 +320,7 @@ export class PeelSimulation {
       this.frontDepth = 0;
       this.heldReach = 0;
       this.heldStress = 0;
+      this.strainTravel = 0;
       this.stress *= 0.8;
       this.lastPointer = { ...point };
       this.lastTime = time;
@@ -363,8 +367,12 @@ export class PeelSimulation {
     const shapeLoad = narrowLoad * 0.54 * (1 - this.tearFactors.bottleneck)
       + bottleneckLoad * 0.8 * this.tearFactors.bottleneck;
     const targetStress = clamp(shapeLoad + resistanceLoad * 0.28 + reachLoad * 0.18 + speedLoad);
+    const wasNearTear = this.tearThreshold > 0 && this.heldStress >= this.tearThreshold * 0.9;
     this.heldStress += (targetStress - this.heldStress) * 0.2;
-    this.stress = this.heldStress;
+    const stillNearTear = hasAnchor && this.liftedCells >= minimumPiece && this.heldStress >= this.tearThreshold * 0.9;
+    this.strainTravel = wasNearTear && stillNearTear && inwardTravel >= this.heldReach
+      ? this.strainTravel + inwardTravel - this.heldReach : 0;
+    this.stress = clamp(this.heldStress + this.tearThreshold * 0.1 * clamp(this.strainTravel / 0.045));
     this.heldReach = inwardTravel;
     this.lastPointer = { ...point };
     this.lastTime = time;

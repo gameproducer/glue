@@ -493,3 +493,29 @@ h1 {
   .level-switcher { order: 3; width: 100%; max-width: none; justify-content: center; }
   .level-switcher label { flex: 1; max-width: 300px; }
 }
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font: 600 10px/1 var(--font-geist-mono), monospace;
+}
+
+.control-bar .zoom-controls button {
+  display: grid;
+  place-items: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  font-size: 16px;
+}
+
+.zoom-controls button:disabled { opacity: .4; cursor: default; }
+.zoom-controls output { min-width: 4ch; text-align: center; }
+
+@media (max-width: 650px) {
+  .control-bar { flex-wrap: wrap; }
+  .zoom-controls { order: 1; justify-content: center; flex-basis: 100%; }
+  .control-bar .zoom-controls button { min-width: 40px; min-height: 40px; }
+}

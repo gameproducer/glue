@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { fitDistance, includeCurl, MAX_TENSION_STRETCH, type PeelBounds } from "./PeelFraming";
 import { nearestStateSources, extendStateTexture } from "./StateTexture";
 import type { CurlProfile, PeelSimulation, Vec2 } from "../peel/PeelSimulation";
 
@@ -12,24 +13,24 @@ type PeelUniforms = {
   uFilmColor: { value: THREE.Color };
   uLiftedOpacity: { value: number };
   uGrab: { value: THREE.Vector2 };
-  uPointer: { value: THREE.Vector2 };
   uDirection: { value: THREE.Vector2 };
   uFrontDepth: { value: number };
   uRadius: { value: number };
   uCone: { value: number };
   uStress: { value: number };
+  uStretch: { value: number };
   uTornOffset: { value: THREE.Vector2 };
 };
 
 const vertexShader = /* glsl */ `
   precision highp float;
   uniform vec2 uGrab;
-  uniform vec2 uPointer;
   uniform vec2 uDirection;
   uniform float uFrontDepth;
   uniform float uRadius;
   uniform float uCone;
   uniform float uLayer;
+  uniform float uStretch;
   uniform vec2 uTornOffset;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
@@ -53,24 +54,14 @@ const vertexShader = /* glsl */ `
       p.xy += uTornOffset;
       p.z += 0.08;
     } else if (uLayer > 1.5 && q > 0.0) {
+      q *= 1.0 + uStretch;
       float coneScale = mix(1.0, clamp(1.0 + lateral * 0.24, 0.58, 1.46), uCone);
       float radius = max(0.12, uRadius * coneScale);
       float theta = min(q / radius, PI);
       float extra = max(q - PI * radius, 0.0);
       vec2 front = uGrab + direction * uFrontDepth + lateralAxis * lateral;
-      vec2 curled = front - direction * (radius * sin(theta)) + direction * extra;
-      float z = radius * (1.0 - cos(theta));
-
-      float grabTheta = min(uFrontDepth / radius, PI);
-      float grabExtra = max(uFrontDepth - PI * radius, 0.0);
-      vec2 nominalGrab = uGrab + direction * uFrontDepth
-        - direction * (radius * sin(grabTheta)) + direction * grabExtra;
-      float gripWeight = smoothstep(0.0, max(uFrontDepth, 0.001), q);
-      curled += (uPointer - nominalGrab) * gripWeight * gripWeight;
-      curled += lateralAxis * (-lateral * 0.05 * uCone * gripWeight);
-
-      p.xy = curled;
-      p.z = 0.018 + z + gripWeight * 0.035;
+      p.xy = front + direction * (extra - radius * sin(theta));
+      p.z = 0.018 + radius * (1.0 - cos(theta));
       vNormalWorld = normalize(vec3(direction * sin(theta), cos(theta)));
       vCurl = smoothstep(0.0, PI, theta);
     } else if (uLayer > 0.5) {
@@ -218,6 +209,13 @@ export class PeelRenderer {
   private readonly stickerMeshes: THREE.Mesh[] = [];
   private readonly shadow: THREE.Mesh;
   private readonly resizeObserver: ResizeObserver;
+  private zoom = 1;
+  private viewportWidth = 1;
+  private viewportHeight = 1;
+  private edgePressure = 0;
+  private dragInput: { x: number; y: number; point: Vec2 } | null = null;
+  private bounds: PeelBounds = { x: 0, y: 0, z: 0 };
+  private cameraReady = false;
   private readonly stickerWidth = STICKER_WIDTH;
   private readonly stickerHeight: number;
   private frame = 0;
@@ -288,12 +286,12 @@ export class PeelRenderer {
         uFilmColor: { value: new THREE.Color(0xf05fa8) },
         uLiftedOpacity: { value: 0.5 },
         uGrab: { value: new THREE.Vector2(-2.1, 0) },
-        uPointer: { value: new THREE.Vector2(-2.1, 0) },
         uDirection: { value: new THREE.Vector2(1, 0) },
         uFrontDepth: { value: 0 },
         uRadius: { value: 0.31 },
         uCone: { value: 0 },
         uStress: { value: 0 },
+        uStretch: { value: 0 },
         uTornOffset: { value: new THREE.Vector2() },
       };
       const material = new THREE.ShaderMaterial({
@@ -341,27 +339,38 @@ export class PeelRenderer {
 
   setPeel(
     grab: Vec2,
-    pointer: Vec2,
     direction: Vec2,
     depth: number,
     profile: CurlProfile,
     stress: number,
+    tearThreshold: number,
     tornOffset: Vec2 = { x: 0, y: 0 },
+    torn = false,
   ) {
     const worldGrab = this.uvToWorld(grab);
-    const worldPointer = this.uvToWorld(pointer);
     const worldDirection = new THREE.Vector2(direction.x, direction.y).normalize();
     const worldDepth = depth * this.stickerHeight;
+    const radius = profile === "cone" ? 0.28 : 0.32;
+    const strain = tearThreshold > 0 ? THREE.MathUtils.smoothstep(stress / tearThreshold, 0.9, 1) : 0;
+    const stretch = MAX_TENSION_STRETCH * strain;
+    const offsetX = tornOffset.x * this.stickerWidth;
+    const offsetY = tornOffset.y * this.stickerHeight;
+    this.bounds = {
+      x: this.stickerWidth / 2 + Math.abs(offsetX),
+      y: this.stickerHeight / 2 + Math.abs(offsetY),
+      z: torn ? 0.086 : 0,
+    };
+    if (!torn) includeCurl(this.bounds, this.stickerWidth, this.stickerHeight, worldGrab, worldDirection, worldDepth, radius, profile === "cone", stretch);
     for (const material of this.materials) {
       const uniforms = material.uniforms as unknown as PeelUniforms;
       uniforms.uGrab.value.copy(worldGrab);
-      uniforms.uPointer.value.copy(worldPointer);
       uniforms.uDirection.value.copy(worldDirection);
       uniforms.uFrontDepth.value = worldDepth;
-      uniforms.uRadius.value = profile === "cone" ? 0.28 : 0.32;
+      uniforms.uRadius.value = radius;
       uniforms.uCone.value = profile === "cone" ? 1 : 0;
       uniforms.uStress.value = stress;
-      uniforms.uTornOffset.value.set(tornOffset.x * this.stickerWidth, tornOffset.y * this.stickerHeight);
+      uniforms.uStretch.value = stretch;
+      uniforms.uTornOffset.value.set(offsetX, offsetY);
     }
     const lift = Math.min(1, depth * 2.2);
     this.shadow.scale.set(1 + lift * 0.08, 1 + lift * 0.12, 1);
@@ -389,6 +398,42 @@ export class PeelRenderer {
     return { x: point.x / this.stickerWidth + 0.5, y: point.y / this.stickerHeight + 0.5 };
   }
 
+  setZoom(zoom: number) {
+    this.zoom = zoom;
+  }
+
+  beginDrag(clientX: number, clientY: number, point: Vec2) {
+    this.dragInput = { x: clientX, y: clientY, point };
+    this.dragToSticker(clientX, clientY);
+  }
+
+  dragToSticker(clientX: number, clientY: number) {
+    const input = this.dragInput;
+    if (!input) return null;
+    const rect = this.domElement.getBoundingClientRect();
+    const x = THREE.MathUtils.clamp(clientX, Math.max(0, rect.left), Math.min(window.innerWidth, rect.right));
+    const y = THREE.MathUtils.clamp(clientY, Math.max(0, rect.top), Math.min(window.innerHeight, rect.bottom));
+    const distanceToEdge = Math.min(x - rect.left, rect.right - x, y - rect.top, rect.bottom - y,
+      x, window.innerWidth - x, y, window.innerHeight - y);
+    this.edgePressure = THREE.MathUtils.clamp(1 - distanceToEdge / 88, 0, 1);
+    // Use only physical pointer movement. Reprojecting the same pixel after
+    // zooming would move the simulated grip and create tension on its own.
+    const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+    const unitsPerPixel = 2 * this.camera.position.z * tangent / Math.max(1, rect.height);
+    input.point = {
+      x: input.point.x + (x - input.x) * unitsPerPixel / this.stickerWidth,
+      y: input.point.y - (y - input.y) * unitsPerPixel / this.stickerHeight,
+    };
+    input.x = x;
+    input.y = y;
+    return input.point;
+  }
+
+  endDrag() {
+    this.dragInput = null;
+    this.edgePressure = 0;
+  }
+
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.frame);
@@ -412,18 +457,42 @@ export class PeelRenderer {
     const height = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
-    const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5));
-    const margin = width < 680 ? 1.14 : 1.09;
-    const verticalDistance = this.stickerHeight * 0.5 * margin / tangent;
-    const horizontalDistance = this.stickerWidth * 0.5 * margin / (tangent * this.camera.aspect);
-    this.camera.position.set(0, 0, Math.max(verticalDistance, horizontalDistance));
-    this.camera.lookAt(0, 0, 0);
+    this.viewportWidth = width;
+    this.viewportHeight = height;
     this.camera.updateProjectionMatrix();
+    this.frameCamera();
+  }
+
+  private frameCamera() {
+    const width = this.viewportWidth;
+    const height = this.viewportHeight;
+    const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+    const inset = Math.min(28, Math.min(width, height) * 0.09);
+    const rest = fitDistance({ x: this.stickerWidth / 2, y: this.stickerHeight / 2, z: 0 }, tangent, width, height, inset);
+    const heldPoint = this.dragInput && this.uvToWorld(this.dragInput.point);
+    const bounds = {
+      x: Math.max(this.bounds.x, Math.abs(heldPoint?.x ?? 0)),
+      y: Math.max(this.bounds.y, Math.abs(heldPoint?.y ?? 0)),
+      z: this.bounds.z,
+    };
+    const required = heldPoint || bounds.z > 0 ? fitDistance(bounds, tangent, width, height, inset) : 0;
+    const target = Math.max(required, rest / this.zoom * (1 + 0.45 * this.edgePressure));
+    const distance = this.cameraReady
+      ? Math.max(required, THREE.MathUtils.lerp(this.camera.position.z, target, 0.18)) : target;
+    this.cameraReady = true;
+    this.camera.position.z = distance;
+    const far = Math.max(40, distance * 2 + 2);
+    if (this.camera.far !== far) {
+      this.camera.far = far;
+      this.camera.updateProjectionMatrix();
+    }
+    this.camera.updateMatrixWorld();
   }
 
   private animate = () => {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
+    this.frameCamera();
     this.renderer.render(this.scene, this.camera);
     this.fpsFrames++;
     const now = performance.now();
