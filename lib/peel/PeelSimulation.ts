@@ -114,6 +114,7 @@ export class PeelSimulation {
   private outwardPulling = false;
   private heldReach = 0;
   private heldStress = 0;
+  private outwardSeconds = 0;
   private strainTravel = 0;
   private failed = false;
   private torn = false;
@@ -226,6 +227,7 @@ export class PeelSimulation {
     this.outwardPulling = false;
     this.heldReach = 0;
     this.heldStress = 0;
+    this.outwardSeconds = 0;
     this.strainTravel = 0;
     this.gestureOrigin = { ...point };
     this.pointer = { ...point };
@@ -289,7 +291,10 @@ export class PeelSimulation {
     if (canLoadOutward && this.liftedCells >= minimumPiece) {
       this.strainTravel = 0;
       this.outwardPulling = reverseTravel > OUTWARD_DEAD_ZONE;
-      const outwardLoad = this.tearFactors.outward * clamp((reverseTravel - OUTWARD_DEAD_ZONE) / OUTWARD_LOAD_DISTANCE);
+      const distanceLoad = Math.max(0, reverseTravel - OUTWARD_DEAD_ZONE) / OUTWARD_LOAD_DISTANCE;
+      const elapsed = this.lastTime > 0 ? clamp((time - this.lastTime) / 1000, 0, 0.1) : 0;
+      this.outwardSeconds = distanceLoad > 0 ? this.outwardSeconds + elapsed : 0;
+      const outwardLoad = clamp(this.tearFactors.outward * (distanceLoad + this.outwardSeconds * 2.5));
       this.stress = Math.max(this.heldStress, outwardLoad);
       this.lastPointer = { ...point };
       this.lastTime = time;
@@ -312,6 +317,7 @@ export class PeelSimulation {
       return;
     }
     this.outwardPulling = false;
+    this.outwardSeconds = 0;
     if (travel < 0.001 || pullDistance < 0.001 || inwardTravel <= travel * 0.2
       || inwardDistance <= pullDistance * 0.2) {
       if (this.liftedCells > 0) this.state.set(this.gestureBase);

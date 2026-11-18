@@ -10,6 +10,7 @@ import {
   type Vec2,
 } from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
+import { APPEARANCE_CONTROLS, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, readAppearance, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import stickerLevels from "@/lib/peel/levels.json";
 
@@ -172,7 +173,8 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
   const diagnosticSessionId = useRef("");
   const [profile, setProfile] = useState<CurlProfile>("cylinder");
   const [debug, setDebug] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menu, setMenu] = useState<"physics" | "visuals" | null>(null);
+  const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
   const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
   const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
   const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
@@ -268,6 +270,9 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         simulation.setTearFactors(savedTearFactors);
         const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect, level.artwork.startsWith("/stickers/"));
         renderer.setLiftedTransparency(savedTransparency);
+        const savedAppearance = readAppearance();
+        renderer.setAppearance(savedAppearance);
+        setAppearance(savedAppearance);
         simulationRef.current = simulation;
         rendererRef.current = renderer;
         diagnosticEvents.current = [];
@@ -457,6 +462,13 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
     }
   };
 
+  const changeAppearance = (key: keyof PeelAppearance, value: number) => {
+    const next = { ...appearance, [key]: value };
+    setAppearance(next);
+    rendererRef.current?.setAppearance(next);
+    try { localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(next)); } catch { /* Storage is optional. */ }
+  };
+
   const changeZoom = (step: number) => {
     const index = Math.max(0, Math.min(ZOOM_STEPS.length - 1, zoomIndex + step));
     rendererRef.current?.setZoom(ZOOM_STEPS[index] / 100);
@@ -631,7 +643,7 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         </button>
         <p className="interaction-hint" aria-live="polite">{status}</p>
 
-        {settingsOpen && (
+        {menu === "physics" && (
           <aside className="physics-settings" aria-label="Level material settings">
             <label className="setting-control">
               <div><span>Tension tear</span><output>{Math.round(tearThreshold * 100)}%</output></div>
@@ -670,17 +682,6 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
                 />
               </label>
             ))}
-            <label className="setting-control">
-              <div><span>Lift transparency</span><output>{Math.round(liftedTransparency * 100)}%</output></div>
-              <input
-                type="range"
-                min="5"
-                max="90"
-                step="1"
-                value={Math.round(liftedTransparency * 100)}
-                onChange={(event) => changeLiftedTransparency(Number(event.currentTarget.value) / 100)}
-              />
-            </label>
             <small>Autosaved for {level.name}</small>
             <section className="log-tools" aria-label="Diagnostic recording">
               <header><span>Diagnostic log</span><output>{diagnosticEvents.current.length} events</output></header>
@@ -692,6 +693,30 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
               </div>
               <small role="status">{logStatus}</small>
             </section>
+          </aside>
+        )}
+
+        {menu === "visuals" && (
+          <aside className="physics-settings visual-settings" aria-label="Visual settings">
+            {APPEARANCE_CONTROLS.map(({ key, label, labels }) => (
+              <label key={key} className="setting-control">
+                <span>{label}</span>
+                <select value={appearance[key]} onChange={event => changeAppearance(key, Number(event.currentTarget.value))}>
+                  {labels.map((name, index) => <option value={index} key={name}>{name}</option>)}
+                </select>
+              </label>
+            ))}
+            <label className="setting-control">
+              <div><span>Lift transparency</span><output>{Math.round(liftedTransparency * 100)}%</output></div>
+              <input
+                type="range"
+                min="5"
+                max="90"
+                step="1"
+                value={Math.round(liftedTransparency * 100)}
+                onChange={(event) => changeLiftedTransparency(Number(event.currentTarget.value) / 100)}
+              />
+            </label>
           </aside>
         )}
 
@@ -730,8 +755,11 @@ function PeelGame({ level, onLevelChange }: { level: Level; onLevelChange: (leve
         <button type="button" onClick={toggleDebug} aria-pressed={debug}>
           <span>Debug</span>{debug ? "On" : "Off"}
         </button>
-        <button type="button" onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen}>
+        <button type="button" onClick={() => setMenu(current => current === "physics" ? null : "physics")} aria-expanded={menu === "physics"}>
           <span>Physics</span>Tune
+        </button>
+        <button type="button" onClick={() => setMenu(current => current === "visuals" ? null : "visuals")} aria-expanded={menu === "visuals"}>
+          <span>Visuals</span>Style
         </button>
         <button type="button" onClick={reset}>
           <span>Level</span>Reset

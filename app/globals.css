@@ -519,3 +519,22 @@ h1 {
   .zoom-controls { order: 1; justify-content: center; flex-basis: 100%; }
   .control-bar .zoom-controls button { min-width: 40px; min-height: 40px; }
 }
+
+.visual-settings select {
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: #211c2b;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  font: inherit;
+}
+
+.visual-settings select:focus-visible {
+  outline: 2px solid #9cf3e9;
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .control-bar { flex-wrap: wrap; }
+}

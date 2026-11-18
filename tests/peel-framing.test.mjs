@@ -43,3 +43,12 @@ test("camera keeps folded vertices and the held point inside a padded portrait o
     }
   }
 });
+
+test("a diagonal fold just entering a corner does not enlarge the viewport abruptly", () => {
+  const bounds = { x: 2.4, y: 2, z: 0 };
+  const diagonal = Math.SQRT1_2;
+  includeCurl(bounds, 4.8, 4, { x: -2.4, y: -2 }, { x: diagonal, y: diagonal }, 0.015, 0.32, false, 0);
+  assert.ok(bounds.x - 2.4 < 0.001);
+  assert.ok(bounds.y - 2 < 0.001);
+  assert.ok(bounds.z < 0.023);
+});

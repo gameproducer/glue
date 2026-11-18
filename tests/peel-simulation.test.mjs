@@ -354,3 +354,21 @@ test("continuing a pull once the flap starts stretching quickly tears the flap",
   assert.equal(simulation.snapshot().tearDragging, true);
   assert.ok(simulation.state.includes(Cell.adhered));
 });
+
+test("sustained outward load can reach a 29% tear threshold at 14% sensitivity", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.29, 0.66);
+  simulation.setTearFactors({ outward: 0.14, bottleneck: 0.85 });
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: 0.28, y: 0.5 }, 400);
+  for (let frame = 1; frame <= 40; frame++) {
+    simulation.drag({ x: 0.17 - frame * 0.001, y: 0.5 }, 400 + frame * 50);
+    if (frame === 1) assert.equal(simulation.snapshot().torn, false);
+    if (simulation.snapshot().torn) break;
+  }
+  assert.equal(simulation.diagnostics().lastStep.outwardTear, true);
+  assert.ok(simulation.state.includes(Cell.adhered));
+  assert.ok(simulation.state.includes(Cell.torn));
+});

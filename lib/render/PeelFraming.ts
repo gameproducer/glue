@@ -21,8 +21,15 @@ export function includeCurl(
   const near = front - Math.min(length, maxRadius);
   const far = front + Math.max(0, length - Math.PI * minRadius);
   const extent = Math.max(Math.abs(near), Math.abs(far));
-  bounds.x = Math.max(bounds.x, extent * Math.abs(direction.x) + across * Math.abs(direction.y));
-  bounds.y = Math.max(bounds.y, extent * Math.abs(direction.y) + across * Math.abs(direction.x));
+  // A rotated rectangle around the curl can be much wider than the actual
+  // sheet at first contact. Also bound it by its maximum forward displacement.
+  const unstretched = front + along;
+  const shift = Math.max(unstretched * stretch, unstretched + Math.max(0, length - Math.PI * minRadius)
+    - minRadius * Math.sin(Math.min(length / minRadius, Math.PI)));
+  bounds.x = Math.max(bounds.x, Math.min(width / 2 + shift * Math.abs(direction.x),
+    extent * Math.abs(direction.x) + across * Math.abs(direction.y)));
+  bounds.y = Math.max(bounds.y, Math.min(height / 2 + shift * Math.abs(direction.y),
+    extent * Math.abs(direction.y) + across * Math.abs(direction.x)));
   bounds.z = Math.max(bounds.z, 0.022 + Math.min(2 * maxRadius, length * length / (2 * minRadius)));
 }
 

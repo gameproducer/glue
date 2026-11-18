@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
 import { fitDistance, includeCurl, MAX_TENSION_STRETCH, type PeelBounds } from "./PeelFraming";
 import { nearestStateSources, extendStateTexture } from "./StateTexture";
 import type { CurlProfile, PeelSimulation, Vec2 } from "../peel/PeelSimulation";
@@ -8,6 +9,9 @@ const STICKER_WIDTH = 4.8;
 type PeelUniforms = {
   uArt: { value: THREE.Texture };
   uWhiteArtwork: { value: number };
+  uStickerColor: { value: THREE.Color };
+  uFaceFinish: { value: number };
+  uBackFinish: { value: number };
   uState: { value: THREE.DataTexture };
   uLayer: { value: number };
   uFilmColor: { value: THREE.Color };
@@ -77,6 +81,9 @@ const fragmentShader = /* glsl */ `
   precision highp float;
   uniform sampler2D uArt;
   uniform float uWhiteArtwork;
+  uniform vec3 uStickerColor;
+  uniform float uFaceFinish;
+  uniform float uBackFinish;
   uniform sampler2D uState;
   uniform float uLayer;
   uniform vec3 uFilmColor;
@@ -85,6 +92,14 @@ const fragmentShader = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
+
+  float grain(vec2 position) {
+    return fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
+  }
+
+  vec3 spectrum(float phase) {
+    return 0.5 + 0.5 * cos(phase + vec3(0.0, 2.094, 4.189));
+  }
 
   void main() {
     vec4 state = texture2D(uState, vUv);
@@ -110,22 +125,45 @@ const fragmentShader = /* glsl */ `
     vec3 color;
     float alpha;
 
-    vec3 artworkColor = mix(frontInk.rgb, vec3(1.0), uWhiteArtwork);
+    vec3 artworkColor = mix(frontInk.rgb, uStickerColor, uWhiteArtwork);
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
+    if (uFaceFinish > 2.5) {
+      float brush = grain(vec2(floor(vUv.y * 520.0), 1.0));
+      float highlight = pow(max(0.0, cos((vUv.x + vUv.y * 0.52 + normal.x * 0.2) * 9.0)), 9.0);
+      printedColor = printedColor * (0.73 + brush * 0.28) + vec3(0.65, 0.78, 0.92) * highlight * 0.35;
+    } else if (uFaceFinish > 1.5) {
+      vec3 pearl = spectrum(dot(vUv, vec2(6.0, 4.0)) + vCurl * 5.0);
+      printedColor = mix(printedColor * 0.83, pearl * 0.73 + artworkColor * 0.23, 0.48);
+    } else if (uFaceFinish > 0.5) {
+      float band = (vUv.x + vUv.y * 0.7 + normal.x * 0.35 - 0.82) * 3.6;
+      float satin = exp(-band * band);
+      printedColor = printedColor * 0.85 + artworkColor * satin * 0.26;
+    }
     color = printedColor;
     alpha = frontInk.a;
 
     if (uLayer > 1.5) {
-      // The front face stays printed; every visible backside fragment is the
-      // same monochrome pink film, including the curved transition.
-      float viewingBackside = gl_FrontFacing ? 0.0 : 1.0;
-      float monochrome = viewingBackside;
+      float monochrome = gl_FrontFacing ? 0.0 : 1.0;
       vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
       filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
       filmColor = mix(filmColor, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
       float filmAlpha = frontInk.a * uLiftedOpacity * mix(0.92, 1.0, grazing);
+      if (uBackFinish > 2.5) {
+        vec2 grid = abs(fract(vUv * 56.0) - 0.5);
+        float thread = 1.0 - smoothstep(0.06, 0.19, min(grid.x, grid.y));
+        filmColor = mix(filmColor, vec3(0.68, 0.94, 0.9), thread * 0.75);
+        filmAlpha *= 0.4 + thread * 0.6;
+      } else if (uBackFinish > 1.5) {
+        vec3 prism = spectrum((vUv.x - vUv.y * 0.63) * 13.0 + vCurl * 5.0);
+        filmColor = mix(filmColor, prism, 0.73);
+        filmAlpha *= 0.72 + grazing * 0.28;
+      } else if (uBackFinish > 0.5) {
+        float speckle = grain(floor(vUv * 430.0));
+        filmColor = vec3(0.57, 0.72, 0.83) + vec3(speckle * 0.17 + grazing * 0.12);
+        filmAlpha *= 0.76 + speckle * 0.24;
+      }
       color = mix(printedColor, filmColor, monochrome);
       alpha = mix(frontInk.a, filmAlpha, monochrome);
     } else {
@@ -209,6 +247,9 @@ export class PeelRenderer {
   private readonly stickerMeshes: THREE.Mesh[] = [];
   private readonly shadow: THREE.Mesh;
   private readonly resizeObserver: ResizeObserver;
+  private readonly originalWhiteArtwork: boolean;
+  private readonly surfaceMaterial: THREE.MeshStandardMaterial;
+  private dragFit = 0;
   private zoom = 1;
   private viewportWidth = 1;
   private viewportHeight = 1;
@@ -235,6 +276,7 @@ export class PeelRenderer {
     artworkAspect: number,
     whiteArtwork = false,
   ) {
+    this.originalWhiteArtwork = whiteArtwork;
     this.stickerHeight = this.stickerWidth / artworkAspect;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(this.pixelRatio);
@@ -245,10 +287,8 @@ export class PeelRenderer {
     this.domElement.className = "peel-canvas";
     this.host.appendChild(this.domElement);
 
-    const surface = new THREE.Mesh(
-      new THREE.PlaneGeometry(22, 18),
-      new THREE.MeshStandardMaterial({ map: makeSurfaceTexture(), roughness: 0.88, metalness: 0.04 }),
-    );
+    this.surfaceMaterial = new THREE.MeshStandardMaterial({ map: makeSurfaceTexture(), roughness: 0.88, metalness: 0.04 });
+    const surface = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), this.surfaceMaterial);
     surface.position.z = -0.095;
     this.scene.add(surface);
     this.scene.add(new THREE.HemisphereLight(0xa799bd, 0x17141b, 1.2));
@@ -281,6 +321,9 @@ export class PeelRenderer {
       const uniforms: PeelUniforms = {
         uArt: { value: art },
         uWhiteArtwork: { value: whiteArtwork ? 1 : 0 },
+        uStickerColor: { value: new THREE.Color(0xffffff) },
+        uFaceFinish: { value: 0 },
+        uBackFinish: { value: 0 },
         uState: { value: this.stateTexture },
         uLayer: { value: pass.layer },
         uFilmColor: { value: new THREE.Color(0xf05fa8) },
@@ -378,6 +421,22 @@ export class PeelRenderer {
     (this.shadow.material as THREE.MeshBasicMaterial).opacity = 0.3 + lift * 0.18;
   }
 
+  setAppearance(appearance: PeelAppearance) {
+    const background = BACKGROUNDS[appearance.background].color;
+    this.surfaceMaterial.emissive.set(background);
+    this.surfaceMaterial.emissiveIntensity = appearance.background === 0 ? 0 : 0.95;
+    this.scene.background = appearance.background === 0 ? null : new THREE.Color(background).multiplyScalar(0.62);
+
+    const sticker = STICKER_COLORS[appearance.sticker].color;
+    for (const material of this.materials) {
+      const uniforms = material.uniforms as unknown as PeelUniforms;
+      uniforms.uWhiteArtwork.value = sticker || this.originalWhiteArtwork ? 1 : 0;
+      uniforms.uStickerColor.value.set(sticker ?? "#ffffff");
+      uniforms.uFaceFinish.value = appearance.face;
+      uniforms.uBackFinish.value = appearance.back;
+    }
+  }
+
   setDebug(enabled: boolean) {
     for (const material of this.materials) material.wireframe = enabled;
   }
@@ -432,6 +491,7 @@ export class PeelRenderer {
   endDrag() {
     this.dragInput = null;
     this.edgePressure = 0;
+    this.dragFit = 0;
   }
 
   dispose() {
@@ -468,7 +528,7 @@ export class PeelRenderer {
     const height = this.viewportHeight;
     const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
     const inset = Math.min(28, Math.min(width, height) * 0.09);
-    const rest = fitDistance({ x: this.stickerWidth / 2, y: this.stickerHeight / 2, z: 0 }, tangent, width, height, inset);
+    const rest = fitDistance({ x: this.stickerWidth / 2, y: this.stickerHeight / 2, z: 0.022 }, tangent, width, height, inset);
     const heldPoint = this.dragInput && this.uvToWorld(this.dragInput.point);
     const bounds = {
       x: Math.max(this.bounds.x, Math.abs(heldPoint?.x ?? 0)),
@@ -476,7 +536,8 @@ export class PeelRenderer {
       z: this.bounds.z,
     };
     const required = heldPoint || bounds.z > 0 ? fitDistance(bounds, tangent, width, height, inset) : 0;
-    const target = Math.max(required, rest / this.zoom * (1 + 0.45 * this.edgePressure));
+    if (heldPoint) this.dragFit = Math.max(this.dragFit, required);
+    const target = Math.max(required, this.dragFit * 1.04, rest * 1.04 / this.zoom * (1 + 0.45 * this.edgePressure));
     const distance = this.cameraReady
       ? Math.max(required, THREE.MathUtils.lerp(this.camera.position.z, target, 0.18)) : target;
     this.cameraReady = true;
