@@ -434,6 +434,26 @@ test("a previously released flap can be re-grabbed and torn by pulling outward",
   assert.equal(simulation.snapshot().failed, true);
 });
 
+test("a diagonal tension tear carries the entire connected unglued flap", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.9, 1);
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: 0.28, y: 0.5 }, 400);
+  assert.equal(simulation.end(), true);
+  const released = simulation.state.slice();
+
+  simulation.setTearThreshold(0.012);
+  simulation.begin({ x: 0.08, y: 0.31 }, 700);
+  simulation.drag({ x: 0.31, y: 0.67 }, 900);
+  assert.equal(simulation.snapshot().tearFailure?.kind, "tension");
+  assert.ok(simulation.state.includes(Cell.adhered));
+  assert.ok(released.every((value, index) => value !== Cell.released || simulation.state[index] === Cell.torn));
+  assert.equal(simulation.diagnostics().current.releasedCells, 0);
+  assert.ok(simulation.diagnostics().lastStep.carriedReleasedCells > 0);
+});
+
 test("a thin neck adds width-dependent tension independently of area jump", () => {
   const width = 128;
   const height = 70;

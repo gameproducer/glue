@@ -44,6 +44,11 @@ export type PeelDiagnostics = {
     stressTear: boolean;
     outwardTear: boolean;
     bottleneckLoad: number;
+    tearCandidateMs?: number;
+    frontRebuildMs?: number;
+    bottleneckMs?: number;
+    tornPreviouslyReleasedCells?: number;
+    carriedReleasedCells?: number;
   };
 };
 
@@ -353,6 +358,7 @@ export class PeelSimulation {
     this.frontDepth = this.calcFrontDepth(inwardDistance);
     const previousPendingCells = this.pendingNewCells;
     const previousLiftedCells = this.liftedCells;
+    const candidateStarted = performance.now();
     let tearCandidateCells = 0;
     let candidateAdheredCells = 0;
     this.tearCandidate.fill(0);
@@ -367,7 +373,9 @@ export class PeelSimulation {
       tearCandidateCells = this.queueReleasedFlap();
       for (let i = 0; i < tearCandidateCells; i++) this.tearCandidate[this.queue[i]] = 1;
     }
+    const frontStarted = performance.now();
     const { frontCells, averageAdhesion, queuedCells } = this.rebuildLifted();
+    const frontRebuildMs = performance.now() - frontStarted;
 
     // Detect sudden growth independently of how much was lifted before this update.
     const gainedCells = Math.max(0, this.pendingNewCells - previousPendingCells);
@@ -378,8 +386,13 @@ export class PeelSimulation {
     const elapsed = this.lastTime > 0 && time > this.lastTime ? (time - this.lastTime) / 1000 : 1 / 60;
     const speed = frameDistance / Math.max(elapsed, 1 / 240);
     const hasAnchor = this.componentAdheredCells - this.pendingNewCells >= minimumAnchor;
-    const bottleneckLoad = this.tearFactors.bottleneck > 0 && hasAnchor && this.liftedCells >= minimumPiece
-      ? this.measureBottleneck() : 0;
+    let bottleneckLoad = 0;
+    let bottleneckMs = 0;
+    if (this.tearFactors.bottleneck > 0 && hasAnchor && this.liftedCells >= minimumPiece) {
+      const bottleneckStarted = performance.now();
+      bottleneckLoad = this.measureBottleneck();
+      bottleneckMs = performance.now() - bottleneckStarted;
+    }
     // A newly forming local front is short by construction. Ramp in the
     // narrow-front load as the adhesive line develops beyond the grip.
     const narrowLoad = clamp((18 - frontCells) / 16) * clamp(this.frontDepth / 0.045);
@@ -433,6 +446,9 @@ export class PeelSimulation {
       stressTear,
       outwardTear: false,
       bottleneckLoad,
+      tearCandidateMs: frontStarted - candidateStarted,
+      frontRebuildMs,
+      bottleneckMs,
     };
     if (avalancheTear) {
       this.triggerTear({ kind: "area-jump", value: absoluteGain, threshold: this.releaseJumpThreshold }, this.tearCandidate);
@@ -647,12 +663,30 @@ export class PeelSimulation {
     for (let index = 0; index < this.state.length; index++) {
       const shouldDetach = detachedMask ? detachedMask[index] !== 0 : this.state[index] === Cell.lifted;
       if (shouldDetach) {
-        if (this.gestureBase[index] === Cell.released) detachedReleasedCells++;
+        if (this.gestureBase[index] === Cell.released) this.queue[detachedReleasedCells++] = index;
         this.state[index] = Cell.torn;
       } else {
         this.state[index] = this.gestureBase[index];
       }
     }
+    // A tear can cross fresh adhesive, but an already unglued patch has no
+    // attachment within it to oppose the pull. Carry the entire touched patch.
+    const initiallyDetached = detachedReleasedCells;
+    const carryReleased = (index: number) => {
+      if (this.state[index] !== Cell.released) return;
+      this.state[index] = Cell.torn;
+      this.queue[detachedReleasedCells++] = index;
+    };
+    for (let head = 0; head < detachedReleasedCells; head++) {
+      const index = this.queue[head];
+      const x = index % this.width;
+      if (x > 0) carryReleased(index - 1);
+      if (x + 1 < this.width) carryReleased(index + 1);
+      if (index >= this.width) carryReleased(index - this.width);
+      if (index + this.width < this.state.length) carryReleased(index + this.width);
+    }
+    this.lastDiagnosticStep.tornPreviouslyReleasedCells = detachedReleasedCells;
+    this.lastDiagnosticStep.carriedReleasedCells = detachedReleasedCells - initiallyDetached;
     this.releasedCells = Math.max(0, this.releasedCells - detachedReleasedCells);
     this.pendingNewCells = 0;
     this.liftedCells = 0;

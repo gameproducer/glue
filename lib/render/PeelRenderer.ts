@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
 import { fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
 import { nearestStateSources, extendStateTexture } from "./StateTexture";
+import { FrameTimings } from "./FrameTimings";
 import { Cell, type CurlProfile, type PeelSimulation, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
@@ -290,6 +291,7 @@ function makeShadowTexture(image: HTMLImageElement) {
 
 export class PeelRenderer {
   readonly domElement: HTMLCanvasElement;
+  readonly frameTimings = new FrameTimings();
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(31, 1, 0.1, 40);
@@ -792,6 +794,7 @@ export class PeelRenderer {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
     const now = performance.now();
+    const phase = this.dissolves.length ? "dissolve" : this.dragInput ? "drag" : "idle";
     for (let i = this.dissolves.length - 1; i >= 0; i--) {
       const shape = this.dissolves[i];
       const elapsed = now - shape.started;
@@ -807,8 +810,17 @@ export class PeelRenderer {
         }
       }
     }
+    const cameraStarted = performance.now();
     this.frameCamera();
+    const renderStarted = performance.now();
     this.renderer.render(this.scene, this.camera);
+    this.frameTimings.recordFrame(now, {
+      phase,
+      visible: document.visibilityState === "visible",
+      animationMs: cameraStarted - now,
+      cameraMs: renderStarted - cameraStarted,
+      renderSubmitMs: performance.now() - renderStarted,
+    });
     this.fpsFrames++;
     if (now - this.lastFpsTime > 650) {
       const fps = Math.round(this.fpsFrames * 1000 / (now - this.lastFpsTime));

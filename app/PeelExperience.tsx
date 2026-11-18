@@ -254,7 +254,9 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     const renderer = rendererRef.current;
     if (!simulation) return;
     const next = simulation.snapshot();
+    const textureStarted = performance.now();
     if (updateTexture) renderer?.updateState();
+    const poseStarted = performance.now();
     renderer?.setPeel(
       next.grab,
       next.direction,
@@ -266,6 +268,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       next.torn,
       next.detached ? next.pointer : undefined,
     );
+    renderer?.frameTimings.recordState(poseStarted - textureStarted, performance.now() - poseStarted);
     setSnapshot(next);
   }, []);
 
@@ -319,6 +322,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         rendererRef.current = renderer;
         diagnosticEvents.current = [];
         diagnosticStartedAt.current = performance.now();
+        renderer.frameTimings.clear();
         diagnosticStartedWallClock.current = new Date().toISOString();
         diagnosticSessionId.current = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         setLogStatus("Recording locally");
@@ -344,9 +348,12 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           const point = renderer.screenToSticker(event.clientX, event.clientY);
           const simulationTime = performance.now();
           const accepted = point ? simulation.begin(point, simulationTime) : false;
+          const solverMs = performance.now() - simulationTime;
+          renderer.frameTimings.recordInput(solverMs);
           recordDiagnostic("pointer_down", point, {
             accepted,
             simulationTime,
+            solverMs,
             pointerId: event.pointerId,
             pointerType: event.pointerType,
           });
@@ -369,8 +376,11 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           const before = simulation.snapshot();
           const simulationTime = performance.now();
           simulation.drag(point, simulationTime);
+          const solverMs = performance.now() - simulationTime;
+          renderer.frameTimings.recordInput(solverMs);
           recordDiagnostic("pointer_move", point, {
             simulationTime,
+            solverMs,
             pointerId: event.pointerId,
           });
           const next = simulation.snapshot();
@@ -391,7 +401,10 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           const hadGrab = beforeRelease.pulling;
           if (beforeRelease.detached) refresh(true);
           // Browser interruptions settle the last valid lift like a normal release.
+          const solverStarted = performance.now();
           const accepted = simulation.end();
+          const solverMs = performance.now() - solverStarted;
+          renderer.frameTimings.recordInput(solverMs);
           const finished = simulation.snapshot();
           if (!accepted && beforeRelease.outwardPulling && !finished.failed) {
             setReleasedWhileReversing(true);
@@ -409,6 +422,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             pointerId: event.pointerId,
             source: event.type,
             canCommit: beforeRelease.canCommit,
+            solverMs,
           });
           renderer.endDrag();
           refresh(true);
@@ -549,6 +563,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
   const buildDiagnosticLog = () => {
     const simulation = simulationRef.current;
+    const renderer = rendererRef.current;
     if (!simulation) return "";
     return JSON.stringify({
       schema: "peel-diagnostic-log-v1",
@@ -571,18 +586,22 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         tearFactors,
         liftedTransparency,
         appearance,
+        peelSound,
       },
       environment: {
         userAgent: navigator.userAgent,
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight,
         devicePixelRatio: window.devicePixelRatio,
+        canvasWidth: renderer?.domElement.width,
+        canvasHeight: renderer?.domElement.height,
       },
       eventCount: diagnosticEvents.current.length,
       finalSnapshot: simulation.snapshot(),
       finalSolver: simulation.diagnostics(),
       stateLegend: { 0: "outside", 1: "adhered", 2: "released", 3: "lifted", 4: "torn" },
       finalStateRle: encodeStateRuns(simulation.state),
+      frameTimings: renderer?.frameTimings.export(diagnosticStartedAt.current) ?? [],
       events: diagnosticEvents.current,
     }, null, 2);
   };
@@ -621,6 +640,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const clearDiagnosticLog = () => {
     diagnosticEvents.current = [];
     diagnosticStartedAt.current = performance.now();
+    rendererRef.current?.frameTimings.clear();
     diagnosticStartedWallClock.current = new Date().toISOString();
     diagnosticSessionId.current = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     setLogStatus("New recording started");
@@ -763,7 +783,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             <small>Autosaved for {level.name}</small>
             <section className="log-tools" aria-label="Diagnostic recording">
               <header><span>Diagnostic log</span><output>{diagnosticEvents.current.length} events</output></header>
-              <p>Local only. Reproduce the fast release, then copy or download the complete trace.</p>
+              <p>Local only. Reproduce the issue, then export the peel events and recent frame timings.</p>
               <div className="log-actions">
                 <button type="button" onClick={() => void copyDiagnosticLog()}>Copy log</button>
                 <button type="button" onClick={downloadDiagnosticLog}>Download JSON</button>
