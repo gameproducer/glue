@@ -132,6 +132,7 @@ const fragmentShader = /* glsl */ `
   uniform float uStress;
   uniform float uDissolve;
   uniform vec2 uDirection;
+  uniform vec2 uStickerSize;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
@@ -234,7 +235,56 @@ const fragmentShader = /* glsl */ `
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
-    if (uFaceFinish > 7.5) {
+    if (uFaceFinish > 8.5) {
+      vec2 sheet = vUv * uStickerSize / max(uStickerSize.x, uStickerSize.y);
+      vec3 reflection = reflect(-lightDirection, normal);
+      vec3 foilColor;
+      if (uFaceFinish > 12.5) {
+        // Adjacent lenticular tiles reflect two different color ranges.
+        vec2 tile = vec2(sheet.x - sheet.y, sheet.x + sheet.y) * 19.0;
+        vec2 local = fract(tile);
+        float parity = mod(floor(tile.x) + floor(tile.y), 2.0);
+        float stripe = contourLine(tile.x * 5.0, 0.10);
+        float angle = normal.x + normal.y * 0.45 + (local.x - 0.5) * 0.52;
+        float flip = smoothstep(-0.21, 0.39, angle);
+        vec3 cool = mix(vec3(0.12, 0.24, 0.69), vec3(0.22, 0.93, 0.96), flip);
+        vec3 warm = mix(vec3(0.91, 0.27, 0.59), vec3(1.0, 0.72, 0.32), 1.0 - flip);
+        foilColor = mix(cool, warm, parity) + stripe * 0.17;
+      } else if (uFaceFinish > 11.5) {
+        // Warp a triangular grid into irregular facets with independent highlights.
+        vec2 tile = sheet * 19.0 + vec2(sheet.y * 6.0, 0.0);
+        tile += 0.42 * vec2(softNoise(sheet * 22.0), softNoise(sheet.yx * 20.0 + 7.0));
+        vec2 local = fract(tile);
+        float halfTile = step(local.x, local.y);
+        float facet = grain(floor(tile) + halfTile * vec2(0.23, 0.61));
+        float flash = 0.5 + 0.5 * cos(facet * 19.0 + reflection.x * 4.0 - reflection.y * 2.5);
+        float edge = min(abs(local.x - local.y), min(min(local.x, 1.0 - local.x), min(local.y, 1.0 - local.y)));
+        float bevel = 1.0 - smoothstep(0.02, 0.10, edge);
+        foilColor = mix(vec3(0.19, 0.32, 0.50), vec3(0.82, 0.95, 1.0), flash) + bevel * 0.14;
+      } else if (uFaceFinish > 10.5) {
+        float flow = softNoise(sheet * 4.0) + 0.36 * softNoise(sheet * 9.0 + 13.0);
+        float phase = flow * 17.0 + reflection.x * 4.0 - reflection.y * 2.0;
+        vec3 interference = spectrum(phase);
+        float rim = contourLine(phase / 6.283, 0.065);
+        foilColor = vec3(0.13, 0.11, 0.19) + interference * (0.53 + grazing * 0.25) + rim * 0.18;
+      } else if (uFaceFinish > 9.5) {
+        vec2 tile = sheet * 13.0;
+        tile.x += mod(floor(tile.y), 2.0) * 0.5;
+        vec2 local = fract(tile) - 0.5;
+        float rings = contourLine(length(local) * 13.0, 0.085);
+        float sweep = 0.5 + 0.5 * cos(dot(local, vec2(9.0, 3.0)) + reflection.x * 5.0);
+        foilColor = mix(vec3(0.35, 0.40, 0.49), vec3(0.84, 0.91, 0.97), sweep) + rings * 0.17;
+      } else {
+        vec2 tool = sheet * 22.0;
+        float dent = softNoise(tool);
+        vec2 slope = vec2(softNoise(tool + vec2(0.36, 0.0)), softNoise(tool + vec2(0.0, 0.36))) - dent;
+        vec3 hammeredNormal = normalize(normal + vec3(slope * 1.8, 0.0));
+        float glint = pow(max(dot(reflect(-lightDirection, hammeredNormal), vec3(0.0, 0.0, 1.0)), 0.0), 9.0);
+        foilColor = mix(vec3(0.38, 0.17, 0.06), vec3(0.92, 0.63, 0.24), 0.22 + dent * 0.65)
+          + vec3(1.0, 0.87, 0.51) * glint * 0.42;
+      }
+      printedColor = mix(printedColor, foilColor * mix(vec3(1.0), artworkColor, 0.35), 0.82);
+    } else if (uFaceFinish > 7.5) {
       vec2 tile = vUv * 86.0;
       float flake = step(0.68, grain(floor(tile)));
       float dotMask = flake * (1.0 - smoothstep(0.07, 0.31, length(fract(tile) - 0.5)));
