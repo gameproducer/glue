@@ -2,6 +2,7 @@ export const FACE_FINISHES = [
   "Original", "Satin", "Pearlescent", "Brushed foil",
   "Topographic ink", "Marbled ink", "Halftone print", "Holographic foil", "Speckled enamel",
   "Hammered gold", "Engine-turned silver", "Oil-slick foil", "Cracked ice foil", "Lenticular checker foil",
+  "Gloss laminate", "Soft-touch matte", "Linen laminate", "Spot UV varnish", "Dichroic laminate",
 ] as const;
 export const BACK_FINISHES = [
   "Clear", "Frosted", "Prismatic", "Fine mesh",

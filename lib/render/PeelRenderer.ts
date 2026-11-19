@@ -235,7 +235,48 @@ const fragmentShader = /* glsl */ `
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
-    if (uFaceFinish > 8.5) {
+    if (uFaceFinish > 13.5) {
+      vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
+      // A reflected light panel moves across the coating as the sheet curls.
+      vec2 reflected = sheet + reflect(vec3(0.0, 0.0, -1.0), normal).xy * 0.56;
+      float panel = dot(reflected, vec2(0.50, 0.866)) + 0.10;
+      float panelEnd = 1.0 - smoothstep(0.29, 0.58, abs(dot(reflected, vec2(0.866, -0.50))));
+      float gloss = (1.0 - smoothstep(0.044, 0.106, abs(panel))) * panelEnd;
+      vec3 coatedArt = artworkColor * (0.64 + diffuse * 0.31);
+
+      if (uFaceFinish > 17.5) {
+        float incidence = 1.0 - abs(normal.z);
+        float phase = panel * 5.3 + incidence * 6.0;
+        vec3 sheen = mix(vec3(0.88, 0.94, 1.0), spectrum(phase), 0.54);
+        float luster = 1.0 - smoothstep(0.02, 0.33, abs(panel));
+        printedColor = mix(coatedArt, sheen, 0.12 + luster * 0.36 + incidence * 0.16);
+        printedColor = mix(printedColor, vec3(1.0), gloss * 0.20 + specular * 0.12);
+      } else if (uFaceFinish > 16.5) {
+        vec2 stamp = fract(sheet * 4.8) - 0.5;
+        float curve = length(stamp) + 0.17 * abs(stamp.x * stamp.y) * 8.0;
+        float edgeWidth = max(fwidth(curve), 0.004);
+        float varnish = 1.0 - smoothstep(0.053, 0.053 + edgeWidth, abs(curve - 0.28));
+        float broadGlint = 1.0 - smoothstep(0.02, 0.32, abs(panel));
+        float shine = 0.12 + gloss * 0.36 + broadGlint * 0.21 + specular * 0.17;
+        printedColor = mix(coatedArt * 0.86, vec3(0.98, 0.99, 1.0), varnish * shine);
+      } else if (uFaceFinish > 15.5) {
+        vec2 weave = vec2(sheet.x + sheet.y * 0.14, sheet.y - sheet.x * 0.14) * 144.0;
+        float warp = contourLine(weave.x + 0.22 * cos(weave.y * 3.142), 0.13);
+        float weft = contourLine(weave.y + 0.22 * cos(weave.x * 3.142), 0.18);
+        float thread = max(warp * (0.48 + normal.x * 0.23), weft * (0.35 + normal.y * 0.19));
+        printedColor = mix(coatedArt * 0.80, vec3(0.94, 0.93, 0.89), thread * 0.38 + gloss * 0.10);
+      } else if (uFaceFinish > 14.5) {
+        vec2 grainUv = sheet * 420.0;
+        float fineGrain = (grain(floor(grainUv)) - 0.5)
+          * (1.0 - smoothstep(0.4, 1.4, max(fwidth(grainUv.x), fwidth(grainUv.y))));
+        float velvet = (1.0 - smoothstep(0.02, 0.46, abs(panel))) * 0.09 + grazing * 0.14;
+        printedColor = artworkColor * (0.65 + diffuse * 0.18 + fineGrain * 0.07)
+          + vec3(0.91, 0.87, 0.84) * velvet;
+      } else {
+        float bounce = 1.0 - smoothstep(0.04, 0.20, abs(panel - 0.17));
+        printedColor = mix(coatedArt, vec3(0.97, 0.985, 1.0), gloss * 0.74 + bounce * 0.14 + specular * 0.10);
+      }
+    } else if (uFaceFinish > 8.5) {
       vec2 sheet = vUv * uStickerSize / max(uStickerSize.x, uStickerSize.y);
       vec3 reflection = reflect(-lightDirection, normal);
       vec3 foilColor;
