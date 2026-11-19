@@ -10,7 +10,7 @@ export type Vec2 = { x: number; y: number };
 export type CurlProfile = "cylinder" | "cone";
 export type TearFactors = { outward: number; bottleneck: number };
 export type TearFailure = {
-  kind: "tension" | "area-jump" | "outward";
+  kind: "tension" | "area-jump" | "outward" | "grip-gap";
   value: number;
   threshold: number;
 };
@@ -508,6 +508,22 @@ export class PeelSimulation {
     this.frontDepth = 0;
     this.stress *= 0.32;
     return accepted;
+  }
+
+  applyGripGap(distance: number, limit: number, tornContact: Vec2 | null) {
+    if (!this.tracking || this.torn || !this.liftedCells || this.detached) return false;
+
+    // Leave some slack for the curl, then load the remaining tension cubically.
+    const extension = clamp((distance / limit - 0.25) / 0.75);
+    this.stress += Math.max(0, this.tearThreshold - this.stress) * extension ** 3;
+    if (distance < limit) return false;
+
+    this.triggerTear({ kind: "grip-gap", value: distance, threshold: limit });
+    if (tornContact) {
+      this.tearRecoil = { x: tornContact.x - this.grab.x, y: tornContact.y - this.grab.y };
+      this.tornOffset = { ...this.tearRecoil };
+    }
+    return true;
   }
 
   private get detached() {

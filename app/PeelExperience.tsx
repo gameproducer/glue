@@ -28,6 +28,8 @@ const DEFAULT_LEVEL = {
 const ZOOM_STEPS = [60, 75, 90, 100, 115, 135, 160];
 const TENSION_CONTROL_MAX = 0.66;
 const RELEASE_JUMP_CONTROL_MAX = 0.66;
+// A screen-space cap tuned to roughly 1.5 cm on an iPhone at normal page scale.
+const GRIP_GAP_LIMIT_PX = 84;
 const DEFAULT_TEAR_FACTORS: TearFactors = { outward: 0.05, bottleneck: 0.05 };
 const TEAR_FACTOR_CONTROLS = [
   { key: "outward", label: "Outward pull", hint: "How easily a lifted flap tears when pulled back." },
@@ -266,13 +268,26 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     });
   }, [recordDiagnostic]);
 
-  const refresh = useCallback((updateTexture = true) => {
+  const refresh = useCallback((updateTexture = true, checkGrip = false) => {
     const simulation = simulationRef.current;
     const renderer = rendererRef.current;
     if (!simulation) return;
-    const next = simulation.snapshot();
+    let next = simulation.snapshot();
     const textureStarted = performance.now();
     if (updateTexture) renderer?.updateState();
+    if (checkGrip && renderer) {
+      const gapPx = renderer.gripGap(next, profileRef.current);
+      if (gapPx !== null && gapPx > GRIP_GAP_LIMIT_PX / 4) {
+        const tore = simulation.applyGripGap(gapPx, GRIP_GAP_LIMIT_PX,
+          gapPx >= GRIP_GAP_LIMIT_PX ? renderer.tornGripContact() : null);
+        if (tore) {
+          renderer.updateState();
+          if (navigator.vibrate) navigator.vibrate([22, 34, 28]);
+        }
+        next = simulation.snapshot();
+        recordDiagnostic("grip_gap", next.pointer, { gapPx, limitPx: GRIP_GAP_LIMIT_PX });
+      }
+    }
     const poseStarted = performance.now();
     renderer?.setPeel(
       next.grab,
@@ -287,7 +302,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     );
     renderer?.frameTimings.recordState(poseStarted - textureStarted, performance.now() - poseStarted);
     setSnapshot(next);
-  }, []);
+  }, [recordDiagnostic]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -346,7 +361,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           if (textureFrame.current) return;
           textureFrame.current = requestAnimationFrame(() => {
             textureFrame.current = 0;
-            refresh(true);
+            refresh(true, true);
           });
         };
 
@@ -401,6 +416,11 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
         const finishPointer = (event: PointerEvent) => {
           if (activePointer.current !== event.pointerId) return;
+          if (textureFrame.current) {
+            cancelAnimationFrame(textureFrame.current);
+            textureFrame.current = 0;
+            refresh(true, true);
+          }
           const releasedByPlayer = event.type === "pointerup";
           if (releasedByPlayer && peelSoundRef.current !== "off") audio.unlock();
           activePointer.current = null;
@@ -658,9 +678,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
   const percent = Math.min(100, Math.round(snapshot.progress * 100));
   const failure = snapshot.tearFailure;
-  const failureLabel = failure?.kind === "area-jump" ? "Area jump" : "Tension tear";
+  const failureLabel = failure?.kind === "area-jump" ? "Area jump"
+    : failure?.kind === "grip-gap" ? "Grip distance" : "Tension tear";
+  const formatFailure = (value: number) => failure?.kind === "grip-gap"
+    ? `${Math.round(value)} px` : `${(value * 100).toFixed(1)}%`;
   const failureExplanation = failure?.kind === "area-jump" ? "Too much material released at once."
     : failure?.kind === "outward" ? "Pulling back loaded the lifted flap."
+    : failure?.kind === "grip-gap" ? "The pointer pulled too far from the point holding the flap."
     : "The lifted flap reached its tension limit.";
   const status = snapshot.torn
     ? snapshot.tearDragging
@@ -844,7 +868,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             </strong>
             {failure && (
               <p className="tear-explanation">
-                <b>{failureLabel}</b> reached {(failure.value * 100).toFixed(1)}% (limit {(failure.threshold * 100).toFixed(1)}%). {failureExplanation}
+                <b>{failureLabel}</b> reached {formatFailure(failure.value)} (limit {formatFailure(failure.threshold)}). {failureExplanation}
               </p>
             )}
             <button type="button" onClick={reset}>Try again</button>

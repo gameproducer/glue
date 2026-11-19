@@ -542,6 +542,48 @@ test("continuing a pull once the flap starts stretching quickly tears the flap",
   assert.ok(simulation.state.includes(Cell.adhered));
 });
 
+test("a held grip loads progressively with screen-space separation and tears at the cap", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const sample = (gap) => {
+    const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 1);
+    simulation.begin({ x: 3 / 51, y: 0.5 }, 100);
+    simulation.drag({ x: 0.3, y: 0.5 }, 400);
+    const initial = simulation.snapshot();
+    assert.ok(initial.progress > 0 && !initial.detached && !initial.torn);
+    const contact = { x: 0.35, y: 0.6 };
+    simulation.applyGripGap(gap, 84, contact);
+    const after = simulation.snapshot();
+    return { simulation, gapStress: after.stress - initial.stress, after, contact };
+  };
+
+  assert.equal(sample(20).gapStress, 0);
+  const near = sample(81);
+  assert.ok(near.gapStress > 2 * sample(51).gapStress);
+  assert.equal(near.after.torn, false);
+
+  const { simulation, after, contact } = sample(84);
+  assert.deepEqual(after.tearFailure, { kind: "grip-gap", value: 84, threshold: 84 });
+  assert.ok(simulation.state.includes(Cell.adhered));
+  assert.ok(simulation.state.includes(Cell.torn));
+  assert.deepEqual(after.tornOffset, { x: contact.x - after.grab.x, y: contact.y - after.grab.y });
+  simulation.drag({ x: 0.4, y: 0.5 }, 500);
+  assert.ok(simulation.snapshot().tornOffset.x > after.tornOffset.x);
+});
+
+test("a grip gap cannot tear a fully unglued sticker", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 8, 20, 12, 18);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 1);
+  simulation.begin({ x: 8 / 51, y: 0.5 }, 100);
+  simulation.drag({ x: 0.9, y: 0.5 }, 400);
+  assert.equal(simulation.snapshot().detached, true);
+  assert.equal(simulation.applyGripGap(100, 84, null), false);
+  assert.equal(simulation.end(), true);
+});
+
 test("sustained outward load can reach a 29% tear threshold at 14% sensitivity", () => {
   const width = 52;
   const height = 30;

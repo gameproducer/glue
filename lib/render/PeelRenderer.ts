@@ -3,11 +3,15 @@ import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearan
 import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
-import { Cell, type CurlProfile, type PeelSimulation, type Vec2 } from "../peel/PeelSimulation";
+import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
 const RELAX_MS = 420;
 const DISSOLVE_MS = 1800;
+const TORN_LAYER_Z = 0.086;
+const curlRadius = (profile: CurlProfile) => profile === "cone" ? 0.28 : 0.32;
+const tensionStretch = (stress: number, threshold: number) => threshold > 0
+  ? MAX_TENSION_STRETCH * THREE.MathUtils.smoothstep(stress / threshold, 0.9, 1) : 0;
 
 type DissolvingShape = {
   texture: THREE.DataTexture;
@@ -279,10 +283,9 @@ const fragmentShader = /* glsl */ `
     vec3 color = printedColor;
     float alpha = silhouette;
 
-    #endif
-
     // The flat released layer already gets its coverage from state.g. Applying
     // the history mask again there weakens the finish at the feathered edge.
+    // The back film has its own appearance, independent of release history.
     bool flatReleased = uLayer > 0.5 && uLayer < 1.5;
     float released = flatReleased ? 1.0
       : smoothstep(0.02, 0.98, texture2D(uReleaseHistory, vUv).r);
@@ -303,6 +306,7 @@ const fragmentShader = /* glsl */ `
       color = mix(color, releaseColor, released);
       alpha = mix(alpha, releaseAlpha, released);
     }
+    #endif
     if (uDissolve > 0.0) {
       float sweep = 0.5 + dot(vUv - 0.5, uDirection) * 0.6;
       float variation = softNoise(vUv * 7.0) * 0.8 + softNoise(vUv * 21.0) * 0.2;
@@ -638,9 +642,8 @@ export class PeelRenderer {
     const worldGrab = this.uvToWorld(grab);
     const worldDirection = new THREE.Vector2(direction.x, direction.y).normalize();
     const worldDepth = depth * this.stickerHeight;
-    const radius = profile === "cone" ? 0.28 : 0.32;
-    const strain = tearThreshold > 0 ? THREE.MathUtils.smoothstep(stress / tearThreshold, 0.9, 1) : 0;
-    const stretch = MAX_TENSION_STRETCH * strain;
+    const radius = curlRadius(profile);
+    const stretch = tensionStretch(stress, tearThreshold);
     const offsetX = tornOffset.x * this.stickerWidth;
     const offsetY = tornOffset.y * this.stickerHeight;
     this.movingBounds = null;
@@ -649,7 +652,7 @@ export class PeelRenderer {
       this.movingBounds = {
         x: Math.abs(region.x + offsetX) + region.width / 2,
         y: Math.abs(region.y + offsetY) + region.height / 2,
-        z: 0.086,
+        z: TORN_LAYER_Z,
       };
     } else if (region && worldDepth > 0) {
       this.movingBounds = { x: 0, y: 0, z: 0 };
@@ -779,13 +782,55 @@ export class PeelRenderer {
     for (const shape of this.dissolves) shape.mesh.material.uniforms.uLiftedOpacity.value = opacity;
   }
 
-  screenToSticker(clientX: number, clientY: number): Vec2 | null {
+  screenToSticker(clientX: number, clientY: number, depth = 0): Vec2 | null {
     const rect = this.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     const point = new THREE.Vector3();
+    this.hitPlane.constant = -depth;
     if (!this.raycaster.ray.intersectPlane(this.hitPlane, point)) return null;
     return { x: point.x / this.stickerWidth + 0.5, y: point.y / this.stickerHeight + 0.5 };
+  }
+
+  gripGap(snapshot: PeelSnapshot, profile: CurlProfile) {
+    const input = this.dragInput;
+    if (!input || !snapshot.pulling || snapshot.torn || snapshot.detached || !this.movingRegion) return null;
+
+    // Project the grabbed point using the same curl and seam correction as the shader.
+    const grab = this.uvToWorld(snapshot.grab);
+    const depth = snapshot.frontDepth * this.stickerHeight;
+    const radius = curlRadius(profile);
+    const length = depth * (1 + tensionStretch(snapshot.stress, snapshot.tearThreshold));
+    const theta = Math.min(length / radius, Math.PI);
+    const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
+    const rise = 0.018 + radius * (1 - Math.cos(theta));
+    const { width, height } = this.simulation;
+    const x = THREE.MathUtils.clamp(snapshot.grab.x * width - 0.5, 0, width - 1);
+    const y = THREE.MathUtils.clamp(snapshot.grab.y * height - 0.5, 0, height - 1);
+    const col = Math.floor(x);
+    const row = Math.floor(y) * width;
+    const right = Math.min(col + 1, width - 1);
+    const above = Math.min(row + width, (height - 1) * width);
+    const low = THREE.MathUtils.lerp(this.curlDistances[row + col], this.curlDistances[row + right], x - col);
+    const high = THREE.MathUtils.lerp(this.curlDistances[above + col], this.curlDistances[above + right], x - col);
+    const cellsFromSeam = THREE.MathUtils.lerp(low, high, y % 1);
+    const cellSize = Math.min(this.stickerWidth / width, this.stickerHeight / height);
+    const correction = (1 - THREE.MathUtils.smoothstep(cellsFromSeam, 3, 16))
+      * Math.min(1, 8 * cellSize / Math.max(Math.hypot(shift, rise), 0.0001));
+    const grip = new THREE.Vector3(
+      grab.x + snapshot.direction.x * shift * (1 - correction),
+      grab.y + snapshot.direction.y * shift * (1 - correction),
+      0.004 + rise * (1 - correction),
+    ).project(this.camera);
+    const rect = this.domElement.getBoundingClientRect();
+    const gripX = rect.left + (1 + grip.x) * rect.width / 2;
+    const gripY = rect.top + (1 - grip.y) * rect.height / 2;
+    return Math.hypot(input.x - gripX, input.y - gripY);
+  }
+
+  tornGripContact() {
+    const input = this.dragInput;
+    return input && this.screenToSticker(input.x, input.y, TORN_LAYER_Z);
   }
 
   setZoom(zoom: number) {
