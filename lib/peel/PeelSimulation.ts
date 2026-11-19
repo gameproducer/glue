@@ -21,6 +21,7 @@ const PEEL_HALF_TURN = Math.PI * 0.082;
 const PEEL_QUARTER_TURN = PEEL_HALF_TURN / 2;
 const PEEL_QUARTER_TRAVEL = PEEL_QUARTER_TURN - 0.082;
 const FRONT_PROPAGATION_RATIO = 6;
+const MINIMUM_TEAR_FOOTPRINT = 0.003;
 
 export type PeelDiagnostics = {
   current: {
@@ -118,6 +119,7 @@ export class PeelSimulation {
   private readonly tearCandidate: Uint8Array;
   private readonly grabbedComponent: Uint8Array;
   private readonly sectionWidths: Uint32Array;
+  private readonly minimumTearPiece: number;
   private componentAdheredCells = 0;
   private readonly componentBounds = { left: 0, right: 0, bottom: 0, top: 0 };
   private readonly visited: Uint8Array;
@@ -178,6 +180,7 @@ export class PeelSimulation {
     this.tearThreshold = clamp(tearThreshold);
     this.releaseJumpThreshold = clamp(releaseJumpThreshold);
     const count = width * height;
+    this.minimumTearPiece = Math.max(8, Math.ceil(count * MINIMUM_TEAR_FOOTPRINT));
     this.state = new Uint8Array(count);
     this.initialState = new Uint8Array(count);
     this.releasedHistory = new Uint8Array(count);
@@ -308,8 +311,9 @@ export class PeelSimulation {
     const inward = this.inward.x || this.inward.y ? this.inward : this.inwardAlongThinStroke(dx, dy, pullDistance);
     const inwardDistance = dx * inward.x + dy * inward.y;
     const inwardTravel = travelX * inward.x + travelY * inward.y;
-    const minimumPiece = Math.max(8, Math.round(this.totalCells * 0.002));
-    const minimumAnchor = Math.max(1, Math.min(minimumPiece, Math.ceil(this.componentAdheredCells * 0.015)));
+    const minimumPiece = this.minimumTearPiece;
+    const minimumAnchor = Math.max(1, Math.min(Math.max(8, Math.round(this.totalCells * 0.002)),
+      Math.ceil(this.componentAdheredCells * 0.015)));
     const reverseTravel = this.heldReach - inwardTravel;
     const canLoadOutward = this.tearFactors.outward > 0 && reverseTravel > 1e-6
       && this.componentAdheredCells - this.pendingNewCells >= minimumAnchor;
@@ -511,7 +515,7 @@ export class PeelSimulation {
   }
 
   applyGripGap(distance: number, limit: number, tornContact: Vec2 | null) {
-    if (!this.tracking || this.torn || !this.liftedCells || this.detached) return false;
+    if (!this.tracking || this.torn || this.liftedCells < this.minimumTearPiece || this.detached) return false;
 
     // Leave some slack for the curl, then load the remaining tension cubically.
     const extension = clamp((distance / limit - 0.25) / 0.75);

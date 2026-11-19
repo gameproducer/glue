@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Cell, PeelSimulation } from "../lib/peel/PeelSimulation.ts";
+import { removeStickerSpecks } from "../lib/peel/StickerAsset.ts";
 
 const rectangleMask = (width, height, left, right, bottom, top) => {
   const mask = new Uint8Array(width * height);
@@ -582,6 +583,48 @@ test("a grip gap cannot tear a fully unglued sticker", () => {
   assert.equal(simulation.snapshot().detached, true);
   assert.equal(simulation.applyGripGap(100, 84, null), false);
   assert.equal(simulation.end(), true);
+});
+
+test("a sharp raster tip cannot detach as its own piece", () => {
+  const width = 24;
+  const height = 24;
+  const mask = rectangleMask(width, height, 3, 17, 6, 18);
+  const speck = 5 * width + 2;
+  mask[speck] = 1;
+  mask.fill(1, 22 * width + 8, 22 * width + 14);
+  removeStickerSpecks(mask, width);
+
+  assert.equal(mask[speck], 0);
+  assert.equal(mask[6 * width + 3], 1);
+  assert.equal(mask[22 * width + 8], 1);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 1);
+  simulation.begin({ x: 2 / 23, y: 5 / 23 }, 100);
+  assert.equal(simulation.diagnostics().current.grabIndex, 6 * width + 3);
+  simulation.drag({ x: 6 / 23, y: 8 / 23 }, 240);
+  assert.equal(simulation.snapshot().detached, false);
+});
+
+test("a shallow flap stays attached when the area-jump or grip cap fires below the minimum tear size", () => {
+  const width = 208;
+  const height = 208;
+  const mask = rectangleMask(width, height, 20, 187, 60, 149);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 0);
+  const y = 104 / 207;
+  simulation.begin({ x: 20 / 207, y }, 100);
+  simulation.drag({ x: 21 / 207, y }, 180);
+
+  const { current, lastStep } = simulation.diagnostics();
+  assert.ok(current.liftedCells > 0 && current.liftedCells < lastStep.minimumPiece);
+  assert.ok(simulation.snapshot().areaJump > 0);
+  assert.equal(simulation.applyGripGap(120, 84, null), false);
+  assert.equal(simulation.snapshot().torn, false);
+  assert.equal(simulation.state.includes(Cell.torn), false);
+
+  simulation.setReleaseJumpThreshold(1);
+  simulation.drag({ x: 0.24, y }, 480);
+  assert.equal(simulation.applyGripGap(120, 84, null), true);
+  assert.equal(simulation.snapshot().tearFailure.kind, "grip-gap");
+  assert.ok(simulation.state.filter(cell => cell === Cell.torn).length >= lastStep.minimumPiece);
 });
 
 test("sustained outward load can reach a 29% tear threshold at 14% sensitivity", () => {

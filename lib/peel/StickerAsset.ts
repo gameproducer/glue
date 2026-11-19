@@ -14,6 +14,39 @@ const loadImage = (source: string) => new Promise<HTMLImageElement>((resolve, re
   image.src = source;
 });
 
+/** Remove tiny isolated raster islands from physics while the image keeps its original alpha. */
+export function removeStickerSpecks(mask: Uint8Array, width: number) {
+  const visited = new Uint8Array(mask.length);
+  const queue = new Int32Array(mask.length);
+  const specks: number[] = [];
+  let hasBody = false;
+  let tail = 0;
+  const visit = (index: number) => {
+    if (!mask[index] || visited[index]) return;
+    visited[index] = 1;
+    queue[tail++] = index;
+  };
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || visited[start]) continue;
+    tail = 0;
+    visit(start);
+    for (let head = 0; head < tail; head++) {
+      const cell = queue[head];
+      const col = cell % width;
+      if (col > 0) visit(cell - 1);
+      if (col < width - 1) visit(cell + 1);
+      visit(cell - width);
+      visit(cell + width);
+    }
+    if (tail <= 4) {
+      for (let i = 0; i < tail; i++) specks.push(queue[i]);
+    } else {
+      hasBody = true;
+    }
+  }
+  if (hasBody) for (const index of specks) mask[index] = 0;
+}
+
 /** Converts the artwork alpha into the compact, bottom-up grid used by the GPU and solver. */
 export async function loadStickerAsset(source: string, gridWidth = 208): Promise<StickerAsset> {
   const image = await loadImage(source);
@@ -38,5 +71,6 @@ export async function loadStickerAsset(source: string, gridWidth = 208): Promise
     }
   }
 
+  removeStickerSpecks(mask, width);
   return { image, mask, width, height, aspect };
 }
