@@ -32,7 +32,6 @@ type PeelUniforms = {
   uReleaseFinish: { value: number };
   uState: { value: THREE.DataTexture };
   uAttachedCurl: { value: THREE.DataTexture };
-  uCurlDepthUnit: { value: number };
   uReleaseHistory: { value: THREE.DataTexture };
   uLayer: { value: number };
   uFilmColor: { value: THREE.Color };
@@ -44,6 +43,8 @@ type PeelUniforms = {
   uCone: { value: number };
   uStress: { value: number };
   uStretch: { value: number };
+  uStickerSize: { value: THREE.Vector2 };
+  uUvWindow: { value: THREE.Vector4 };
   uRelax: { value: number };
   uFlatOffset: { value: THREE.Vector2 };
   uDissolve: { value: number };
@@ -59,8 +60,9 @@ const vertexShader = /* glsl */ `
   uniform float uCone;
   uniform float uLayer;
   uniform float uStretch;
+  uniform vec2 uStickerSize;
+  uniform vec4 uUvWindow;
   uniform sampler2D uAttachedCurl;
-  uniform float uCurlDepthUnit;
   uniform float uRelax;
   uniform vec2 uFlatOffset;
   uniform vec2 uTornOffset;
@@ -71,8 +73,9 @@ const vertexShader = /* glsl */ `
   const float PI = 3.141592653589793;
 
   void main() {
-    vUv = uv;
-    vec3 p = position;
+    vUv = uUvWindow.xy + uv * uUvWindow.zw;
+    vec2 sheetPosition = (vUv - 0.5) * uStickerSize;
+    vec3 p = vec3(sheetPosition, position.z);
     vec2 direction = normalize(uDirection);
     vec2 lateralAxis = vec2(-direction.y, direction.x);
     vec2 relative = p.xy - uGrab;
@@ -87,7 +90,7 @@ const vertexShader = /* glsl */ `
     } else if (uLayer > 1.5) {
       #ifndef PEEL_DETACHED
         // The depth field pins the actual seam and limits stretch along it.
-        float attachedDepth = dot(texture2D(uAttachedCurl, uv).rg, vec2(65280.0, 255.0)) * uCurlDepthUnit;
+        float attachedDepth = texture2D(uAttachedCurl, vUv).r;
         q = min(q, attachedDepth);
       #endif
       float arcLength = q * (1.0 + uStretch);
@@ -103,7 +106,7 @@ const vertexShader = /* glsl */ `
     vCurl = smoothstep(0.0, PI, theta);
     #ifdef PEEL_DETACHED
       // Open around the grip with the same handedness as the folded-over flap.
-      vec2 flatPosition = position.xy - 2.0 * along * direction + uFlatOffset;
+      vec2 flatPosition = sheetPosition - 2.0 * along * direction + uFlatOffset;
       p = mix(p, vec3(flatPosition, 0.14), uRelax);
       theta = mix(theta, PI, uRelax);
       vCurl *= 1.0 - uRelax;
@@ -447,7 +450,7 @@ export class PeelRenderer {
     this.curlDistances = new Uint8Array(simulation.width * simulation.height);
     this.curlQueue = new Int32Array(this.curlDistances.length);
     this.attachedCurl = new AttachedCurl(simulation.width, simulation.height, this.stickerWidth, this.stickerHeight, this.stateSources);
-    this.curlTexture = new THREE.DataTexture(this.attachedCurl.pixels, simulation.width, simulation.height, THREE.RGFormat);
+    this.curlTexture = new THREE.DataTexture(this.attachedCurl.pixels, simulation.width, simulation.height, THREE.RedFormat, THREE.HalfFloatType);
     this.curlTexture.minFilter = THREE.LinearFilter;
     this.curlTexture.magFilter = THREE.LinearFilter;
     this.curlTexture.needsUpdate = true;
@@ -478,7 +481,6 @@ export class PeelRenderer {
         uReleaseFinish: { value: 0 },
         uState: { value: this.stateTexture },
         uAttachedCurl: { value: this.curlTexture },
-        uCurlDepthUnit: { value: this.attachedCurl.depthUnit },
         uReleaseHistory: { value: this.releaseTexture },
         uLayer: { value: pass.layer },
         uFilmColor: { value: new THREE.Color(0xf05fa8) },
@@ -490,6 +492,8 @@ export class PeelRenderer {
         uCone: { value: 0 },
         uStress: { value: 0 },
         uStretch: { value: 0 },
+        uStickerSize: { value: new THREE.Vector2(this.stickerWidth, this.stickerHeight) },
+        uUvWindow: { value: new THREE.Vector4(0, 0, 1, 1) },
         uRelax: { value: 0 },
         uFlatOffset: { value: new THREE.Vector2() },
         uDissolve: { value: 0 },
@@ -666,6 +670,17 @@ export class PeelRenderer {
       uniforms.uStress.value = stress;
       uniforms.uStretch.value = stretch;
       uniforms.uTornOffset.value.set(offsetX, offsetY);
+      if (uniforms.uLayer.value === 2 && region && !torn && !detachedPointer) {
+        // Spend the curl mesh's subdivisions on the visible flap.
+        uniforms.uUvWindow.value.set(
+          0.5 + (region.x - region.width / 2) / this.stickerWidth,
+          0.5 + (region.y - region.height / 2) / this.stickerHeight,
+          region.width / this.stickerWidth,
+          region.height / this.stickerHeight,
+        );
+      } else {
+        uniforms.uUvWindow.value.set(0, 0, 1, 1);
+      }
     }
     if (detachedPointer) {
       this.moveDissolve(detachedPointer);

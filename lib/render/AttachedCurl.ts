@@ -1,3 +1,4 @@
+import { DataUtils } from "three";
 import type { Vec2 } from "../peel/PeelSimulation";
 
 const SEAM_CURL_SCALE = 1.25;
@@ -30,8 +31,7 @@ function depthForShift(shift: number, depth: number, radius: number) {
 
 /** Shapes one curl while keeping the glued seam pinned and limiting in-plane stretch. */
 export class AttachedCurl {
-  readonly pixels: Uint8Array;
-  readonly depthUnit: number;
+  readonly pixels: Uint16Array;
   private readonly depths: Float32Array;
   private readonly radii: Float32Array;
   private readonly shifts: Float32Array;
@@ -55,8 +55,7 @@ export class AttachedCurl {
     this.sources = sources;
     this.stepX = stickerWidth / width;
     this.stepY = stickerHeight / height;
-    this.depthUnit = (2 * Math.max(stickerWidth, stickerHeight) + 1) / 65535;
-    this.pixels = new Uint8Array(size * 2);
+    this.pixels = new Uint16Array(size);
     this.depths = new Float32Array(size);
     this.radii = new Float32Array(size);
     this.shifts = new Float32Array(size);
@@ -106,17 +105,28 @@ export class AttachedCurl {
       const i = cells[j];
       const q = depths[i];
       const lowShift = shifts[i];
-      const limited = lowShift + 0.00001 < curlShift(q, radii[i]) ? depthForShift(lowShift, q, radii[i]) : q;
-      // Two byte channels give the shader subpixel depth precision with linear filtering.
-      const packed = Math.min(65535, Math.round(limited / this.depthUnit));
-      pixels[i * 2] = packed >> 8;
-      pixels[i * 2 + 1] = packed & 255;
+      if (lowShift + 0.00001 < curlShift(q, radii[i])) depths[i] = depthForShift(lowShift, q, radii[i]);
+    }
+    for (let j = 0; j < count; j++) {
+      const i = cells[j];
+      const q = depths[i];
+      let sum = q * 4;
+      let weight = 4;
+      // Smooth changes between grid cells on the free flap while keeping the seam pinned.
+      if (seam[i] > 2) {
+        const left = i % width > 0 ? i - 1 : -1;
+        const right = i % width < width - 1 ? i + 1 : -1;
+        if (left >= 0 && shifts[left] !== Infinity) { sum += depths[left]; weight++; }
+        if (right >= 0 && shifts[right] !== Infinity) { sum += depths[right]; weight++; }
+        if (i >= width && shifts[i - width] !== Infinity) { sum += depths[i - width]; weight++; }
+        if (i + width < shifts.length && shifts[i + width] !== Infinity) { sum += depths[i + width]; weight++; }
+      }
+      pixels[i] = DataUtils.toHalfFloat(sum / weight);
     }
     for (let i = 0; i < sources.length; i++) {
       const source = sources[i];
       if (source < 0 || source === i) continue;
-      pixels[i * 2] = pixels[source * 2];
-      pixels[i * 2 + 1] = pixels[source * 2 + 1];
+      pixels[i] = pixels[source];
     }
   }
 
@@ -143,7 +153,7 @@ export class AttachedCurl {
   }
 
   sample(uv: Vec2) {
-    const { width, height, pixels, depthUnit } = this;
+    const { width, height, pixels } = this;
     const x = Math.max(0, Math.min(width - 1, uv.x * width - 0.5));
     const y = Math.max(0, Math.min(height - 1, uv.y * height - 0.5));
     const col = Math.floor(x);
@@ -152,12 +162,9 @@ export class AttachedCurl {
     const above = Math.min(row + 1, height - 1);
     const tx = x - col;
     const ty = y - row;
-    const depth = (column: number, line: number) => {
-      const offset = (line * width + column) * 2;
-      return pixels[offset] * 256 + pixels[offset + 1];
-    };
+    const depth = (column: number, line: number) => DataUtils.fromHalfFloat(pixels[line * width + column]);
     const low = depth(col, row) * (1 - tx) + depth(right, row) * tx;
     const high = depth(col, above) * (1 - tx) + depth(right, above) * tx;
-    return (low * (1 - ty) + high * ty) * depthUnit;
+    return low * (1 - ty) + high * ty;
   }
 }
