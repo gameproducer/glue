@@ -21,14 +21,14 @@ const DEFAULT_LEVEL = {
   id: "octopus-v1",
   name: "Octopus",
   artwork: "/octopus-sticker.webp",
-  tearThreshold: 0.24,
-  releaseJumpThreshold: 0.28,
+  tearThreshold: 0.40,
+  releaseJumpThreshold: 0.15,
   liftedTransparency: 0.5,
 } as const;
 const ZOOM_STEPS = [60, 75, 90, 100, 115, 135, 160];
 const TENSION_CONTROL_MAX = 0.66;
 const RELEASE_JUMP_CONTROL_MAX = 0.66;
-const DEFAULT_TEAR_FACTORS: TearFactors = { outward: 0.8, bottleneck: 0.85 };
+const DEFAULT_TEAR_FACTORS: TearFactors = { outward: 0.05, bottleneck: 0.05 };
 const TEAR_FACTOR_CONTROLS = [
   { key: "outward", label: "Outward pull", hint: "How easily a lifted flap tears when pulled back." },
   { key: "bottleneck", label: "Thin neck", hint: "How strongly a constriction between wider sections adds tension." },

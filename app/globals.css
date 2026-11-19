@@ -23,6 +23,7 @@ button { font: inherit; }
   position: relative;
   isolation: isolate;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: 100%;
   min-height: 100dvh;
@@ -251,6 +252,7 @@ h1 {
   position: relative;
   z-index: 6;
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 7px;
 }
@@ -515,7 +517,6 @@ h1 {
 .zoom-controls output { min-width: 4ch; text-align: center; }
 
 @media (max-width: 650px) {
-  .control-bar { flex-wrap: wrap; }
   .zoom-controls { order: 1; justify-content: center; flex-basis: 100%; }
   .control-bar .zoom-controls button { min-width: 40px; min-height: 40px; }
 }
@@ -554,10 +555,6 @@ h1 {
 
 .peel-sound-setting button:disabled { opacity: .45; cursor: default; }
 .peel-sound-setting button:focus-visible { outline: 2px solid #9cf3e9; outline-offset: 2px; }
-
-@media (max-width: 760px) {
-  .control-bar { flex-wrap: wrap; }
-}
 
 .bottom-panel-toggle { display: none; }
 

@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance } from "../lib/render/PeelFraming.ts";
+import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance } from "../lib/render/PeelFraming.ts";
 import { PeelSimulation } from "../lib/peel/PeelSimulation.ts";
 
-test("camera keeps folded vertices and the held point inside a padded portrait or landscape viewport", () => {
+test("camera keeps folded vertices inside a padded portrait or landscape viewport", () => {
   const tangent = Math.tan(31 * Math.PI / 360);
   const inset = 24;
   for (const [width, height] of [[390, 720], [1200, 650]]) {
@@ -13,18 +13,14 @@ test("camera keeps folded vertices and the held point inside a padded portrait o
         const direction = { x: dx, y: dy };
         const grab = { x: -0.9, y: 0.3 };
         const depth = 2.3;
-        const cursor = { x: dx * 4.7, y: dy * 4.7, z: 0 };
         const bounds = { x: 2.4, y: 2, z: 0 };
         includeCurl(bounds, 4.8, 4, grab, direction, depth, radius, cone, MAX_TENSION_STRETCH);
-        bounds.x = Math.max(bounds.x, Math.abs(cursor.x));
-        bounds.y = Math.max(bounds.y, Math.abs(cursor.y));
         const distance = fitDistance(bounds, tangent, width, height, inset);
         const check = ({ x, y, z }) => {
           const scale = height / (2 * tangent * (distance - z));
           assert.ok(Math.abs(x) * scale <= width / 2 - inset + 1e-8);
           assert.ok(Math.abs(y) * scale <= height / 2 - inset + 1e-8);
         };
-        check(cursor);
         for (let i = 0; i <= 24; i++) {
           for (let j = 0; j <= 20; j++) {
             const x = i / 5 - 2.4;
@@ -54,11 +50,25 @@ test("a diagonal fold just entering a corner does not enlarge the viewport abrup
   assert.ok(bounds.z < 0.023);
 });
 
-test("a grip near the edge adds no zoom unless it moves closer to the boundary", () => {
-  assert.equal(outwardEdgePressure(12, 12), 0);
-  assert.equal(outwardEdgePressure(28, 12), 0);
-  assert.ok(outwardEdgePressure(4, 12) > 0);
-  assert.equal(outwardEdgePressure(0, 120), 1);
+test("extra reach fades in only as the pointer nears the edge in the pull direction", () => {
+  const viewport = { left: 0, right: 771, top: 0, bottom: 1160 };
+  const right = { x: 1, y: 0 };
+  assert.equal(dragScaleForReach({ x: 420, y: 560 }, right, viewport, 8), 0);
+  assert.equal(dragScaleForReach({ x: 12, y: 560 }, right, viewport, 8), 0);
+  const near = dragScaleForReach({ x: 720, y: 560 }, right, viewport, 8);
+  const closer = dragScaleForReach({ x: 750, y: 560 }, right, viewport, 8);
+  assert.ok(near > 0 && closer > near);
+});
+
+test("auto-zoom requires movement toward a nearby screen edge", () => {
+  const bounds = { left: 0, right: 771, top: 0, bottom: 1160 };
+  const right = { x: 4, y: 0 };
+  const left = { x: -4, y: 0 };
+  assert.equal(approachesScreenEdge({ x: 500, y: 560 }, right, right, bounds), false);
+  assert.equal(approachesScreenEdge({ x: 720, y: 560 }, right, right, bounds), true);
+  assert.equal(approachesScreenEdge({ x: 720, y: 560 }, left, right, bounds), false);
+  assert.equal(approachesScreenEdge({ x: 720, y: 560 }, { x: 0, y: 4 }, { x: 0, y: 4 }, bounds), false);
+  assert.equal(approachesScreenEdge({ x: 35, y: 1100 }, { x: -1, y: 3 }, { x: -1, y: 3 }, bounds), true);
 });
 
 test("a small lifted patch can rise without zooming the fully flat sticker", () => {

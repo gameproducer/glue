@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
-import { dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
+import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
 import { Cell, type CurlProfile, type PeelSimulation, type Vec2 } from "../peel/PeelSimulation";
@@ -393,14 +393,12 @@ export class PeelRenderer {
   private readonly resizeObserver: ResizeObserver;
   private readonly originalWhiteArtwork: boolean;
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
-  private dragFit = 0;
   private zoom = 1;
   private viewportWidth = 1;
   private viewportHeight = 1;
-  private edgePressure = 0;
-  private dragInput: { x: number; y: number; startX: number; startY: number; point: Vec2; edgeDistance: number; canvasHeight: number; moving: boolean } | null = null;
-  private dragReach: { direction: Vec2; scale: number; cameraDistance: number } | null = null;
-  private liftedRegion: PeelRegion | null = null;
+  private dragInput: { x: number; y: number; point: Vec2; heading: Vec2; towardEdge: boolean } | null = null;
+  private dragReach: { direction: Vec2; scale: number } | null = null;
+  private movingRegion: PeelRegion | null = null;
   private movingBounds: PeelBounds | null = null;
   private cameraReady = false;
   private readonly stickerWidth = STICKER_WIDTH;
@@ -572,8 +570,7 @@ export class PeelRenderer {
 
   updateState() {
     this.simulation.writeTexture(this.stateData);
-    this.updateLiftedRegion();
-    if (this.liftedRegion) {
+    if (this.updateMovingRegion() === Cell.lifted) {
       writeCurlDistances(this.stateData, this.curlDistances, this.simulation.width, this.curlQueue);
       extendStateTexture(this.curlDistances, this.stateSources, 1);
       this.curlTexture.needsUpdate = true;
@@ -583,11 +580,14 @@ export class PeelRenderer {
     this.updateReleaseHistory();
   }
 
-  private updateLiftedRegion() {
+  private updateMovingRegion() {
     const { width, height, state } = this.simulation;
     let left = width, right = -1, bottom = height, top = -1;
+    let layer: number = Cell.outside;
     for (let index = 0; index < state.length; index++) {
-      if (state[index] !== Cell.lifted) continue;
+      const cell = state[index];
+      if (cell !== Cell.lifted && cell !== Cell.torn) continue;
+      layer = cell;
       const x = index % width;
       const y = Math.floor(index / width);
       left = Math.min(left, x);
@@ -596,8 +596,8 @@ export class PeelRenderer {
       top = Math.max(top, y);
     }
     if (right < 0) {
-      this.liftedRegion = null;
-      return;
+      this.movingRegion = null;
+      return layer;
     }
     // Include the neighboring texels and mesh triangles along the feathered edge.
     const padX = 2 / width + 1 / 124;
@@ -606,12 +606,13 @@ export class PeelRenderer {
     const maxX = Math.min(1, (right + 1) / width + padX);
     const minY = Math.max(0, bottom / height - padY);
     const maxY = Math.min(1, (top + 1) / height + padY);
-    this.liftedRegion = {
+    this.movingRegion = {
       x: ((minX + maxX) / 2 - 0.5) * this.stickerWidth,
       y: ((minY + maxY) / 2 - 0.5) * this.stickerHeight,
       width: (maxX - minX) * this.stickerWidth,
       height: (maxY - minY) * this.stickerHeight,
     };
+    return layer;
   }
 
   private updateReleaseHistory() {
@@ -643,14 +644,14 @@ export class PeelRenderer {
     const offsetX = tornOffset.x * this.stickerWidth;
     const offsetY = tornOffset.y * this.stickerHeight;
     this.movingBounds = null;
-    if (torn) {
+    const region = this.movingRegion;
+    if (torn && region) {
       this.movingBounds = {
-        x: this.stickerWidth / 2 + Math.abs(offsetX),
-        y: this.stickerHeight / 2 + Math.abs(offsetY),
+        x: Math.abs(region.x + offsetX) + region.width / 2,
+        y: Math.abs(region.y + offsetY) + region.height / 2,
         z: 0.086,
       };
-    } else if (this.liftedRegion && worldDepth > 0) {
-      const region = this.liftedRegion;
+    } else if (region && worldDepth > 0) {
       this.movingBounds = { x: 0, y: 0, z: 0 };
       includeCurl(this.movingBounds, region.width, region.height, worldGrab, worldDirection,
         worldDepth, radius, profile === "cone", stretch, region);
@@ -713,8 +714,8 @@ export class PeelRenderer {
       mesh.position.z = back.position.z;
       mesh.frustumCulled = false;
       this.scene.add(mesh);
-      if (bounds && this.liftedRegion) {
-        const { x, y, width, height } = this.liftedRegion;
+      if (bounds && this.movingRegion) {
+        const { x, y, width, height } = this.movingRegion;
         const grab = uniforms.uGrab.value;
         const along = (x - grab.x) * direction.x + (y - grab.y) * direction.y;
         const diagonal = Math.abs(1 - 2 * direction.x ** 2);
@@ -792,20 +793,19 @@ export class PeelRenderer {
   }
 
   beginDrag(clientX: number, clientY: number, point: Vec2) {
-    this.dragInput = { x: clientX, y: clientY, startX: clientX, startY: clientY, point,
-      edgeDistance: this.distanceToEdge(clientX, clientY), canvasHeight: this.viewportHeight, moving: false };
+    this.dragInput = { x: clientX, y: clientY, point, heading: { x: 0, y: 0 }, towardEdge: false };
   }
 
   updateDragReach() {
     const input = this.dragInput;
-    const reach = this.simulation.remainingPeelTravel();
     this.dragReach = null;
-    if (!input || !reach || Math.hypot(input.x - input.startX, input.y - input.startY) < 8) return;
+    if (!input?.towardEdge) return;
     const bounds = { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight };
+    const reach = this.simulation.remainingPeelTravel();
+    if (!reach) return;
     const direction = { x: reach.direction.x, y: -reach.direction.y };
     const scale = dragScaleForReach(input, direction, bounds, reach.distance * this.stickerHeight);
-    const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    this.dragReach = { direction, scale, cameraDistance: scale * input.canvasHeight / (2 * tangent) };
+    if (scale > 0) this.dragReach = { direction, scale };
   }
 
   dragToSticker(clientX: number, clientY: number) {
@@ -815,19 +815,22 @@ export class PeelRenderer {
     // Pointer capture lets the player keep peeling across the whole window, including over the HUD.
     const x = THREE.MathUtils.clamp(clientX, 0, window.innerWidth);
     const y = THREE.MathUtils.clamp(clientY, 0, window.innerHeight);
-    input.moving ||= x !== input.x || y !== input.y;
-    this.edgePressure = outwardEdgePressure(this.distanceToEdge(x, y), input.edgeDistance);
-    input.canvasHeight = Math.max(1, rect.height);
     // Use only physical pointer movement. Reprojecting the same pixel after
     // zooming would move the simulated grip and create tension on its own.
     const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const unitsPerPixel = 2 * this.camera.position.z * tangent / input.canvasHeight;
+    const unitsPerPixel = 2 * this.camera.position.z * tangent / Math.max(1, rect.height);
     const dx = x - input.x;
     const dy = y - input.y;
+    if (dx || dy) {
+      input.heading.x = input.heading.x * 0.65 + dx * 0.35;
+      input.heading.y = input.heading.y * 0.65 + dy * 0.35;
+      input.towardEdge = approachesScreenEdge({ x, y }, { x: dx, y: dy }, input.heading,
+        { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight });
+    }
     let worldX = dx * unitsPerPixel;
     let worldY = dy * unitsPerPixel;
-    if (this.dragReach && this.dragReach.scale > unitsPerPixel) {
-      // Stretch only the forward motion, even while the visible camera is still easing out.
+    if (input.towardEdge && this.dragReach && this.dragReach.scale > unitsPerPixel) {
+      // Give the last pixels of real movement extra reach without moving the camera.
       const { direction, scale } = this.dragReach;
       const extra = Math.max(0, dx * direction.x + dy * direction.y) * (scale - unitsPerPixel);
       worldX += extra * direction.x;
@@ -842,15 +845,9 @@ export class PeelRenderer {
     return input.point;
   }
 
-  private distanceToEdge(x: number, y: number) {
-    return Math.max(0, Math.min(x, window.innerWidth - x, y, window.innerHeight - y));
-  }
-
   endDrag() {
     this.dragInput = null;
     this.dragReach = null;
-    this.edgePressure = 0;
-    this.dragFit = 0;
   }
 
   dispose() {
@@ -892,22 +889,18 @@ export class PeelRenderer {
     const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
     const inset = Math.min(28, Math.min(width, height) * 0.09);
     const rest = fitDistance({ x: this.stickerWidth / 2, y: this.stickerHeight / 2, z: 0.022 }, tangent, width, height, inset);
-    const heldPoint = this.dragInput?.moving ? this.uvToWorld(this.dragInput.point) : null;
-    const gripBounds = heldPoint ? { x: Math.abs(heldPoint.x), y: Math.abs(heldPoint.y), z: 0 } : null;
     const fit = (margin: number) => Math.max(
       this.movingBounds ? fitDistance(this.movingBounds, tangent, width, height, margin) : 0,
-      gripBounds ? fitDistance(gripBounds, tangent, width, height, margin) : 0,
       ...this.dissolves.map(shape => shape.bounds ? fitDistance({
         x: shape.bounds.x + Math.abs(shape.offset.x),
         y: shape.bounds.y + Math.abs(shape.offset.y),
         z: shape.bounds.z,
       }, tangent, width, height, margin) : 0),
     );
-    const required = fit(inset);
-    if (heldPoint) this.dragFit = Math.max(this.dragFit, required);
-    const target = Math.max(required, this.dragFit, this.dragReach?.cameraDistance ?? 0,
-      rest * 1.04 / this.zoom * (1 + 0.45 * this.edgePressure));
-    const guard = fit(Math.min(inset, 8));
+    const base = rest * 1.04 / this.zoom;
+    const towardEdge = this.dragInput?.towardEdge;
+    const target = towardEdge ? Math.max(fit(inset), base) : base;
+    const guard = towardEdge ? fit(Math.min(inset, 8)) : 0;
     const distance = this.cameraReady ? stepCameraDistance(this.camera.position.z, target, guard) : target;
     this.cameraReady = true;
     this.camera.position.z = distance;

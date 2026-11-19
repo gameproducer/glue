@@ -3,6 +3,9 @@ import type { Vec2 } from "../peel/PeelSimulation";
 export type PeelBounds = { x: number; y: number; z: number };
 export type PeelRegion = { x: number; y: number; width: number; height: number };
 export const MAX_TENSION_STRETCH = 0.04;
+export const DRAG_EDGE_RANGE = 72;
+
+type ScreenBounds = { left: number; right: number; top: number; bottom: number };
 
 // Conservative bounds for the full curled sheet, including silhouettes with holes.
 // The shader maps the lifted strip onto an arc (then a straight run) of the same length.
@@ -51,20 +54,29 @@ export function stepCameraDistance(current: number, target: number, guard: numbe
   return Math.max(guard, current + (target - current) * 0.12);
 }
 
-export function outwardEdgePressure(distanceToEdge: number, initialEdgeDistance: number) {
-  const baseline = Math.min(88, initialEdgeDistance);
-  return Math.max(0, Math.min(1, (baseline - distanceToEdge) / 88));
+export function approachesScreenEdge(point: Vec2, step: Vec2, heading: Vec2, bounds: ScreenBounds) {
+  const speed = Math.hypot(heading.x, heading.y);
+  if (speed < 0.25) return false;
+  const toward = (distance: number, delta: number, direction: number) =>
+    distance <= DRAG_EDGE_RANGE && delta > 0 && direction > speed * 0.45;
+  return toward(point.x - bounds.left, -step.x, -heading.x)
+    || toward(bounds.right - point.x, step.x, heading.x)
+    || toward(point.y - bounds.top, -step.y, -heading.y)
+    || toward(bounds.bottom - point.y, step.y, heading.y);
 }
 
 export function dragScaleForReach(
-  point: Vec2, direction: Vec2, bounds: { left: number; right: number; top: number; bottom: number }, worldReach: number,
+  point: Vec2, direction: Vec2, bounds: ScreenBounds, worldReach: number,
 ) {
   const horizontal = direction.x === 0 ? Infinity
     : ((direction.x > 0 ? bounds.right : bounds.left) - point.x) / direction.x;
   const vertical = direction.y === 0 ? Infinity
     : ((direction.y > 0 ? bounds.bottom : bounds.top) - point.y) / direction.y;
   const pixels = Math.min(horizontal, vertical);
-  if (pixels <= 1 || !Number.isFinite(pixels)) return 0;
-  const margin = Math.min(10, pixels * 0.2);
-  return worldReach / Math.max(1, pixels - margin);
+  if (pixels <= 1 || pixels >= DRAG_EDGE_RANGE) return 0;
+  // Reserve extra drag travel only as the pointer approaches the edge it is headed toward.
+  const approach = Math.min(1, (DRAG_EDGE_RANGE - pixels) / (DRAG_EDGE_RANGE - 18));
+  const blend = approach * approach * (3 - 2 * approach);
+  const margin = Math.min(12, pixels * 0.4);
+  return blend * worldReach / Math.max(1, pixels - margin);
 }
