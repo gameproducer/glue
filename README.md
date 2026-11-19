@@ -23,7 +23,7 @@ pnpm exec tsc --noEmit
 pnpm build
 ```
 
-See [WEB.md](WEB.md) for interaction details.
+See [the core mechanic GDD and TDD](PEEL_GDD_TDD.md) for the current design and technical baseline. See [WEB.md](WEB.md) for interaction and level pack setup.
 
 ## Preserved native prototype
 

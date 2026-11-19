@@ -1,6 +1,6 @@
 # PEEL — browser material study
 
-A one-level WebGL prototype of PEEL, built for fast game-design assessment.
+A WebGL prototype of PEEL for testing the sticker-peeling mechanic across the level packs. See [the core mechanic GDD and TDD](PEEL_GDD_TDD.md) for the current rules, visuals, and design discussion.
 
 ## Run
 
@@ -15,7 +15,7 @@ Open `http://localhost:3000`. Catch an exposed sticker edge or cutout and sweep 
 
 ## Architecture
 
-- `lib/peel/PeelSimulation.ts` — deterministic typed-array adhesive grid and Dijkstra front propagation.
+- `lib/peel/PeelSimulation.ts` — deterministic typed-array adhesive grid and connected peel front that advances in local waves.
 - `lib/render/PeelRenderer.ts` — Three.js mesh, two-sided procedural artwork, state texture, and GPU curl deformation.
 - `app/PeelExperience.tsx` — pointer input, level state, settings, HUD, and failure/success flow.
 
