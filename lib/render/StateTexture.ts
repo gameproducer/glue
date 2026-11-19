@@ -42,3 +42,22 @@ export function extendStateTexture(texture: Uint8Array, sources: Int32Array, cha
     }
   }
 }
+
+/** Distances inside the lifted material from the edge it shares with the flat sheet. */
+export function writeCurlDistances(state: Uint8Array, distances: Uint8Array, width: number) {
+  const size = distances.length;
+  distances.fill(255);
+  for (let i = 0; i < size; i++) {
+    if (state[i * 4] || state[i * 4 + 1]) distances[i] = 0;
+  }
+  for (let i = 0; i < size; i++) {
+    if (!state[i * 4 + 2]) continue;
+    if (i % width) distances[i] = Math.min(distances[i], distances[i - 1] + 1);
+    if (i >= width) distances[i] = Math.min(distances[i], distances[i - width] + 1);
+  }
+  for (let i = size - 1; i >= 0; i--) {
+    if (!state[i * 4 + 2]) continue;
+    if (i % width < width - 1) distances[i] = Math.min(distances[i], distances[i + 1] + 1);
+    if (i + width < size) distances[i] = Math.min(distances[i], distances[i + width] + 1);
+  }
+}

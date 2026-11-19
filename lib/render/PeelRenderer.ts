@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
 import { dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
-import { nearestStateSources, extendStateTexture } from "./StateTexture";
+import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
 import { Cell, type CurlProfile, type PeelSimulation, type Vec2 } from "../peel/PeelSimulation";
 
@@ -26,6 +26,7 @@ type PeelUniforms = {
   uBackFinish: { value: number };
   uReleaseFinish: { value: number };
   uState: { value: THREE.DataTexture };
+  uCurlDistances: { value: THREE.DataTexture };
   uReleaseHistory: { value: THREE.DataTexture };
   uLayer: { value: number };
   uFilmColor: { value: THREE.Color };
@@ -52,6 +53,7 @@ const vertexShader = /* glsl */ `
   uniform float uCone;
   uniform float uLayer;
   uniform float uStretch;
+  uniform sampler2D uCurlDistances;
   uniform float uRelax;
   uniform vec2 uFlatOffset;
   uniform vec2 uTornOffset;
@@ -87,6 +89,14 @@ const vertexShader = /* glsl */ `
     } else if (uLayer > 0.5) {
       p.z += 0.018;
     }
+    #ifndef PEEL_DETACHED
+      if (uLayer > 1.5 && uLayer < 2.5) {
+        // Leave a flat band wide enough for neighboring mesh vertices to share the glued edge.
+        float hinge = smoothstep(3.0, 10.0, texture2D(uCurlDistances, uv).r * 255.0);
+        p = mix(position, p, hinge);
+        theta *= hinge;
+      }
+    #endif
     vCurl = smoothstep(0.0, PI, theta);
     #ifdef PEEL_DETACHED
       // Open around the grip with the same handedness as the folded-over flap.
@@ -366,6 +376,8 @@ export class PeelRenderer {
   private readonly stateData: Uint8Array;
   private readonly stateSources: Int32Array;
   private readonly stateTexture: THREE.DataTexture;
+  private readonly curlDistances: Uint8Array;
+  private readonly curlTexture: THREE.DataTexture;
   private readonly releaseData: Uint8Array;
   private readonly releaseTexture: THREE.DataTexture;
   private lastReleaseRevision = -1;
@@ -437,6 +449,12 @@ export class PeelRenderer {
     this.stateTexture.magFilter = THREE.LinearFilter;
     this.stateTexture.needsUpdate = true;
 
+    this.curlDistances = new Uint8Array(simulation.width * simulation.height);
+    this.curlTexture = new THREE.DataTexture(this.curlDistances, simulation.width, simulation.height, THREE.RedFormat);
+    this.curlTexture.minFilter = THREE.LinearFilter;
+    this.curlTexture.magFilter = THREE.LinearFilter;
+    this.curlTexture.needsUpdate = true;
+
     this.releaseData = new Uint8Array(simulation.width * simulation.height);
     this.releaseTexture = new THREE.DataTexture(this.releaseData, simulation.width, simulation.height, THREE.RedFormat);
     this.releaseTexture.minFilter = THREE.LinearFilter;
@@ -462,6 +480,7 @@ export class PeelRenderer {
         uBackFinish: { value: 0 },
         uReleaseFinish: { value: 0 },
         uState: { value: this.stateTexture },
+        uCurlDistances: { value: this.curlTexture },
         uReleaseHistory: { value: this.releaseTexture },
         uLayer: { value: pass.layer },
         uFilmColor: { value: new THREE.Color(0xf05fa8) },
@@ -548,6 +567,11 @@ export class PeelRenderer {
   updateState() {
     this.simulation.writeTexture(this.stateData);
     this.updateLiftedRegion();
+    if (this.liftedRegion) {
+      writeCurlDistances(this.stateData, this.curlDistances, this.simulation.width);
+      extendStateTexture(this.curlDistances, this.stateSources, 1);
+      this.curlTexture.needsUpdate = true;
+    }
     extendStateTexture(this.stateData, this.stateSources);
     this.stateTexture.needsUpdate = true;
     this.updateReleaseHistory();
@@ -677,6 +701,7 @@ export class PeelRenderer {
       uniforms.uArt.value = back.material.uniforms.uArt.value;
       uniforms.uReleaseHistory.value = this.releaseTexture;
       uniforms.uState.value = texture;
+      uniforms.uCurlDistances.value = this.curlTexture;
       const mesh = new THREE.Mesh(back.geometry, material);
       mesh.renderOrder = back.renderOrder + 6;
       mesh.position.z = back.position.z;
@@ -834,6 +859,7 @@ export class PeelRenderer {
     this.shadow.material.uniforms.uShadow.value.dispose();
     this.shadow.material.dispose();
     this.stateTexture.dispose();
+    this.curlTexture.dispose();
     this.releaseTexture.dispose();
     this.renderer.dispose();
     this.domElement.remove();

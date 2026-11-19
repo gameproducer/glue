@@ -20,6 +20,7 @@ const OUTWARD_LOAD_DISTANCE = 0.18;
 const PEEL_HALF_TURN = Math.PI * 0.082;
 const PEEL_QUARTER_TURN = PEEL_HALF_TURN / 2;
 const PEEL_QUARTER_TRAVEL = PEEL_QUARTER_TURN - 0.082;
+const FRONT_PROPAGATION_RATIO = 6;
 
 export type PeelDiagnostics = {
   current: {
@@ -121,6 +122,7 @@ export class PeelSimulation {
   private readonly componentBounds = { left: 0, right: 0, bottom: 0, top: 0 };
   private readonly visited: Uint8Array;
   private readonly queue: Int32Array;
+  private readonly nextFrontWave: Int32Array;
   private totalCells = 0;
   private releasedCells = 0;
   private releasedHistoryRevision = 0;
@@ -153,6 +155,7 @@ export class PeelSimulation {
   private frontDepth = 0;
   private stress = 0;
   private areaJump = 0;
+  private frontTravelRemainder = 0;
   private physicsSample = 0;
   private lastDiagnosticStep = emptyDiagnosticStep();
   private lastPointer: Vec2 = { ...this.grab };
@@ -184,6 +187,7 @@ export class PeelSimulation {
     this.sectionWidths = new Uint32Array(2 * Math.ceil(Math.hypot(width, height)) + 1);
     this.visited = new Uint8Array(count);
     this.queue = new Int32Array(count);
+    this.nextFrontWave = new Int32Array(count);
     this.adhesion = new Float32Array(count);
 
     for (let y = 0; y < height; y++) {
@@ -253,6 +257,7 @@ export class PeelSimulation {
     this.outwardSeconds = 0;
     this.strainTravel = 0;
     this.gestureOrigin = { ...point };
+    this.frontTravelRemainder = 0;
     this.pointer = { ...point };
     this.lastPointer = { ...point };
     this.lastTime = time;
@@ -378,7 +383,11 @@ export class PeelSimulation {
       for (let i = 0; i < tearCandidateCells; i++) this.tearCandidate[this.queue[i]] = 1;
     }
     const frontStarted = performance.now();
-    const { frontCells, averageAdhesion, queuedCells } = this.rebuildLifted();
+    const frameDistance = Math.hypot((point.x - this.lastPointer.x) * this.aspect, point.y - this.lastPointer.y);
+    const waveTravel = frameDistance * (this.height - 1) * FRONT_PROPAGATION_RATIO + this.frontTravelRemainder;
+    const waves = Math.floor(waveTravel);
+    this.frontTravelRemainder = waveTravel - waves;
+    const { frontCells, averageAdhesion, queuedCells } = this.rebuildLifted(waves);
     const frontRebuildMs = performance.now() - frontStarted;
 
     // Detect sudden growth independently of how much was lifted before this update.
@@ -386,7 +395,6 @@ export class PeelSimulation {
     const absoluteGain = gainedCells / Math.max(1, this.totalCells);
     this.areaJump = absoluteGain;
 
-    const frameDistance = Math.hypot((point.x - this.lastPointer.x) * this.aspect, point.y - this.lastPointer.y);
     const elapsed = this.lastTime > 0 && time > this.lastTime ? (time - this.lastTime) / 1000 : 1 / 60;
     const speed = frameDistance / Math.max(elapsed, 1 / 240);
     const hasAnchor = this.componentAdheredCells - this.pendingNewCells >= minimumAnchor;
@@ -809,7 +817,7 @@ export class PeelSimulation {
     return PEEL_HALF_TURN + (pointerDistance - PEEL_HALF_TURN) * 0.5;
   }
 
-  private rebuildLifted() {
+  private rebuildLifted(waves: number) {
     this.state.set(this.gestureBase);
     this.visited.fill(0);
     this.pendingNewCells = 0;
@@ -818,6 +826,7 @@ export class PeelSimulation {
     let frontCells = 0;
     let head = 0;
     let tail = 0;
+    let waveCount = 0;
     this.queue[tail++] = this.grabIndex;
     this.visited[this.grabIndex] = 1;
 
@@ -832,7 +841,13 @@ export class PeelSimulation {
     const dx4 = [-1, 1, 0, 0];
     const dy4 = [0, 0, -1, 1];
 
-    while (head < tail) {
+    while (head < tail || (waves > 0 && waveCount > 0)) {
+      if (head === tail) {
+        this.queue.set(this.nextFrontWave.subarray(0, waveCount), tail);
+        tail += waveCount;
+        waveCount = 0;
+        waves--;
+      }
       const index = this.queue[head++];
       const base = this.gestureBase[index];
       if (base === Cell.outside) continue;
@@ -864,9 +879,20 @@ export class PeelSimulation {
         const nextSigned = (nextMetricX - frontX) * this.direction.x + (nextMetricY - frontY) * this.direction.y;
         if (nextSigned > edgeTolerance) touchesFront = true;
         if (!this.visited[next]) {
-          this.visited[next] = 1;
-          this.queue[tail++] = next;
+          // The held flap transmits the pull immediately. Newly unglued cells
+          // advance in local waves paid for by this update's pointer travel.
+          if (this.tearCandidate[next] || this.gestureBase[next] === Cell.released) {
+            this.queue[tail++] = next;
+            this.visited[next] = 1;
+          } else if (waves > 0) {
+            this.nextFrontWave[waveCount++] = next;
+            this.visited[next] = 1;
+          } else {
+            this.visited[next] = 2;
+          }
         }
+        // A still-glued neighbor beyond this update's travel is also a live peel front.
+        if (this.visited[next] === 2) touchesFront = true;
       }
       if (touchesFront) frontCells++;
     }

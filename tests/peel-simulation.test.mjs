@@ -136,6 +136,30 @@ test("a tiny grab at an inner edge cannot pick up a distant connected lobe", () 
   assert.equal(simulation.state[101 * size + 160], Cell.adhered);
 });
 
+test("a slow pull past a corner lifts the newly reachable material in steps", () => {
+  const size = 100;
+  const mask = rectangleMask(size, size, 15, 29, 19, 81);
+  for (let y = 19; y < 82; y++) mask.fill(1, y * size + 66, y * size + 82);
+  for (let y = 66; y < 82; y++) mask.fill(1, y * size + 29, y * size + 67);
+  const simulation = new PeelSimulation(size, size, 7, 2, mask, 1, 1);
+  const start = { x: 29 / 99, y: 25 / 99 };
+  simulation.begin(start, 100);
+  let peakJump = 0;
+  let point = start;
+  for (let step = 1; step <= 80; step++) {
+    const travel = step * 0.002;
+    point = { x: start.x - Math.cos(0.1) * travel, y: start.y + Math.sin(0.1) * travel };
+    simulation.drag(point, 100 + step * 16);
+    peakJump = Math.max(peakJump, simulation.snapshot().areaJump);
+  }
+  assert.ok(peakJump < 0.07);
+  assert.ok(simulation.state.some((cell, index) => cell === Cell.lifted && index % size >= 66));
+  const progress = simulation.snapshot().progress;
+  simulation.drag(point, 1500);
+  assert.equal(simulation.snapshot().progress, progress);
+  assert.equal(simulation.snapshot().areaJump, 0);
+});
+
 test("released material persists and can seed the next pull", () => {
   const width = 52;
   const height = 30;
