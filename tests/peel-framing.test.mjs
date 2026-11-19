@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { approachesScreenEdge, attachedCurlDepth, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance } from "../lib/render/PeelFraming.ts";
+import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance } from "../lib/render/PeelFraming.ts";
+import { attachedCurlDepth } from "../lib/render/AttachedCurl.ts";
 import { PeelSimulation } from "../lib/peel/PeelSimulation.ts";
 
 test("a curved attachment stays flat at its seam even behind the nominal fold", () => {

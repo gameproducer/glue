@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
-import { approachesScreenEdge, attachedCurlDepth, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, SEAM_CURL_SCALE, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
+import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
+import { AttachedCurl } from "./AttachedCurl";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
@@ -30,8 +31,8 @@ type PeelUniforms = {
   uBackFinish: { value: number };
   uReleaseFinish: { value: number };
   uState: { value: THREE.DataTexture };
-  uCurlDistances: { value: THREE.DataTexture };
-  uCurlCellSize: { value: number };
+  uAttachedCurl: { value: THREE.DataTexture };
+  uCurlDepthUnit: { value: number };
   uReleaseHistory: { value: THREE.DataTexture };
   uLayer: { value: number };
   uFilmColor: { value: THREE.Color };
@@ -58,8 +59,8 @@ const vertexShader = /* glsl */ `
   uniform float uCone;
   uniform float uLayer;
   uniform float uStretch;
-  uniform sampler2D uCurlDistances;
-  uniform float uCurlCellSize;
+  uniform sampler2D uAttachedCurl;
+  uniform float uCurlDepthUnit;
   uniform float uRelax;
   uniform vec2 uFlatOffset;
   uniform vec2 uTornOffset;
@@ -85,10 +86,9 @@ const vertexShader = /* glsl */ `
       p.z += 0.08;
     } else if (uLayer > 1.5) {
       #ifndef PEEL_DETACHED
-        // The actual attachment can curve behind the nominal fold line.
-        // Start the arc at that seam so its first row still joins the flat sheet.
-        float cellsFromSeam = texture2D(uCurlDistances, uv).r * 255.0;
-        q = min(q, max(0.0, cellsFromSeam - 1.0) * uCurlCellSize * ${SEAM_CURL_SCALE});
+        // The depth field pins the actual seam and limits stretch along it.
+        float attachedDepth = dot(texture2D(uAttachedCurl, uv).rg, vec2(65280.0, 255.0)) * uCurlDepthUnit;
+        q = min(q, attachedDepth);
       #endif
       float arcLength = q * (1.0 + uStretch);
       float coneScale = mix(1.0, clamp(1.0 + lateral * 0.24, 0.58, 1.46), uCone);
@@ -372,7 +372,9 @@ export class PeelRenderer {
   private readonly stateTexture: THREE.DataTexture;
   private readonly curlDistances: Uint8Array;
   private readonly curlQueue: Int32Array;
+  private readonly attachedCurl: AttachedCurl;
   private readonly curlTexture: THREE.DataTexture;
+  private curlPreparedFor: CurlProfile | null = null;
   private readonly releaseData: Uint8Array;
   private readonly releaseTexture: THREE.DataTexture;
   private lastReleaseRevision = -1;
@@ -444,7 +446,8 @@ export class PeelRenderer {
 
     this.curlDistances = new Uint8Array(simulation.width * simulation.height);
     this.curlQueue = new Int32Array(this.curlDistances.length);
-    this.curlTexture = new THREE.DataTexture(this.curlDistances, simulation.width, simulation.height, THREE.RedFormat);
+    this.attachedCurl = new AttachedCurl(simulation.width, simulation.height, this.stickerWidth, this.stickerHeight, this.stateSources);
+    this.curlTexture = new THREE.DataTexture(this.attachedCurl.pixels, simulation.width, simulation.height, THREE.RGFormat);
     this.curlTexture.minFilter = THREE.LinearFilter;
     this.curlTexture.magFilter = THREE.LinearFilter;
     this.curlTexture.needsUpdate = true;
@@ -474,8 +477,8 @@ export class PeelRenderer {
         uBackFinish: { value: 0 },
         uReleaseFinish: { value: 0 },
         uState: { value: this.stateTexture },
-        uCurlDistances: { value: this.curlTexture },
-        uCurlCellSize: { value: Math.min(this.stickerWidth / simulation.width, this.stickerHeight / simulation.height) },
+        uAttachedCurl: { value: this.curlTexture },
+        uCurlDepthUnit: { value: this.attachedCurl.depthUnit },
         uReleaseHistory: { value: this.releaseTexture },
         uLayer: { value: pass.layer },
         uFilmColor: { value: new THREE.Color(0xf05fa8) },
@@ -560,15 +563,21 @@ export class PeelRenderer {
   }
 
   updateState() {
+    this.curlPreparedFor = null;
     this.simulation.writeTexture(this.stateData);
     if (this.updateMovingRegion() === Cell.lifted) {
       writeCurlDistances(this.stateData, this.curlDistances, this.simulation.width, this.curlQueue);
-      extendStateTexture(this.curlDistances, this.stateSources, 1);
-      this.curlTexture.needsUpdate = true;
     }
     extendStateTexture(this.stateData, this.stateSources);
     this.stateTexture.needsUpdate = true;
     this.updateReleaseHistory();
+  }
+
+  private prepareAttachedCurl(grab: Vec2, direction: Vec2, depth: number, profile: CurlProfile) {
+    if (this.curlPreparedFor === profile) return;
+    this.attachedCurl.update(this.stateData, this.curlDistances, grab, direction, depth, curlRadius(profile), profile === "cone");
+    this.curlTexture.needsUpdate = true;
+    this.curlPreparedFor = profile;
   }
 
   private updateMovingRegion() {
@@ -642,6 +651,7 @@ export class PeelRenderer {
         z: TORN_LAYER_Z,
       };
     } else if (region && worldDepth > 0) {
+      if (!detachedPointer) this.prepareAttachedCurl(worldGrab, worldDirection, worldDepth, profile);
       this.movingBounds = { x: 0, y: 0, z: 0 };
       includeCurl(this.movingBounds, region.width, region.height, worldGrab, worldDirection,
         worldDepth, radius, profile === "cone", stretch, region);
@@ -698,7 +708,7 @@ export class PeelRenderer {
       uniforms.uArt.value = back.material.uniforms.uArt.value;
       uniforms.uReleaseHistory.value = this.releaseTexture;
       uniforms.uState.value = texture;
-      uniforms.uCurlDistances.value = this.curlTexture;
+      uniforms.uAttachedCurl.value = this.curlTexture;
       const mesh = new THREE.Mesh(back.geometry, material);
       mesh.renderOrder = back.renderOrder + 6;
       mesh.position.z = back.position.z;
@@ -785,18 +795,9 @@ export class PeelRenderer {
 
     // Project the grabbed point using the same attached curl as the shader.
     const grab = this.uvToWorld(snapshot.grab);
-    const { width, height } = this.simulation;
-    const x = THREE.MathUtils.clamp(snapshot.grab.x * width - 0.5, 0, width - 1);
-    const y = THREE.MathUtils.clamp(snapshot.grab.y * height - 0.5, 0, height - 1);
-    const col = Math.floor(x);
-    const row = Math.floor(y) * width;
-    const right = Math.min(col + 1, width - 1);
-    const above = Math.min(row + width, (height - 1) * width);
-    const low = THREE.MathUtils.lerp(this.curlDistances[row + col], this.curlDistances[row + right], x - col);
-    const high = THREE.MathUtils.lerp(this.curlDistances[above + col], this.curlDistances[above + right], x - col);
-    const cellsFromSeam = THREE.MathUtils.lerp(low, high, y % 1);
-    const cellSize = Math.min(this.stickerWidth / width, this.stickerHeight / height);
-    const depth = attachedCurlDepth(snapshot.frontDepth * this.stickerHeight, cellsFromSeam, cellSize);
+    const worldDepth = snapshot.frontDepth * this.stickerHeight;
+    this.prepareAttachedCurl(grab, snapshot.direction, worldDepth, profile);
+    const depth = Math.min(worldDepth, this.attachedCurl.sample(snapshot.grab));
     const radius = curlRadius(profile);
     const length = depth * (1 + tensionStretch(snapshot.stress, snapshot.tearThreshold));
     const theta = Math.min(length / radius, Math.PI);

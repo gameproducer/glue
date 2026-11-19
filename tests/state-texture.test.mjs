@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "../lib/render/StateTexture.ts";
+import { AttachedCurl } from "../lib/render/AttachedCurl.ts";
 
 test("coarse silhouette and hole cells inherit a layer without modifying simulation", () => {
   const state = new Uint8Array([0, 1, 0, 1, 0, 1, 0, 1, 0]);
@@ -52,4 +53,32 @@ test("curl distances follow a folded-back route without a jump between adjacent 
   const distances = new Uint8Array(labels.length);
   writeCurlDistances(state, distances, rows[0].length, new Int32Array(labels.length));
   assert.deepEqual([...distances], [0, 1, 2, 3, 255, 255, 255, 4, 8, 7, 6, 5, 9, 255, 255, 255, 10, 11, 12, 13]);
+});
+
+test("an off-axis seam limits extension while a straight fold keeps its original curl", () => {
+  const width = 60;
+  const height = 10;
+  const size = width * height;
+  const state = new Uint8Array(size * 4);
+  const seam = new Uint8Array(size);
+  const curl = new AttachedCurl(width, height, 6, 1, Int32Array.from({ length: size }, (_, i) => i));
+  const radius = 0.32;
+  const halfTurn = Math.PI * radius;
+  const shift = depth => depth >= halfTurn ? 2 * depth - halfTurn : depth - radius * Math.sin(depth / radius);
+  const sample = col => curl.sample({ x: (col + 0.5) / width, y: 0.55 });
+  const run = (flatColumn, grab, depth) => {
+    state.fill(0);
+    for (let i = 0; i < size; i++) state[i * 4 + (i % width === flatColumn ? 0 : 2)] = 255;
+    writeCurlDistances(state, seam, width, new Int32Array(size));
+    curl.update(state, seam, { x: grab, y: 0 }, { x: 1, y: 0 }, depth, radius, false);
+  };
+
+  run(0, 2.95, 2);
+  assert.equal(sample(1), 0);
+  assert.ok(sample(40) > 0.5);
+  assert.ok(shift(sample(40)) <= (40 - 1) * 0.1 * 0.16 + 0.001);
+
+  run(width - 1, -2.95, 5.7);
+  assert.equal(sample(58), 0);
+  assert.ok(Math.abs(sample(10) - 4.7) < 0.001);
 });

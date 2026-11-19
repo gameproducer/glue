@@ -4,11 +4,6 @@ export type PeelBounds = { x: number; y: number; z: number };
 export type PeelRegion = { x: number; y: number; width: number; height: number };
 export const MAX_TENSION_STRETCH = 0.04;
 export const DRAG_EDGE_RANGE = 72;
-export const SEAM_CURL_SCALE = 1.25;
-
-export function attachedCurlDepth(depth: number, cellsFromSeam: number, cellSize: number) {
-  return Math.min(depth, Math.max(0, cellsFromSeam - 1) * cellSize * SEAM_CURL_SCALE);
-}
 
 type ScreenBounds = { left: number; right: number; top: number; bottom: number };
 
