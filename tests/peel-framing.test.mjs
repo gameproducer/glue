@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance } from "../lib/render/PeelFraming.ts";
+import { approachesScreenEdge, attachedCurlDepth, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance } from "../lib/render/PeelFraming.ts";
 import { PeelSimulation } from "../lib/peel/PeelSimulation.ts";
+
+test("a curved attachment stays flat at its seam even behind the nominal fold", () => {
+  const cellSize = 4.8 / 208;
+  assert.equal(attachedCurlDepth(0.81, 0.5, cellSize), 0);
+  assert.equal(attachedCurlDepth(0.81, 1, cellSize), 0);
+  const justInside = attachedCurlDepth(0.81, 2, cellSize);
+  assert.ok(justInside > 0 && justInside < 2 * cellSize);
+  assert.ok(attachedCurlDepth(0.81, 5, cellSize) > justInside);
+  assert.equal(attachedCurlDepth(0.53, 25, cellSize), 0.53);
+});
 
 test("camera keeps folded vertices inside a padded portrait or landscape viewport", () => {
   const tangent = Math.tan(31 * Math.PI / 360);

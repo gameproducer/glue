@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
-import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
+import { approachesScreenEdge, attachedCurlDepth, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, SEAM_CURL_SCALE, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
@@ -84,6 +84,12 @@ const vertexShader = /* glsl */ `
       p.xy += uTornOffset;
       p.z += 0.08;
     } else if (uLayer > 1.5) {
+      #ifndef PEEL_DETACHED
+        // The actual attachment can curve behind the nominal fold line.
+        // Start the arc at that seam so its first row still joins the flat sheet.
+        float cellsFromSeam = texture2D(uCurlDistances, uv).r * 255.0;
+        q = min(q, max(0.0, cellsFromSeam - 1.0) * uCurlCellSize * ${SEAM_CURL_SCALE});
+      #endif
       float arcLength = q * (1.0 + uStretch);
       float coneScale = mix(1.0, clamp(1.0 + lateral * 0.24, 0.58, 1.46), uCone);
       float radius = max(0.12, uRadius * coneScale);
@@ -91,16 +97,6 @@ const vertexShader = /* glsl */ `
       float extra = max(arcLength - PI * radius, 0.0);
       p.xy += direction * (q + extra - radius * sin(theta));
       p.z = 0.018 + radius * (1.0 - cos(theta));
-      #ifndef PEEL_DETACHED
-        // Close small gaps near the glued edge without shortening the curl.
-        // Large displacements need a bounded correction to avoid stretching the sheet.
-        float cellsFromSeam = texture2D(uCurlDistances, uv).r * 255.0;
-        vec3 displacement = p - position;
-        float nearSeam = 1.0 - smoothstep(3.0, 16.0, cellsFromSeam);
-        float correction = nearSeam * min(1.0, 8.0 * uCurlCellSize / max(length(displacement), 0.0001));
-        p -= correction * displacement;
-        theta *= 1.0 - correction;
-      #endif
     } else if (uLayer > 0.5) {
       p.z += 0.018;
     }
@@ -787,14 +783,8 @@ export class PeelRenderer {
     const input = this.dragInput;
     if (!input || !snapshot.pulling || snapshot.torn || snapshot.detached || !this.movingRegion) return null;
 
-    // Project the grabbed point using the same curl and seam correction as the shader.
+    // Project the grabbed point using the same attached curl as the shader.
     const grab = this.uvToWorld(snapshot.grab);
-    const depth = snapshot.frontDepth * this.stickerHeight;
-    const radius = curlRadius(profile);
-    const length = depth * (1 + tensionStretch(snapshot.stress, snapshot.tearThreshold));
-    const theta = Math.min(length / radius, Math.PI);
-    const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
-    const rise = 0.018 + radius * (1 - Math.cos(theta));
     const { width, height } = this.simulation;
     const x = THREE.MathUtils.clamp(snapshot.grab.x * width - 0.5, 0, width - 1);
     const y = THREE.MathUtils.clamp(snapshot.grab.y * height - 0.5, 0, height - 1);
@@ -806,12 +796,16 @@ export class PeelRenderer {
     const high = THREE.MathUtils.lerp(this.curlDistances[above + col], this.curlDistances[above + right], x - col);
     const cellsFromSeam = THREE.MathUtils.lerp(low, high, y % 1);
     const cellSize = Math.min(this.stickerWidth / width, this.stickerHeight / height);
-    const correction = (1 - THREE.MathUtils.smoothstep(cellsFromSeam, 3, 16))
-      * Math.min(1, 8 * cellSize / Math.max(Math.hypot(shift, rise), 0.0001));
+    const depth = attachedCurlDepth(snapshot.frontDepth * this.stickerHeight, cellsFromSeam, cellSize);
+    const radius = curlRadius(profile);
+    const length = depth * (1 + tensionStretch(snapshot.stress, snapshot.tearThreshold));
+    const theta = Math.min(length / radius, Math.PI);
+    const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
+    const rise = 0.018 + radius * (1 - Math.cos(theta));
     const grip = new THREE.Vector3(
-      grab.x + snapshot.direction.x * shift * (1 - correction),
-      grab.y + snapshot.direction.y * shift * (1 - correction),
-      0.004 + rise * (1 - correction),
+      grab.x + snapshot.direction.x * shift,
+      grab.y + snapshot.direction.y * shift,
+      0.004 + rise,
     ).project(this.camera);
     const rect = this.domElement.getBoundingClientRect();
     const gripX = rect.left + (1 + grip.x) * rect.width / 2;
