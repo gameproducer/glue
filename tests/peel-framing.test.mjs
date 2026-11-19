@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance } from "../lib/render/PeelFraming.ts";
+import { dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance } from "../lib/render/PeelFraming.ts";
+import { PeelSimulation } from "../lib/peel/PeelSimulation.ts";
 
 test("camera keeps folded vertices and the held point inside a padded portrait or landscape viewport", () => {
   const tangent = Math.tan(31 * Math.PI / 360);
@@ -72,4 +73,30 @@ test("a small lifted patch can rise without zooming the fully flat sticker", () 
   assert.equal(stepCameraDistance(rest, target, fitDistance(fold, tangent, 1000, 680, 8)), rest);
   assert.equal(stepCameraDistance(8, 10, 7), 8.24);
   assert.equal(stepCameraDistance(8, 10, 9), 9);
+});
+
+test("a long peel finishes before the portrait screen edge with adaptive drag reach", () => {
+  const width = 96;
+  const height = 96;
+  const mask = new Uint8Array(width * height);
+  for (let y = 39; y < 56; y++) mask.fill(1, y * width + 8, y * width + 88);
+  const bounds = { left: 0, right: 390, top: 0, bottom: 780 };
+  const run = (adaptive) => {
+    const simulation = new PeelSimulation(width, height, 9, 1, mask, 1, 1);
+    let x = 8 / (width - 1);
+    const y = 46 / (height - 1);
+    simulation.begin({ x, y }, 100);
+    for (let pixel = 106; pixel <= 386; pixel += 4) {
+      const reach = simulation.remainingPeelTravel();
+      const scale = adaptive && reach ? dragScaleForReach({ x: pixel - 4, y: 390 }, reach.direction, bounds, reach.distance) : 0;
+      x += 4 * Math.max(1 / 380, scale);
+      simulation.drag({ x, y }, 100 + pixel * 4);
+      if (simulation.snapshot().detached) return pixel;
+    }
+    return null;
+  };
+  assert.equal(run(false), null);
+  const finish = run(true);
+  assert.notEqual(finish, null);
+  assert.ok(finish < bounds.right - 4);
 });

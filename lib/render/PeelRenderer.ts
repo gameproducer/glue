@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
-import { fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
+import { dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, outwardEdgePressure, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
 import { nearestStateSources, extendStateTexture } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
 import { Cell, type CurlProfile, type PeelSimulation, type Vec2 } from "../peel/PeelSimulation";
@@ -11,7 +11,7 @@ const DISSOLVE_MS = 1800;
 
 type DissolvingShape = {
   texture: THREE.DataTexture;
-  meshes: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>[];
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
   started: number;
   origin: Vec2;
   offset: Vec2;
@@ -70,8 +70,7 @@ const vertexShader = /* glsl */ `
     float along = dot(relative, direction);
     float lateral = dot(relative, lateralAxis);
     float q = max(uFrontDepth - along, 0.0);
-    vCurl = 0.0;
-    vNormalWorld = vec3(0.0, 0.0, 1.0);
+    float theta = 0.0;
 
     if (uLayer > 2.5) {
       p.xy += uTornOffset;
@@ -80,18 +79,23 @@ const vertexShader = /* glsl */ `
       q *= 1.0 + uStretch;
       float coneScale = mix(1.0, clamp(1.0 + lateral * 0.24, 0.58, 1.46), uCone);
       float radius = max(0.12, uRadius * coneScale);
-      float theta = min(q / radius, PI);
+      theta = min(q / radius, PI);
       float extra = max(q - PI * radius, 0.0);
       vec2 front = uGrab + direction * uFrontDepth + lateralAxis * lateral;
       p.xy = front + direction * (extra - radius * sin(theta));
       p.z = 0.018 + radius * (1.0 - cos(theta));
-      float relaxedTheta = theta * (1.0 - uRelax);
-      vNormalWorld = vec3(direction * sin(relaxedTheta), cos(relaxedTheta));
-      vCurl = smoothstep(0.0, PI, relaxedTheta);
     } else if (uLayer > 0.5) {
       p.z += 0.018;
     }
-    p = mix(p, vec3(position.xy + uFlatOffset, 0.14), uRelax);
+    vCurl = smoothstep(0.0, PI, theta);
+    #ifdef PEEL_DETACHED
+      // Open around the grip with the same handedness as the folded-over flap.
+      vec2 flatPosition = position.xy - 2.0 * along * direction + uFlatOffset;
+      p = mix(p, vec3(flatPosition, 0.14), uRelax);
+      theta = mix(theta, PI, uRelax);
+      vCurl *= 1.0 - uRelax;
+    #endif
+    vNormalWorld = vec3(direction * sin(theta), cos(theta));
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }
 `;
@@ -161,6 +165,9 @@ const fragmentShader = /* glsl */ `
       vec3 normal = normalize(-vNormalWorld);
     #else
       vec3 normal = normalize(vNormalWorld);
+    #endif
+    #ifdef PEEL_DETACHED
+      if (normal.z < 0.0) normal = -normal;
     #endif
     vec3 lightDirection = normalize(vec3(-0.38, 0.55, 0.74));
     float diffuse = max(dot(normal, lightDirection), 0.0);
@@ -363,7 +370,7 @@ export class PeelRenderer {
   private readonly releaseTexture: THREE.DataTexture;
   private lastReleaseRevision = -1;
   private readonly materials: THREE.ShaderMaterial[] = [];
-  private readonly stickerMeshes: THREE.Mesh[] = [];
+  private readonly stickerMeshes: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>[] = [];
   private readonly dissolves: DissolvingShape[] = [];
   private heldDissolve: DissolvingShape | null = null;
   private readonly shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
@@ -375,7 +382,8 @@ export class PeelRenderer {
   private viewportWidth = 1;
   private viewportHeight = 1;
   private edgePressure = 0;
-  private dragInput: { x: number; y: number; point: Vec2; edgeDistance: number; moving: boolean } | null = null;
+  private dragInput: { x: number; y: number; startX: number; startY: number; point: Vec2; edgeDistance: number; canvasHeight: number; moving: boolean } | null = null;
+  private dragReach: { direction: Vec2; scale: number; cameraDistance: number } | null = null;
   private liftedRegion: PeelRegion | null = null;
   private movingBounds: PeelBounds | null = null;
   private cameraReady = false;
@@ -642,6 +650,8 @@ export class PeelRenderer {
 
   private moveDissolve(pointer: Vec2) {
     if (!this.heldDissolve) {
+      const back = this.stickerMeshes.find(({ material }) => material.uniforms.uLayer.value === 2 && material.side === THREE.BackSide);
+      if (!back) return;
       const { width, height } = this.simulation;
       const data = new Uint8Array(width * height * 4);
       this.simulation.writeDetachedTexture(data);
@@ -650,44 +660,46 @@ export class PeelRenderer {
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
       texture.needsUpdate = true;
-      const meshes: DissolvingShape["meshes"] = [];
       const bounds = this.movingBounds;
-      for (const [index, source] of this.materials.entries()) {
-        if (source.uniforms.uLayer.value !== 2) continue;
-        const material = source.clone();
-        const uniforms = material.uniforms as unknown as PeelUniforms;
-        // Match the curled position at the grab so the sheet opens around the player's grip.
-        const depth = uniforms.uFrontDepth.value;
-        const radius = uniforms.uRadius.value;
-        const length = depth * (1 + uniforms.uStretch.value);
-        const theta = Math.min(length / radius, Math.PI);
-        const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
-        const flatOffset = uniforms.uFlatOffset.value.copy(uniforms.uDirection.value).multiplyScalar(shift);
-        material.uniforms.uArt.value = source.uniforms.uArt.value;
-        material.uniforms.uReleaseHistory.value = this.releaseTexture;
-        material.uniforms.uState.value = texture;
-        material.depthWrite = false;
-        const mesh = new THREE.Mesh(this.stickerMeshes[index].geometry, material);
-        mesh.renderOrder = this.stickerMeshes[index].renderOrder + 6;
-        mesh.position.z = this.stickerMeshes[index].position.z;
-        mesh.frustumCulled = false;
-        this.scene.add(mesh);
-        meshes.push(mesh);
-        if (bounds && this.liftedRegion) {
-          const { x, y, width, height } = this.liftedRegion;
-          bounds.x = Math.max(bounds.x, Math.abs(x + flatOffset.x) + width / 2);
-          bounds.y = Math.max(bounds.y, Math.abs(y + flatOffset.y) + height / 2);
-          bounds.z = Math.max(bounds.z, 0.15);
-        }
+      const material = back.material.clone();
+      const uniforms = material.uniforms as unknown as PeelUniforms;
+      material.defines = { ...material.defines, PEEL_DETACHED: 1 };
+      material.side = THREE.DoubleSide;
+      material.forceSinglePass = true;
+      // Match the curled position at the grab so the sheet opens around the player's grip.
+      const depth = uniforms.uFrontDepth.value;
+      const radius = uniforms.uRadius.value;
+      const length = depth * (1 + uniforms.uStretch.value);
+      const theta = Math.min(length / radius, Math.PI);
+      const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
+      const direction = uniforms.uDirection.value;
+      const flatOffset = uniforms.uFlatOffset.value.copy(direction).multiplyScalar(shift);
+      uniforms.uArt.value = back.material.uniforms.uArt.value;
+      uniforms.uReleaseHistory.value = this.releaseTexture;
+      uniforms.uState.value = texture;
+      const mesh = new THREE.Mesh(back.geometry, material);
+      mesh.renderOrder = back.renderOrder + 6;
+      mesh.position.z = back.position.z;
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      if (bounds && this.liftedRegion) {
+        const { x, y, width, height } = this.liftedRegion;
+        const grab = uniforms.uGrab.value;
+        const along = (x - grab.x) * direction.x + (y - grab.y) * direction.y;
+        const diagonal = Math.abs(1 - 2 * direction.x ** 2);
+        const cross = Math.abs(2 * direction.x * direction.y);
+        bounds.x = Math.max(bounds.x, Math.abs(x - 2 * along * direction.x + flatOffset.x) + (diagonal * width + cross * height) / 2);
+        bounds.y = Math.max(bounds.y, Math.abs(y - 2 * along * direction.y + flatOffset.y) + (cross * width + diagonal * height) / 2);
+        bounds.z = Math.max(bounds.z, 0.15);
       }
-      this.heldDissolve = { texture, meshes, started: performance.now(), origin: { ...pointer },
+      this.heldDissolve = { texture, mesh, started: performance.now(), origin: { ...pointer },
         offset: { x: 0, y: 0 }, bounds };
       this.dissolves.push(this.heldDissolve);
     }
     const shape = this.heldDissolve;
     shape.offset.x = (pointer.x - shape.origin.x) * this.stickerWidth;
     shape.offset.y = (pointer.y - shape.origin.y) * this.stickerHeight;
-    for (const mesh of shape.meshes) mesh.position.setX(shape.offset.x).setY(shape.offset.y);
+    shape.mesh.position.setX(shape.offset.x).setY(shape.offset.y);
   }
 
   clearDissolves() {
@@ -697,11 +709,8 @@ export class PeelRenderer {
   }
 
   private disposeDissolve(shape: DissolvingShape) {
-    for (const mesh of shape.meshes) {
-      this.scene.remove(mesh);
-      mesh.material.dispose();
-    }
-    shape.meshes.length = 0;
+    this.scene.remove(shape.mesh);
+    shape.mesh.material.dispose();
     shape.texture.dispose();
   }
 
@@ -721,7 +730,8 @@ export class PeelRenderer {
       uniforms.uReleaseFinish.value = appearance.released;
     }
     for (const shape of this.dissolves) {
-      for (const mesh of shape.meshes) mesh.material.uniforms.uReleaseFinish.value = appearance.released;
+      shape.mesh.material.uniforms.uBackFinish.value = appearance.back;
+      shape.mesh.material.uniforms.uReleaseFinish.value = appearance.released;
     }
   }
 
@@ -734,6 +744,7 @@ export class PeelRenderer {
     for (const material of this.materials) {
       (material.uniforms as unknown as PeelUniforms).uLiftedOpacity.value = opacity;
     }
+    for (const shape of this.dissolves) shape.mesh.material.uniforms.uLiftedOpacity.value = opacity;
   }
 
   screenToSticker(clientX: number, clientY: number): Vec2 | null {
@@ -750,37 +761,63 @@ export class PeelRenderer {
   }
 
   beginDrag(clientX: number, clientY: number, point: Vec2) {
-    this.dragInput = { x: clientX, y: clientY, point, edgeDistance: this.distanceToEdge(clientX, clientY), moving: false };
+    this.dragInput = { x: clientX, y: clientY, startX: clientX, startY: clientY, point,
+      edgeDistance: this.distanceToEdge(clientX, clientY), canvasHeight: this.viewportHeight, moving: false };
+  }
+
+  updateDragReach() {
+    const input = this.dragInput;
+    const reach = this.simulation.remainingPeelTravel();
+    this.dragReach = null;
+    if (!input || !reach || Math.hypot(input.x - input.startX, input.y - input.startY) < 8) return;
+    const bounds = { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight };
+    const direction = { x: reach.direction.x, y: -reach.direction.y };
+    const scale = dragScaleForReach(input, direction, bounds, reach.distance * this.stickerHeight);
+    const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+    this.dragReach = { direction, scale, cameraDistance: scale * input.canvasHeight / (2 * tangent) };
   }
 
   dragToSticker(clientX: number, clientY: number) {
     const input = this.dragInput;
     if (!input) return null;
     const rect = this.domElement.getBoundingClientRect();
-    const x = THREE.MathUtils.clamp(clientX, Math.max(0, rect.left), Math.min(window.innerWidth, rect.right));
-    const y = THREE.MathUtils.clamp(clientY, Math.max(0, rect.top), Math.min(window.innerHeight, rect.bottom));
+    // Pointer capture lets the player keep peeling across the whole window, including over the HUD.
+    const x = THREE.MathUtils.clamp(clientX, 0, window.innerWidth);
+    const y = THREE.MathUtils.clamp(clientY, 0, window.innerHeight);
     input.moving ||= x !== input.x || y !== input.y;
-    this.edgePressure = outwardEdgePressure(this.distanceToEdge(x, y, rect), input.edgeDistance);
+    this.edgePressure = outwardEdgePressure(this.distanceToEdge(x, y), input.edgeDistance);
+    input.canvasHeight = Math.max(1, rect.height);
     // Use only physical pointer movement. Reprojecting the same pixel after
     // zooming would move the simulated grip and create tension on its own.
     const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const unitsPerPixel = 2 * this.camera.position.z * tangent / Math.max(1, rect.height);
+    const unitsPerPixel = 2 * this.camera.position.z * tangent / input.canvasHeight;
+    const dx = x - input.x;
+    const dy = y - input.y;
+    let worldX = dx * unitsPerPixel;
+    let worldY = dy * unitsPerPixel;
+    if (this.dragReach && this.dragReach.scale > unitsPerPixel) {
+      // Stretch only the forward motion, even while the visible camera is still easing out.
+      const { direction, scale } = this.dragReach;
+      const extra = Math.max(0, dx * direction.x + dy * direction.y) * (scale - unitsPerPixel);
+      worldX += extra * direction.x;
+      worldY += extra * direction.y;
+    }
     input.point = {
-      x: input.point.x + (x - input.x) * unitsPerPixel / this.stickerWidth,
-      y: input.point.y - (y - input.y) * unitsPerPixel / this.stickerHeight,
+      x: input.point.x + worldX / this.stickerWidth,
+      y: input.point.y - worldY / this.stickerHeight,
     };
     input.x = x;
     input.y = y;
     return input.point;
   }
 
-  private distanceToEdge(x: number, y: number, rect = this.domElement.getBoundingClientRect()) {
-    return Math.max(0, Math.min(x - rect.left, rect.right - x, y - rect.top, rect.bottom - y,
-      x, window.innerWidth - x, y, window.innerHeight - y));
+  private distanceToEdge(x: number, y: number) {
+    return Math.max(0, Math.min(x, window.innerWidth - x, y, window.innerHeight - y));
   }
 
   endDrag() {
     this.dragInput = null;
+    this.dragReach = null;
     this.edgePressure = 0;
     this.dragFit = 0;
   }
@@ -836,7 +873,8 @@ export class PeelRenderer {
     );
     const required = fit(inset);
     if (heldPoint) this.dragFit = Math.max(this.dragFit, required);
-    const target = Math.max(required, this.dragFit, rest * 1.04 / this.zoom * (1 + 0.45 * this.edgePressure));
+    const target = Math.max(required, this.dragFit, this.dragReach?.cameraDistance ?? 0,
+      rest * 1.04 / this.zoom * (1 + 0.45 * this.edgePressure));
     const guard = fit(Math.min(inset, 8));
     const distance = this.cameraReady ? stepCameraDistance(this.camera.position.z, target, guard) : target;
     this.cameraReady = true;
@@ -863,10 +901,8 @@ export class PeelRenderer {
       } else {
         const relax = THREE.MathUtils.smoothstep(elapsed, 0, RELAX_MS);
         const dissolve = Math.max(0, (elapsed - RELAX_MS) / DISSOLVE_MS);
-        for (const mesh of shape.meshes) {
-          mesh.material.uniforms.uRelax.value = relax;
-          mesh.material.uniforms.uDissolve.value = dissolve;
-        }
+        shape.mesh.material.uniforms.uRelax.value = relax;
+        shape.mesh.material.uniforms.uDissolve.value = dissolve;
       }
     }
     const cameraStarted = performance.now();

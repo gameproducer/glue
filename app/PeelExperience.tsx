@@ -384,6 +384,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           const simulationTime = performance.now();
           simulation.drag(point, simulationTime);
           const solverMs = performance.now() - simulationTime;
+          renderer.updateDragReach();
           renderer.frameTimings.recordInput(solverMs);
           recordDiagnostic("pointer_move", point, {
             simulationTime,

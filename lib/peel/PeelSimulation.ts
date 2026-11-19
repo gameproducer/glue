@@ -17,6 +17,9 @@ export type TearFailure = {
 
 const OUTWARD_DEAD_ZONE = 0.018;
 const OUTWARD_LOAD_DISTANCE = 0.18;
+const PEEL_HALF_TURN = Math.PI * 0.082;
+const PEEL_QUARTER_TURN = PEEL_HALF_TURN / 2;
+const PEEL_QUARTER_TRAVEL = PEEL_QUARTER_TURN - 0.082;
 
 export type PeelDiagnostics = {
   current: {
@@ -115,6 +118,7 @@ export class PeelSimulation {
   private readonly grabbedComponent: Uint8Array;
   private readonly sectionWidths: Uint32Array;
   private componentAdheredCells = 0;
+  private readonly componentBounds = { left: 0, right: 0, bottom: 0, top: 0 };
   private readonly visited: Uint8Array;
   private readonly queue: Int32Array;
   private totalCells = 0;
@@ -538,6 +542,23 @@ export class PeelSimulation {
     };
   }
 
+  remainingPeelTravel() {
+    if (!this.tracking || !this.pulling || this.frontDepth <= 0 || this.outwardPulling || this.torn || this.detached) return null;
+    const { x, y } = this.direction;
+    const { left, right, bottom, top } = this.componentBounds;
+    const alignment = x * this.inward.x + y * this.inward.y;
+    if (alignment <= 0.2) return null;
+    const farthestFront = (x >= 0 ? right : left) * x + (y >= 0 ? top : bottom) * y;
+    const farthestCell = Math.hypot(Math.max(Math.abs(left), Math.abs(right)), Math.max(Math.abs(bottom), Math.abs(top)));
+    const depth = Math.max(0.013, farthestFront + 2 / this.height, (farthestCell - 2 / (this.height - 1)) / 4);
+    // Invert calcFrontDepth and account for the angle between the drag and the adhesive's inward direction.
+    const reach = depth < PEEL_QUARTER_TURN ? depth / PEEL_QUARTER_TURN * PEEL_QUARTER_TRAVEL
+      : depth < PEEL_HALF_TURN ? PEEL_QUARTER_TRAVEL + (depth / PEEL_QUARTER_TURN - 1) * (PEEL_HALF_TURN - PEEL_QUARTER_TRAVEL)
+      : PEEL_HALF_TURN + (depth - PEEL_HALF_TURN) * 2;
+    const current = (this.pointer.x - this.grab.x) * this.aspect * this.inward.x + (this.pointer.y - this.grab.y) * this.inward.y;
+    return { direction: this.direction, distance: Math.max(0, reach - current) / alignment };
+  }
+
   diagnostics(): PeelDiagnostics {
     return {
       current: {
@@ -598,6 +619,8 @@ export class PeelSimulation {
     this.gestureBase.set(this.state);
     this.grabbedComponent.fill(0);
     this.componentAdheredCells = 0;
+    const bounds = this.componentBounds;
+    bounds.left = bounds.right = bounds.bottom = bounds.top = 0;
     this.grabbedComponent[index] = 1;
     this.queue[0] = index;
     let tail = 1;
@@ -614,10 +637,14 @@ export class PeelSimulation {
     for (let head = 0; head < tail; head++) {
       const cell = this.queue[head];
       const x = cell % this.width;
+      const dx = (x / (this.width - 1) - this.grab.x) * this.aspect;
+      const dy = Math.floor(cell / this.width) / (this.height - 1) - this.grab.y;
+      bounds.left = Math.min(bounds.left, dx);
+      bounds.right = Math.max(bounds.right, dx);
+      bounds.bottom = Math.min(bounds.bottom, dy);
+      bounds.top = Math.max(bounds.top, dy);
       if (this.gestureBase[cell] === Cell.adhered) {
         this.componentAdheredCells++;
-        const dx = (x / (this.width - 1) - this.grab.x) * this.aspect;
-        const dy = Math.floor(cell / this.width) / (this.height - 1) - this.grab.y;
         const distance = dx * dx + dy * dy;
         if (grabbingReleased && distance < closestAdhered) {
           // A re-grab on a released flap must move toward its remaining adhesive.
@@ -775,14 +802,11 @@ export class PeelSimulation {
   }
 
   private calcFrontDepth(pointerDistance: number) {
-    const radius = 0.082;
-    const quarterTravel = (Math.PI / 2 - 1) * radius;
-    if (pointerDistance < quarterTravel) return pointerDistance / quarterTravel * (Math.PI / 2 * radius);
-    if (pointerDistance < Math.PI * radius) {
-      return ((pointerDistance - quarterTravel) / (Math.PI * radius - quarterTravel) + 1)
-        * (Math.PI / 2 * radius);
+    if (pointerDistance < PEEL_QUARTER_TRAVEL) return pointerDistance / PEEL_QUARTER_TRAVEL * PEEL_QUARTER_TURN;
+    if (pointerDistance < PEEL_HALF_TURN) {
+      return ((pointerDistance - PEEL_QUARTER_TRAVEL) / (PEEL_HALF_TURN - PEEL_QUARTER_TRAVEL) + 1) * PEEL_QUARTER_TURN;
     }
-    return Math.PI * radius + (pointerDistance - Math.PI * radius) * 0.5;
+    return PEEL_HALF_TURN + (pointerDistance - PEEL_HALF_TURN) * 0.5;
   }
 
   private rebuildLifted() {

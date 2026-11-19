@@ -55,3 +55,16 @@ export function outwardEdgePressure(distanceToEdge: number, initialEdgeDistance:
   const baseline = Math.min(88, initialEdgeDistance);
   return Math.max(0, Math.min(1, (baseline - distanceToEdge) / 88));
 }
+
+export function dragScaleForReach(
+  point: Vec2, direction: Vec2, bounds: { left: number; right: number; top: number; bottom: number }, worldReach: number,
+) {
+  const horizontal = direction.x === 0 ? Infinity
+    : ((direction.x > 0 ? bounds.right : bounds.left) - point.x) / direction.x;
+  const vertical = direction.y === 0 ? Infinity
+    : ((direction.y > 0 ? bounds.bottom : bounds.top) - point.y) / direction.y;
+  const pixels = Math.min(horizontal, vertical);
+  if (pixels <= 1 || !Number.isFinite(pixels)) return 0;
+  const margin = Math.min(10, pixels * 0.2);
+  return worldReach / Math.max(1, pixels - margin);
+}
