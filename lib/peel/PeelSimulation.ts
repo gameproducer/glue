@@ -1,10 +1,7 @@
-export const Cell = {
-  outside: 0,
-  adhered: 1,
-  released: 2,
-  lifted: 3,
-  torn: 4,
-} as const;
+import { Cell } from "./PeelCells.ts";
+import { ElasticPeel } from "./ElasticPeel.ts";
+import { SurfaceField, surfaceResistance, type SurfaceKind } from "./SurfaceField.ts";
+export { Cell } from "./PeelCells.ts";
 
 export type Vec2 = { x: number; y: number };
 export type CurlProfile = "cylinder" | "cone";
@@ -21,6 +18,14 @@ const PEEL_HALF_TURN = Math.PI * 0.082;
 const PEEL_QUARTER_TURN = PEEL_HALF_TURN / 2;
 const PEEL_QUARTER_TRAVEL = PEEL_QUARTER_TURN - 0.082;
 const FRONT_PROPAGATION_RATIO = 6;
+const EXPERIMENT_TRAVEL_STEP = 0.009;
+
+type FrontSample = {
+  frontCells: number; averageAdhesion: number; queuedCells: number; surfaceLoad: number; contactAdhesion: number;
+};
+const emptyFront = (): FrontSample => ({
+  frontCells: 0, averageAdhesion: 0, queuedCells: 0, surfaceLoad: 1, contactAdhesion: 0,
+});
 
 export type PeelDiagnostics = {
   current: {
@@ -53,6 +58,10 @@ export type PeelDiagnostics = {
     bottleneckMs?: number;
     tornPreviouslyReleasedCells?: number;
     carriedReleasedCells?: number;
+    elasticReaction?: number;
+    elasticStrain?: number;
+    elasticDisplacement?: Vec2;
+    surfaceLoad?: number;
   };
 };
 
@@ -160,6 +169,38 @@ export class PeelSimulation {
   private lastDiagnosticStep = emptyDiagnosticStep();
   private lastPointer: Vec2 = { ...this.grab };
   private lastTime = 0;
+  private spring: ElasticPeel | null = null;
+  private elasticity = 0;
+  private terrain: SurfaceField | null = null;
+  private terrainSamples: Float32Array | null = null;
+  private gripHeight = 0;
+  private frontSample = emptyFront();
+  private inputPoint: Vec2 = { ...this.grab };
+  private inputTime = 0;
+  private inputRemainder = 0;
+  private experimentalStress = 0;
+
+  get elasticPeel() { return this.spring; }
+  get surface() { return this.terrain; }
+  get experimentalSettings() { return { elasticity: this.elasticity, surface: this.terrain?.kind ?? "off" }; }
+
+  setExperiments(elasticity: number, surface: SurfaceKind, surfaceAspect = this.aspect) {
+    this.elasticity = Number.isFinite(elasticity) ? clamp(elasticity) : 0;
+    this.spring = this.elasticity > 0 ? this.spring ?? new ElasticPeel(this.width, this.height) : null;
+    if ((this.terrain?.kind ?? "off") === surface && (!this.terrain || this.terrain.aspect === surfaceAspect)) return;
+    this.terrain = surface === "off" ? null : new SurfaceField(surface, surfaceAspect);
+    this.terrainSamples = null;
+    if (!this.terrain) return;
+    this.terrainSamples = new Float32Array(this.state.length * 3);
+    for (let i = 0; i < this.initialState.length; i++) {
+      if (this.initialState[i] === Cell.outside) continue;
+      const { x, y } = this.cellPoint(i);
+      const slope = this.terrain.gradient(x, y);
+      this.terrainSamples[i * 3] = this.terrain.height(x, y);
+      this.terrainSamples[i * 3 + 1] = slope.x;
+      this.terrainSamples[i * 3 + 2] = slope.y;
+    }
+  }
 
   constructor(
     width = 144,
@@ -223,6 +264,9 @@ export class PeelSimulation {
   }
 
   reset() {
+    this.spring?.reset();
+    this.frontSample = emptyFront();
+    this.experimentalStress = 0;
     this.state.set(this.initialState);
     this.releasedHistory.fill(0);
     this.releasedHistoryRevision++;
@@ -267,12 +311,62 @@ export class PeelSimulation {
     this.physicsSample++;
     this.lastDiagnosticStep = emptyDiagnosticStep();
     this.grabIndex = -1;
+    if (this.spring || this.terrain) {
+      this.spring?.reset();
+      this.frontSample = emptyFront();
+      this.inputPoint = { ...point };
+      this.inputTime = time;
+      this.inputRemainder = 0;
+      this.experimentalStress = 0;
+    }
     const seed = this.nearestAccessibleCell(point);
     if (seed >= 0) this.acquire(seed, point);
     return true;
   }
 
   drag(point: Vec2, time: number) {
+    if ((!this.spring && !this.terrain) || !this.tracking || this.torn || this.detached) {
+      this.dragStep(point, time);
+      return;
+    }
+    // Solve at fixed increments of actual pointer travel. Splitting the same
+    // gesture across more browser events cannot add extra work to the peel front.
+    const start = this.inputPoint;
+    const x = point.x - start.x;
+    const y = point.y - start.y;
+    const length = Math.hypot(x * this.aspect, y);
+    if (length < 1e-8) return;
+    this.stress = this.experimentalStress;
+    let distance = EXPERIMENT_TRAVEL_STEP - this.inputRemainder;
+    let maxJump = 0;
+    for (; distance <= length + 1e-9; distance += EXPERIMENT_TRAVEL_STEP) {
+      const fraction = Math.min(1, distance / length);
+      this.dragStep({ x: start.x + x * fraction, y: start.y + y * fraction }, this.inputTime + (time - this.inputTime) * fraction);
+      this.experimentalStress = this.stress;
+      maxJump = Math.max(maxJump, this.areaJump);
+      if (this.torn || this.detached) break;
+    }
+    this.areaJump = maxJump;
+    this.inputRemainder = clamp(length - distance + EXPERIMENT_TRAVEL_STEP, 0, EXPERIMENT_TRAVEL_STEP);
+    this.inputPoint = { ...point };
+    this.inputTime = time;
+    if (this.torn) {
+      this.tornOffset = {
+        x: this.tearRecoil.x + point.x - this.tearOrigin.x,
+        y: this.tearRecoil.y + point.y - this.tearOrigin.y,
+      };
+    } else {
+      this.pointer = { ...point };
+      if (this.detached) this.spring?.reset();
+      else if (this.spring && this.liftedCells) {
+        this.spring.deform((point.x - this.grab.x) * this.aspect, point.y - this.grab.y, this.inward, this.elasticity);
+        this.lastDiagnosticStep.elasticStrain = this.spring.peakStrain;
+        this.lastDiagnosticStep.elasticDisplacement = { ...this.spring.displacement };
+      }
+    }
+  }
+
+  private dragStep(point: Vec2, time: number) {
     if (!this.tracking) return;
     this.areaJump = 0;
     this.physicsSample++;
@@ -310,12 +404,13 @@ export class PeelSimulation {
     const inwardTravel = travelX * inward.x + travelY * inward.y;
     const minimumPiece = Math.max(8, Math.round(this.totalCells * 0.002));
     const minimumAnchor = Math.max(1, Math.min(minimumPiece, Math.ceil(this.componentAdheredCells * 0.015)));
-    const reverseTravel = this.heldReach - inwardTravel;
+    const reverseTravel = this.spring ? this.spring.reach - inwardDistance : this.heldReach - inwardTravel;
     const canLoadOutward = this.tearFactors.outward > 0 && reverseTravel > 1e-6
       && this.componentAdheredCells - this.pendingNewCells >= minimumAnchor;
     if (canLoadOutward && !this.liftedCells && inwardTravel < -OUTWARD_DEAD_ZONE
       && this.gestureBase[this.grabIndex] === Cell.released) {
       this.liftReleasedFlap(minimumPiece);
+      if (this.liftedCells) this.spring?.rebuild(this.state, this.grabIndex);
     }
     if (canLoadOutward && this.liftedCells >= minimumPiece) {
       this.strainTravel = 0;
@@ -328,6 +423,7 @@ export class PeelSimulation {
       this.lastPointer = { ...point };
       this.lastTime = time;
       const outwardTear = outwardLoad > 0 && outwardLoad >= this.tearThreshold;
+      this.spring?.deform(dx, dy, inward, this.elasticity);
       this.lastDiagnosticStep = {
         ...this.lastDiagnosticStep,
         previousPendingCells: this.pendingNewCells,
@@ -357,14 +453,23 @@ export class PeelSimulation {
       this.heldStress = 0;
       this.strainTravel = 0;
       this.stress *= 0.8;
+      this.spring?.reset();
+      this.frontSample = emptyFront();
       this.lastPointer = { ...point };
       this.lastTime = time;
       return;
     }
     // In the center of a balanced thin stroke, the first valid sweep picks a side.
     this.inward = inward;
-    this.direction = { x: dx / pullDistance, y: dy / pullDistance };
-    this.frontDepth = this.calcFrontDepth(inwardDistance);
+    const previousReach = this.spring?.reach ?? 0;
+    const drivenReach = this.spring?.advance(inwardDistance, this.elasticity,
+      this.frontSample.contactAdhesion || this.adhesion[this.grabIndex], this.frontSample.surfaceLoad) ?? inwardDistance;
+    const stoppedAtSeam = !!this.spring && this.liftedCells > 0 && Math.abs(drivenReach - previousReach) < 1e-8;
+    if (!stoppedAtSeam) {
+      this.direction = { x: dx / pullDistance, y: dy / pullDistance };
+      this.frontDepth = this.calcFrontDepth(drivenReach);
+    }
+    this.spring?.deform(dx, dy, inward, this.elasticity);
     const previousPendingCells = this.pendingNewCells;
     const previousLiftedCells = this.liftedCells;
     const candidateStarted = performance.now();
@@ -384,10 +489,16 @@ export class PeelSimulation {
     }
     const frontStarted = performance.now();
     const frameDistance = Math.hypot((point.x - this.lastPointer.x) * this.aspect, point.y - this.lastPointer.y);
-    const waveTravel = frameDistance * (this.height - 1) * FRONT_PROPAGATION_RATIO + this.frontTravelRemainder;
+    const frontTravel = this.spring ? Math.abs(drivenReach - previousReach) : frameDistance;
+    const waveTravel = frontTravel * (this.height - 1) * FRONT_PROPAGATION_RATIO + this.frontTravelRemainder;
     const waves = Math.floor(waveTravel);
     this.frontTravelRemainder = waveTravel - waves;
-    const { frontCells, averageAdhesion, queuedCells } = this.rebuildLifted(waves);
+    if (!stoppedAtSeam) {
+      this.frontSample = this.rebuildLifted(waves);
+      this.spring?.rebuild(this.state, this.grabIndex);
+      this.spring?.deform(dx, dy, inward, this.elasticity);
+    }
+    const { frontCells, averageAdhesion, queuedCells, surfaceLoad } = this.frontSample;
     const frontRebuildMs = performance.now() - frontStarted;
 
     // Detect sudden growth independently of how much was lifted before this update.
@@ -413,9 +524,12 @@ export class PeelSimulation {
     const speedLoad = clamp((speed - 1.5) / 5) * 0.12;
     const shapeLoad = narrowLoad * 0.54 * (1 - this.tearFactors.bottleneck)
       + bottleneckLoad * 0.8 * this.tearFactors.bottleneck;
-    const targetStress = clamp(shapeLoad + resistanceLoad * 0.28 + reachLoad * 0.18 + speedLoad);
+    const experimentalLoad = (this.spring ? Math.min(0.17, this.spring.peakStrain * 0.105) : 0)
+      + (this.terrain ? (surfaceLoad - 1) * 0.24 : 0);
+    const targetStress = clamp(shapeLoad + resistanceLoad * 0.28 + reachLoad * 0.18 + speedLoad + experimentalLoad);
     const wasNearTear = this.tearThreshold > 0 && this.heldStress >= this.tearThreshold * 0.9;
-    this.heldStress += (targetStress - this.heldStress) * 0.2;
+    const smoothing = this.spring || this.terrain ? 1 - Math.exp(-Math.min(0.12, elapsed) / 0.075) : 0.2;
+    this.heldStress += (targetStress - this.heldStress) * smoothing;
     const stillNearTear = hasAnchor && this.liftedCells >= minimumPiece && this.heldStress >= this.tearThreshold * 0.9;
     this.strainTravel = wasNearTear && stillNearTear && inwardTravel >= this.heldReach
       ? this.strainTravel + inwardTravel - this.heldReach : 0;
@@ -462,6 +576,12 @@ export class PeelSimulation {
       frontRebuildMs,
       bottleneckMs,
     };
+    if (this.spring) {
+      this.lastDiagnosticStep.elasticReaction = this.spring.reaction;
+      this.lastDiagnosticStep.elasticStrain = this.spring.peakStrain;
+      this.lastDiagnosticStep.elasticDisplacement = { ...this.spring.displacement };
+    }
+    if (this.terrain) this.lastDiagnosticStep.surfaceLoad = surfaceLoad;
     if (avalancheTear) {
       this.triggerTear({ kind: "area-jump", value: absoluteGain, threshold: this.releaseJumpThreshold }, this.tearCandidate);
     } else if (stressTear) {
@@ -507,6 +627,7 @@ export class PeelSimulation {
     this.grabIndex = -1;
     this.frontDepth = 0;
     this.stress *= 0.32;
+    this.spring?.reset();
     return accepted;
   }
 
@@ -515,7 +636,8 @@ export class PeelSimulation {
 
     // Leave some slack for the curl, then load the remaining tension cubically.
     const extension = clamp((distance / limit - 0.25) / 0.75);
-    this.stress += Math.max(0, this.tearThreshold - this.stress) * extension ** 3;
+    const stress = this.spring || this.terrain ? this.experimentalStress : this.stress;
+    this.stress = stress + Math.max(0, this.tearThreshold - stress) * extension ** 3;
     if (distance < limit) return false;
 
     this.triggerTear({ kind: "grip-gap", value: distance, threshold: limit });
@@ -640,6 +762,7 @@ export class PeelSimulation {
     this.grabIndex = index;
     this.grab = this.cellPoint(index);
     this.pullOrigin = { ...origin };
+    this.gripHeight = this.terrainSamples?.[index * 3] ?? 0;
     this.gestureBase.set(this.state);
     this.grabbedComponent.fill(0);
     this.componentAdheredCells = 0;
@@ -833,6 +956,14 @@ export class PeelSimulation {
     return PEEL_HALF_TURN + (pointerDistance - PEEL_HALF_TURN) * 0.5;
   }
 
+  private surfaceLoadAt(index: number) {
+    const terrain = this.terrainSamples;
+    if (!terrain) return 1;
+    const offset = index * 3;
+    return surfaceResistance(terrain[offset + 1] * this.direction.x + terrain[offset + 2] * this.direction.y,
+      this.gripHeight - terrain[offset], this.frontDepth);
+  }
+
   private rebuildLifted(waves: number) {
     this.state.set(this.gestureBase);
     this.visited.fill(0);
@@ -873,7 +1004,10 @@ export class PeelSimulation {
       const metricY = y / (this.height - 1);
       if (base === Cell.adhered && (metricX - grabX) ** 2 + (metricY - grabY) ** 2 > pickupRadiusSquared) continue;
       const signed = (metricX - frontX) * this.direction.x + (metricY - frontY) * this.direction.y;
-      const adhesiveDelay = (this.adhesion[index] - 0.58) * 0.012;
+      const surfaceDelay = this.terrain ? (this.surfaceLoadAt(index) - 1) * Math.min(0.095, this.frontDepth * 0.65) : 0;
+      const springDelay = base === Cell.adhered && !this.tearCandidate[index]
+        ? this.spring?.contactDelay(index, this.direction) ?? 0 : 0;
+      const adhesiveDelay = (this.adhesion[index] - 0.58) * 0.012 + surfaceDelay + springDelay;
       if (index !== this.grabIndex && signed > edgeTolerance - adhesiveDelay) continue;
 
       this.state[index] = Cell.lifted;
@@ -913,7 +1047,49 @@ export class PeelSimulation {
       if (touchesFront) frontCells++;
     }
 
-    return { frontCells, averageAdhesion: adhesionSum / Math.max(1, this.pendingNewCells), queuedCells: tail };
+    // Modified adhesion can stop cells before the nominal front plane. Measure
+    // the actual glued contact so a stationary front is not read as a thin neck.
+    let surfaceLoad = 1;
+    let contactAdhesion = 0;
+    if (this.spring || this.terrain) {
+      const front = this.measureExperimentalFront(tail);
+      frontCells = front.cells;
+      surfaceLoad = front.load;
+      contactAdhesion = front.adhesion;
+    }
+    return {
+      frontCells,
+      averageAdhesion: adhesionSum / Math.max(1, this.pendingNewCells),
+      queuedCells: tail,
+      surfaceLoad,
+      contactAdhesion,
+    };
+  }
+
+  private measureExperimentalFront(tail: number) {
+    const { state, queue, width } = this;
+    let cells = 0;
+    let bonds = 0;
+    let loadSum = 0;
+    let adhesionSum = 0;
+    const addBond = (index: number) => {
+      if (state[index] !== Cell.adhered) return;
+      bonds++;
+      adhesionSum += this.adhesion[index];
+      loadSum += this.surfaceLoadAt(index);
+    };
+    for (let j = 0; j < tail; j++) {
+      const index = queue[j];
+      if (state[index] !== Cell.lifted) continue;
+      const before = bonds;
+      const col = index % width;
+      if (col > 0) addBond(index - 1);
+      if (col < width - 1) addBond(index + 1);
+      addBond(index - width);
+      addBond(index + width);
+      if (bonds > before) cells++;
+    }
+    return { cells, load: bonds ? loadSum / bonds : 1, adhesion: bonds ? adhesionSum / bonds : 0 };
   }
 
   private traceAccessibleCell(start: Vec2, end: Vec2) {

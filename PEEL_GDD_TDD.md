@@ -52,6 +52,14 @@ Tension tear and Area jump are adjustable from 0–66%. Outward pull and Thin ne
 
 **Camera.** Manual zoom runs from 60–160%. During a drag, the camera starts to zoom out only when the pointer is within 72 CSS pixels of a screen edge, recent motion heads toward that edge, and the visible moving material needs room. Extra drag reach can fade in near the edge to help finish a long sweep.
 
+### Physics experiments
+
+**Elasticity** runs from 0–100. A held flap can extend while its peel front stays in place. Once the springs transmit enough load to overcome the adhesive, the front advances. Narrow cross sections can take more strain, and a change of pull direction changes which contact bonds carry the load. Releasing an intact flap removes the deformation.
+
+**Surface** offers Off, Ridge, Diagonal Ridge, Dome, Bowl, and Waves. The sticker follows the board profile while attached. Local slope and height difference change the opening angle and resistance at the peel front. Compare pulls across a ridge with pulls along it to see the effect.
+
+The two settings apply across the level selector and reset the current attempt when changed. Elasticity 0 with Surface Off uses the original flat-board solver. Export a diagnostic log to capture the experimental settings, spring reaction, strain, and surface load.
+
 ### Level design reference
 
 The selector has 190 imported stickers across 27 packs, plus Octopus. The pack metadata supplies each move target.
@@ -81,6 +89,7 @@ The selector has 190 imported stickers across 27 packs, plus Octopus. The pack m
 3. **Progress and failure.** The progress numerator is committed released cells plus newly lifted cells in the current gesture. Area jump compares those newly lifted counts across updates. Tears record a cause, measured value, and threshold. An area jump can use the previous viable flap or a small connected region at the grip. If the fragment includes part of an earlier unglued patch, the connected unglued area goes with it. The level result considers 99.7% release complete as a grid tolerance.
 4. **Rendering.** [PeelRenderer.ts](lib/render/PeelRenderer.ts) draws flat, unglued, curled, and torn material with separate texture masks and front/back shading in Three.js/WebGL. [AttachedCurl.ts](lib/render/AttachedCurl.ts) uses distance from the actual attachment to pin the seam and limits how far adjacent points spread along the drag. The lifted flap gets the mesh detail in its active region, and the curl depth is smoothed between cells. The projected grip used for failure checks samples that same curl field.
 5. **Framing and feedback.** [PeelFraming.ts](lib/render/PeelFraming.ts) computes edge intent, fit, and extra reach. The browser batches texture and pose updates to animation frames. A change of camera framing alone contributes no drag delta. [PeelAudio.ts](lib/peel/PeelAudio.ts) synthesizes the optional progress sound.
+6. **Experimental inputs.** [ElasticPeel.ts](lib/peel/ElasticPeel.ts) models the lifted sheet as springs in series, grouped by distance from its seam. Its displacement field drives both faces of the rendered flap, and local strain contributes to the existing tension and contact tests. [SurfaceField.ts](lib/peel/SurfaceField.ts) supplies a shared height field for board geometry, sticker vertices, hit testing, and the solver. Either enabled experiment makes input advance at fixed increments of normalized pointer travel.
 
 React and TypeScript manage the web prototype. The preserved SwiftUI/SpriteKit project is available as native reference. The active design baseline is the web implementation above.
 
