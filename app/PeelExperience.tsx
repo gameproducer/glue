@@ -281,6 +281,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         const tore = simulation.applyGripGap(gapPx, GRIP_GAP_LIMIT_PX,
           gapPx >= GRIP_GAP_LIMIT_PX ? renderer.tornGripContact() : null);
         if (tore) {
+          renderer.updateDragReach();
           renderer.updateState();
           if (navigator.vibrate) navigator.vibrate([22, 34, 28]);
         }
