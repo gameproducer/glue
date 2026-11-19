@@ -194,7 +194,6 @@ const fragmentShader = /* glsl */ `
     vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
     filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
     filmColor = mix(filmColor, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
-    float filmAlpha = silhouette * uLiftedOpacity * mix(0.92, 1.0, grazing);
     if (uBackFinish > 7.5) {
       vec2 tile = vUv * 31.0;
       vec2 bead = fract(tile) - vec2(0.36, 0.57);
@@ -202,43 +201,35 @@ const fragmentShader = /* glsl */ `
       float rim = 1.0 - smoothstep(0.018, 0.07, abs(length(bead) - 0.19));
       float glint = 1.0 - smoothstep(0.015, 0.09, length(bead - vec2(-0.09, 0.1)));
       filmColor = mix(vec3(0.34, 0.52, 0.61), vec3(0.86, 0.99, 1.0), rim * 0.4 + glint * 0.55);
-      filmAlpha *= 0.43 + rim * 0.27 + glint * 0.3;
     } else if (uBackFinish > 6.5) {
       float radius = length((vUv - vec2(0.55, 0.43)) * vec2(1.1, 1.0));
       float ripple = contourLine(radius * 27.0 + 0.2 * sin(vUv.y * 18.0), 0.09);
       filmColor = mix(vec3(0.16, 0.49, 0.59), vec3(0.66, 0.96, 0.91), ripple);
-      filmAlpha *= 0.48 + ripple * 0.44;
     } else if (uBackFinish > 5.5) {
       float ribs = contourLine(vUv.x * 44.0 + vUv.y * 7.0, 0.12);
       float flip = smoothstep(-0.28, 0.32, normal.x + 0.18 * sin(vUv.y * 9.0));
       filmColor = mix(vec3(0.12, 0.73, 0.84), vec3(0.76, 0.24, 0.83), flip);
       filmColor = mix(filmColor, vec3(0.80, 0.92, 1.0), ribs * 0.58);
-      filmAlpha *= 0.55 + ribs * 0.38;
     } else if (uBackFinish > 4.5) {
       float swirl = sin(vUv.x * 12.0 + sin(vUv.y * 8.0));
       vec3 thinFilm = spectrum(4.0 * grazing + 3.0 * swirl + vUv.y * 6.0);
       filmColor = mix(vec3(0.79, 0.90, 0.94), thinFilm, 0.42 + grazing * 0.45);
-      filmAlpha *= 0.42 + 0.5 * grazing;
     } else if (uBackFinish > 3.5) {
       float flow = 0.5 + 0.5 * sin(vUv.y * 17.0 + 3.0 * sin(vUv.x * 8.0));
       filmColor = mix(vec3(0.51, 0.19, 0.055), vec3(1.0, 0.72, 0.30), flow);
-      filmAlpha *= 0.64 + flow * 0.29;
     } else if (uBackFinish > 2.5) {
       vec2 grid = abs(fract(vUv * 56.0) - 0.5);
       float thread = 1.0 - smoothstep(0.06, 0.19, min(grid.x, grid.y));
       filmColor = mix(filmColor, vec3(0.68, 0.94, 0.9), thread * 0.75);
-      filmAlpha *= 0.4 + thread * 0.6;
     } else if (uBackFinish > 1.5) {
       vec3 prism = spectrum((vUv.x - vUv.y * 0.63) * 13.0 + vCurl * 5.0);
       filmColor = mix(filmColor, prism, 0.73);
-      filmAlpha *= 0.72 + grazing * 0.28;
     } else if (uBackFinish > 0.5) {
       float speckle = grain(floor(vUv * 430.0));
       filmColor = vec3(0.57, 0.72, 0.83) + vec3(speckle * 0.17 + grazing * 0.12);
-      filmAlpha *= 0.76 + speckle * 0.24;
     }
     vec3 color = filmColor;
-    float alpha = filmAlpha;
+    float alpha = silhouette * uLiftedOpacity;
     #else
     vec3 artworkColor = mix(texture2D(uArt, vUv).rgb, uStickerColor, uWhiteArtwork);
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
