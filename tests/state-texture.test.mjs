@@ -37,6 +37,19 @@ test("the curl anchors to both kinds of flat material and skips gaps in the artw
   const state = new Uint8Array(labels.length * 4);
   labels.forEach((label, index) => { if (label) state[index * 4 + label - 1] = 255; });
   const distances = new Uint8Array(labels.length);
-  writeCurlDistances(state, distances, labels.length);
+  writeCurlDistances(state, distances, labels.length, new Int32Array(labels.length));
   assert.deepEqual([...distances], [255, 2, 1, 0, 1, 2, 255, 1, 0]);
+});
+
+test("curl distances follow a folded-back route without a jump between adjacent cells", () => {
+  const rows = ["FLLL", "...L", "LLLL", "L...", "LLLL"];
+  const labels = rows.join("");
+  const state = new Uint8Array(labels.length * 4);
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i] === "F") state[i * 4] = 255;
+    if (labels[i] === "L") state[i * 4 + 2] = 255;
+  }
+  const distances = new Uint8Array(labels.length);
+  writeCurlDistances(state, distances, rows[0].length, new Int32Array(labels.length));
+  assert.deepEqual([...distances], [0, 1, 2, 3, 255, 255, 255, 4, 8, 7, 6, 5, 9, 255, 255, 255, 10, 11, 12, 13]);
 });

@@ -44,20 +44,36 @@ export function extendStateTexture(texture: Uint8Array, sources: Int32Array, cha
 }
 
 /** Distances inside the lifted material from the edge it shares with the flat sheet. */
-export function writeCurlDistances(state: Uint8Array, distances: Uint8Array, width: number) {
+export function writeCurlDistances(state: Uint8Array, distances: Uint8Array, width: number, queue: Int32Array) {
   const size = distances.length;
   distances.fill(255);
+  let tail = 0;
+  const flat = (index: number) => state[index * 4] !== 0 || state[index * 4 + 1] !== 0;
   for (let i = 0; i < size; i++) {
-    if (state[i * 4] || state[i * 4 + 1]) distances[i] = 0;
+    if (!state[i * 4 + 2]) {
+      if (flat(i)) distances[i] = 0;
+      continue;
+    }
+    const x = i % width;
+    if ((x > 0 && flat(i - 1)) || (x + 1 < width && flat(i + 1))
+      || (i >= width && flat(i - width)) || (i + width < size && flat(i + width))) {
+      distances[i] = 1;
+      queue[tail++] = i;
+    }
   }
-  for (let i = 0; i < size; i++) {
-    if (!state[i * 4 + 2]) continue;
-    if (i % width) distances[i] = Math.min(distances[i], distances[i - 1] + 1);
-    if (i >= width) distances[i] = Math.min(distances[i], distances[i - width] + 1);
-  }
-  for (let i = size - 1; i >= 0; i--) {
-    if (!state[i * 4 + 2]) continue;
-    if (i % width < width - 1) distances[i] = Math.min(distances[i], distances[i + 1] + 1);
-    if (i + width < size) distances[i] = Math.min(distances[i], distances[i + width] + 1);
+  const visit = (index: number, distance: number) => {
+    if (distances[index] !== 255 || !state[index * 4 + 2]) return;
+    distances[index] = distance;
+    queue[tail++] = index;
+  };
+  for (let head = 0; head < tail; head++) {
+    const i = queue[head];
+    const distance = distances[i] + 1;
+    if (distance === 255) break;
+    const x = i % width;
+    if (x > 0) visit(i - 1, distance);
+    if (x + 1 < width) visit(i + 1, distance);
+    if (i >= width) visit(i - width, distance);
+    if (i + width < size) visit(i + width, distance);
   }
 }

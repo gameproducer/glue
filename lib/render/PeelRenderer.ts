@@ -27,6 +27,7 @@ type PeelUniforms = {
   uReleaseFinish: { value: number };
   uState: { value: THREE.DataTexture };
   uCurlDistances: { value: THREE.DataTexture };
+  uCurlCellSize: { value: number };
   uReleaseHistory: { value: THREE.DataTexture };
   uLayer: { value: number };
   uFilmColor: { value: THREE.Color };
@@ -54,6 +55,7 @@ const vertexShader = /* glsl */ `
   uniform float uLayer;
   uniform float uStretch;
   uniform sampler2D uCurlDistances;
+  uniform float uCurlCellSize;
   uniform float uRelax;
   uniform vec2 uFlatOffset;
   uniform vec2 uTornOffset;
@@ -77,26 +79,25 @@ const vertexShader = /* glsl */ `
     if (uLayer > 2.5) {
       p.xy += uTornOffset;
       p.z += 0.08;
-    } else if (uLayer > 1.5 && q > 0.0) {
-      q *= 1.0 + uStretch;
+    } else if (uLayer > 1.5) {
+      float lift = 0.018;
+      #ifndef PEEL_DETACHED
+        // Keep the shared edge pinned and limit the bend by how much free
+        // material there is between this vertex and that edge.
+        float freeCells = max(0.0, texture2D(uCurlDistances, uv).r * 255.0 - 3.0);
+        q = min(q, freeCells * uCurlCellSize * 0.55);
+        lift *= smoothstep(0.0, 0.07, q);
+      #endif
+      float arcLength = q * (1.0 + uStretch);
       float coneScale = mix(1.0, clamp(1.0 + lateral * 0.24, 0.58, 1.46), uCone);
       float radius = max(0.12, uRadius * coneScale);
-      theta = min(q / radius, PI);
-      float extra = max(q - PI * radius, 0.0);
-      vec2 front = uGrab + direction * uFrontDepth + lateralAxis * lateral;
-      p.xy = front + direction * (extra - radius * sin(theta));
-      p.z = 0.018 + radius * (1.0 - cos(theta));
+      theta = min(arcLength / radius, PI);
+      float extra = max(arcLength - PI * radius, 0.0);
+      p.xy += direction * (q + extra - radius * sin(theta));
+      p.z = lift + radius * (1.0 - cos(theta));
     } else if (uLayer > 0.5) {
       p.z += 0.018;
     }
-    #ifndef PEEL_DETACHED
-      if (uLayer > 1.5 && uLayer < 2.5) {
-        // Leave a flat band wide enough for neighboring mesh vertices to share the glued edge.
-        float hinge = smoothstep(3.0, 10.0, texture2D(uCurlDistances, uv).r * 255.0);
-        p = mix(position, p, hinge);
-        theta *= hinge;
-      }
-    #endif
     vCurl = smoothstep(0.0, PI, theta);
     #ifdef PEEL_DETACHED
       // Open around the grip with the same handedness as the folded-over flap.
@@ -377,6 +378,7 @@ export class PeelRenderer {
   private readonly stateSources: Int32Array;
   private readonly stateTexture: THREE.DataTexture;
   private readonly curlDistances: Uint8Array;
+  private readonly curlQueue: Int32Array;
   private readonly curlTexture: THREE.DataTexture;
   private readonly releaseData: Uint8Array;
   private readonly releaseTexture: THREE.DataTexture;
@@ -450,6 +452,7 @@ export class PeelRenderer {
     this.stateTexture.needsUpdate = true;
 
     this.curlDistances = new Uint8Array(simulation.width * simulation.height);
+    this.curlQueue = new Int32Array(this.curlDistances.length);
     this.curlTexture = new THREE.DataTexture(this.curlDistances, simulation.width, simulation.height, THREE.RedFormat);
     this.curlTexture.minFilter = THREE.LinearFilter;
     this.curlTexture.magFilter = THREE.LinearFilter;
@@ -481,6 +484,7 @@ export class PeelRenderer {
         uReleaseFinish: { value: 0 },
         uState: { value: this.stateTexture },
         uCurlDistances: { value: this.curlTexture },
+        uCurlCellSize: { value: Math.min(this.stickerWidth / simulation.width, this.stickerHeight / simulation.height) },
         uReleaseHistory: { value: this.releaseTexture },
         uLayer: { value: pass.layer },
         uFilmColor: { value: new THREE.Color(0xf05fa8) },
@@ -568,7 +572,7 @@ export class PeelRenderer {
     this.simulation.writeTexture(this.stateData);
     this.updateLiftedRegion();
     if (this.liftedRegion) {
-      writeCurlDistances(this.stateData, this.curlDistances, this.simulation.width);
+      writeCurlDistances(this.stateData, this.curlDistances, this.simulation.width, this.curlQueue);
       extendStateTexture(this.curlDistances, this.stateSources, 1);
       this.curlTexture.needsUpdate = true;
     }
