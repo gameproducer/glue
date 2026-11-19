@@ -1,5 +1,11 @@
-export const FACE_FINISHES = ["Original", "Satin", "Pearlescent", "Brushed foil"] as const;
-export const BACK_FINISHES = ["Clear", "Frosted", "Prismatic", "Fine mesh"] as const;
+export const FACE_FINISHES = [
+  "Original", "Satin", "Pearlescent", "Brushed foil",
+  "Topographic ink", "Marbled ink", "Halftone print", "Holographic foil", "Speckled enamel",
+] as const;
+export const BACK_FINISHES = [
+  "Clear", "Frosted", "Prismatic", "Fine mesh",
+  "Amber resin", "Soap bubble", "Lenticular film", "Ripple glass", "Dew beads",
+] as const;
 export const RELEASE_FINISHES = ["Dimmed", "Transparent", "Frosted", "Diagonal hatch"] as const;
 
 export const BACKGROUNDS = [
@@ -17,6 +23,11 @@ export const STICKER_COLORS = [
   { name: "Rose", color: "#ff90b7" },
   { name: "Lavender", color: "#c1adff" },
   { name: "Gold", color: "#ffd27a" },
+  { name: "Electric cyan", color: "#46dcff" },
+  { name: "Tangerine", color: "#ff8c50" },
+  { name: "Acid lime", color: "#c7f65a" },
+  { name: "Ultraviolet", color: "#8767ff" },
+  { name: "Smoky quartz", color: "#d2aea5" },
 ] as const;
 
 export type PeelAppearance = { face: number; back: number; released: number; background: number; sticker: number };

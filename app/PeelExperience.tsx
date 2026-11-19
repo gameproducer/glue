@@ -249,6 +249,23 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     });
   }, []);
 
+  const startDiagnosticRecording = useCallback((reason: "level_load" | "level_reset" | "manual_clear") => {
+    const simulation = simulationRef.current;
+    if (!simulation) return;
+    diagnosticEvents.current = [];
+    diagnosticStartedAt.current = performance.now();
+    rendererRef.current?.frameTimings.clear();
+    diagnosticStartedWallClock.current = new Date().toISOString();
+    diagnosticSessionId.current = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setLogStatus(reason === "level_load" ? "Recording locally" : "New recording started");
+    recordDiagnostic("session_start", null, {
+      reason,
+      gridWidth: simulation.width,
+      gridHeight: simulation.height,
+      seed: "0x5045454c",
+    });
+  }, [recordDiagnostic]);
+
   const refresh = useCallback((updateTexture = true) => {
     const simulation = simulationRef.current;
     const renderer = rendererRef.current;
@@ -320,17 +337,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         setAppearance(savedAppearance);
         simulationRef.current = simulation;
         rendererRef.current = renderer;
-        diagnosticEvents.current = [];
-        diagnosticStartedAt.current = performance.now();
-        renderer.frameTimings.clear();
-        diagnosticStartedWallClock.current = new Date().toISOString();
-        diagnosticSessionId.current = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        setLogStatus("Recording locally");
-        recordDiagnostic("session_start", null, {
-          gridWidth: simulation.width,
-          gridHeight: simulation.height,
-          seed: "0x5045454c",
-        });
+        startDiagnosticRecording("level_load");
         renderer.onFps = setFps;
         const canvas = renderer.domElement;
         canvas.setAttribute("aria-label", `Interactive ${level.name} sticker. Sweep from an exposed edge through the sticker to peel it.`);
@@ -464,7 +471,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       activePointer.current = null;
       teardown();
     };
-  }, [level, audio, recordDiagnostic, refresh, tearThresholdStorageKey, releaseJumpStorageKey, liftedTransparencyStorageKey, tearFactorsStorageKey]);
+  }, [level, audio, recordDiagnostic, refresh, startDiagnosticRecording, tearThresholdStorageKey, releaseJumpStorageKey, liftedTransparencyStorageKey, tearFactorsStorageKey]);
 
   const toggleProfile = () => {
     const next = profile === "cylinder" ? "cone" : "cylinder";
@@ -551,12 +558,21 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   };
 
   const reset = () => {
+    const renderer = rendererRef.current;
+    const pointerId = activePointer.current;
+    activePointer.current = null;
+    if (pointerId !== null && renderer?.domElement.hasPointerCapture(pointerId)) {
+      renderer.domElement.releasePointerCapture(pointerId);
+    }
+    if (textureFrame.current) cancelAnimationFrame(textureFrame.current);
+    textureFrame.current = 0;
     simulationRef.current?.reset();
-    rendererRef.current?.clearDissolves();
+    renderer?.endDrag();
+    renderer?.clearDissolves();
     if (moveToastTimer.current !== null) window.clearTimeout(moveToastTimer.current);
     setMoveLimitToast(false);
     setReleasedWhileReversing(false);
-    recordDiagnostic("level_reset");
+    startDiagnosticRecording("level_reset");
     setMiss(false);
     refresh(true);
   };
@@ -637,15 +653,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     setLogStatus("Downloaded — attach the JSON here");
   };
 
-  const clearDiagnosticLog = () => {
-    diagnosticEvents.current = [];
-    diagnosticStartedAt.current = performance.now();
-    rendererRef.current?.frameTimings.clear();
-    diagnosticStartedWallClock.current = new Date().toISOString();
-    diagnosticSessionId.current = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    setLogStatus("New recording started");
-    recordDiagnostic("session_start", null, { reason: "manual_clear" });
-  };
+  const clearDiagnosticLog = () => startDiagnosticRecording("manual_clear");
 
   const percent = Math.min(100, Math.round(snapshot.progress * 100));
   const failure = snapshot.tearFailure;

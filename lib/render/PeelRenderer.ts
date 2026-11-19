@@ -132,6 +132,13 @@ const fragmentShader = /* glsl */ `
     return 0.5 + 0.5 * cos(phase + vec3(0.0, 2.094, 4.189));
   }
 
+  float contourLine(float phase, float width) {
+    float bandDistance = abs(fract(phase + 0.5) - 0.5);
+    float pixelWidth = fwidth(phase);
+    return (1.0 - smoothstep(width, width + max(0.005, pixelWidth), bandDistance))
+      * (1.0 - smoothstep(0.25, 0.6, pixelWidth));
+  }
+
   void main() {
     vec4 state = texture2D(uState, vUv);
     float layerMask = uLayer < 0.5
@@ -164,7 +171,35 @@ const fragmentShader = /* glsl */ `
     filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
     filmColor = mix(filmColor, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
     float filmAlpha = silhouette * uLiftedOpacity * mix(0.92, 1.0, grazing);
-    if (uBackFinish > 2.5) {
+    if (uBackFinish > 7.5) {
+      vec2 tile = vUv * 31.0;
+      vec2 bead = fract(tile) - vec2(0.36, 0.57);
+      bead.x -= (grain(floor(tile)) - 0.5) * 0.22;
+      float rim = 1.0 - smoothstep(0.018, 0.07, abs(length(bead) - 0.19));
+      float glint = 1.0 - smoothstep(0.015, 0.09, length(bead - vec2(-0.09, 0.1)));
+      filmColor = mix(vec3(0.34, 0.52, 0.61), vec3(0.86, 0.99, 1.0), rim * 0.4 + glint * 0.55);
+      filmAlpha *= 0.43 + rim * 0.27 + glint * 0.3;
+    } else if (uBackFinish > 6.5) {
+      float radius = length((vUv - vec2(0.55, 0.43)) * vec2(1.1, 1.0));
+      float ripple = contourLine(radius * 27.0 + 0.2 * sin(vUv.y * 18.0), 0.09);
+      filmColor = mix(vec3(0.16, 0.49, 0.59), vec3(0.66, 0.96, 0.91), ripple);
+      filmAlpha *= 0.48 + ripple * 0.44;
+    } else if (uBackFinish > 5.5) {
+      float ribs = contourLine(vUv.x * 44.0 + vUv.y * 7.0, 0.12);
+      float flip = smoothstep(-0.28, 0.32, normal.x + 0.18 * sin(vUv.y * 9.0));
+      filmColor = mix(vec3(0.12, 0.73, 0.84), vec3(0.76, 0.24, 0.83), flip);
+      filmColor = mix(filmColor, vec3(0.80, 0.92, 1.0), ribs * 0.58);
+      filmAlpha *= 0.55 + ribs * 0.38;
+    } else if (uBackFinish > 4.5) {
+      float swirl = sin(vUv.x * 12.0 + sin(vUv.y * 8.0));
+      vec3 thinFilm = spectrum(4.0 * grazing + 3.0 * swirl + vUv.y * 6.0);
+      filmColor = mix(vec3(0.79, 0.90, 0.94), thinFilm, 0.42 + grazing * 0.45);
+      filmAlpha *= 0.42 + 0.5 * grazing;
+    } else if (uBackFinish > 3.5) {
+      float flow = 0.5 + 0.5 * sin(vUv.y * 17.0 + 3.0 * sin(vUv.x * 8.0));
+      filmColor = mix(vec3(0.51, 0.19, 0.055), vec3(1.0, 0.72, 0.30), flow);
+      filmAlpha *= 0.64 + flow * 0.29;
+    } else if (uBackFinish > 2.5) {
       vec2 grid = abs(fract(vUv * 56.0) - 0.5);
       float thread = 1.0 - smoothstep(0.06, 0.19, min(grid.x, grid.y));
       filmColor = mix(filmColor, vec3(0.68, 0.94, 0.9), thread * 0.75);
@@ -185,7 +220,31 @@ const fragmentShader = /* glsl */ `
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
-    if (uFaceFinish > 2.5) {
+    if (uFaceFinish > 7.5) {
+      vec2 tile = vUv * 86.0;
+      float flake = step(0.68, grain(floor(tile)));
+      float dotMask = flake * (1.0 - smoothstep(0.07, 0.31, length(fract(tile) - 0.5)));
+      printedColor = printedColor * (0.75 + 0.22 * diffuse) + dotMask * vec3(0.70, 0.73, 0.76);
+    } else if (uFaceFinish > 6.5) {
+      float foil = (vUv.x * 1.45 - vUv.y * 0.75) * 31.0 + normal.x * 9.0 + vCurl * 4.0;
+      float stripe = contourLine(foil / 6.283, 0.035);
+      vec3 diffraction = spectrum(foil);
+      printedColor = mix(printedColor * 0.65, diffraction, 0.52) + vec3(stripe * 0.28);
+    } else if (uFaceFinish > 5.5) {
+      vec2 printUv = vec2(vUv.x - vUv.y, vUv.x + vUv.y) * 28.0;
+      float dotSize = 0.24 + 0.08 * sin((vUv.x + 0.8 * vUv.y) * 5.0) + 0.06 * grazing;
+      float ink = 1.0 - smoothstep(dotSize - 0.045, dotSize + 0.065, length(fract(printUv) - 0.5));
+      printedColor = mix(printedColor, artworkColor * 0.19 + vec3(0.07, 0.05, 0.14), ink * 0.88);
+    } else if (uFaceFinish > 4.5) {
+      float vein = sin(vUv.x * 19.0 + vUv.y * 10.0 + 4.0 * sin(vUv.y * 9.0 - vUv.x * 4.0));
+      float ink = 1.0 - smoothstep(0.06, 0.65, abs(vein));
+      printedColor = mix(printedColor, artworkColor * 0.21 + vec3(0.11, 0.19, 0.29), ink * 0.84);
+    } else if (uFaceFinish > 3.5) {
+      vec2 hill = vUv - vec2(0.35, 0.58);
+      float elevation = length(hill * vec2(1.1, 0.8)) * 21.0 + 0.55 * sin(vUv.x * 14.0 + vUv.y * 12.0);
+      float line = contourLine(elevation, 0.07);
+      printedColor = mix(printedColor * 0.88, artworkColor * 0.26 + vec3(0.07, 0.18, 0.19), line * 0.92);
+    } else if (uFaceFinish > 2.5) {
       float brush = grain(vec2(floor(vUv.y * 520.0), 1.0));
       float highlight = pow(max(0.0, cos((vUv.x + vUv.y * 0.52 + normal.x * 0.2) * 9.0)), 9.0);
       printedColor = printedColor * (0.73 + brush * 0.28) + vec3(0.65, 0.78, 0.92) * highlight * 0.35;
