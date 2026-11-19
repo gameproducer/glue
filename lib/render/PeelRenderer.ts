@@ -5,7 +5,6 @@ import { AttachedCurl } from "./AttachedCurl";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
-import { SURFACE_MARGIN, SURFACE_SIZE, type SurfaceField } from "../peel/SurfaceField";
 
 const STICKER_WIDTH = 4.8;
 const RELAX_MS = 420;
@@ -50,25 +49,7 @@ type PeelUniforms = {
   uFlatOffset: { value: THREE.Vector2 };
   uDissolve: { value: number };
   uTornOffset: { value: THREE.Vector2 };
-  uTerrain: { value: THREE.Texture };
-  uTerrainOn: { value: number };
-  uElasticWeights: { value: THREE.Texture };
-  uElasticOffset: { value: THREE.Vector2 };
 };
-
-const terrainShader = /* glsl */ `
-  uniform sampler2D uTerrain;
-  uniform float uTerrainOn;
-  uniform vec2 uStickerSize;
-
-  vec3 terrainSample(vec2 uv) {
-    vec2 texel = vec2(0.5) + (uv + ${SURFACE_MARGIN}) * ${((SURFACE_SIZE - 1) / (1 + 2 * SURFACE_MARGIN)).toFixed(1)};
-    vec3 sampleValue = texture2D(uTerrain, texel / ${SURFACE_SIZE.toFixed(1)}).rgb;
-    return vec3(sampleValue.x * uStickerSize.y, sampleValue.yz);
-  }
-
-  float terrainHeight(vec2 uv) { return terrainSample(uv).x; }
-`;
 
 const vertexShader = /* glsl */ `
   precision highp float;
@@ -79,19 +60,17 @@ const vertexShader = /* glsl */ `
   uniform float uCone;
   uniform float uLayer;
   uniform float uStretch;
+  uniform vec2 uStickerSize;
   uniform vec4 uUvWindow;
   uniform sampler2D uAttachedCurl;
   uniform float uRelax;
   uniform vec2 uFlatOffset;
   uniform vec2 uTornOffset;
-  uniform sampler2D uElasticWeights;
-  uniform vec2 uElasticOffset;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
 
   const float PI = 3.141592653589793;
-  ${terrainShader}
 
   void main() {
     vUv = uUvWindow.xy + uv * uUvWindow.zw;
@@ -133,27 +112,6 @@ const vertexShader = /* glsl */ `
       vCurl *= 1.0 - uRelax;
     #endif
     vNormalWorld = vec3(direction * sin(theta), cos(theta));
-    #ifndef PEEL_DETACHED
-      if (uLayer > 1.5 && dot(uElasticOffset, uElasticOffset) > 0.0) {
-        p.xy += uElasticOffset * texture2D(uElasticWeights, vUv).r;
-      }
-    #endif
-    if (uTerrainOn > 0.5) {
-      vec2 movedUv = p.xy / uStickerSize + 0.5;
-      #ifdef PEEL_DETACHED
-        float root = terrainHeight(uGrab / uStickerSize + 0.5);
-        vec2 worldUv = movedUv + modelMatrix[3].xy / uStickerSize;
-        p.z = max(p.z + root, terrainHeight(worldUv) + 0.04);
-      #else
-        if (uLayer > 2.5) p.z += terrainHeight(movedUv);
-        else {
-          vec3 ground = terrainSample(vUv);
-          p.z += ground.x;
-          if (uLayer > 1.5) p.z = max(p.z, terrainHeight(movedUv) + 0.018);
-          vNormalWorld = normalize(vNormalWorld - vec3(ground.yz * cos(theta), 0.0));
-        }
-      #endif
-    }
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }
 `;
@@ -431,18 +389,10 @@ export class PeelRenderer {
   private readonly resizeObserver: ResizeObserver;
   private readonly originalWhiteArtwork: boolean;
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
-  private readonly surfaceMesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
-  private readonly surfaceLight: THREE.DirectionalLight;
-  private readonly emptyMap = new THREE.DataTexture(new Uint8Array(4), 1, 1);
-  private terrainTexture: THREE.DataTexture | null = null;
-  private terrain: SurfaceField | null = null;
-  private readonly elasticPixels: Uint8Array;
-  private readonly elasticTexture: THREE.DataTexture;
-  private backgroundIndex = 0;
   private zoom = 1;
   private viewportWidth = 1;
   private viewportHeight = 1;
-  private dragInput: { x: number; y: number; point: Vec2; heading: Vec2; towardEdge: boolean; boardZ: number } | null = null;
+  private dragInput: { x: number; y: number; point: Vec2; heading: Vec2; towardEdge: boolean } | null = null;
   private dragReach: { direction: Vec2; scale: number } | null = null;
   private movingRegion: PeelRegion | null = null;
   private movingBounds: PeelBounds | null = null;
@@ -478,18 +428,13 @@ export class PeelRenderer {
     this.host.appendChild(this.domElement);
 
     this.surfaceMaterial = new THREE.MeshStandardMaterial({ map: makeSurfaceTexture(), roughness: 0.88, metalness: 0.04 });
-    this.surfaceMesh = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), this.surfaceMaterial);
-    this.surfaceMesh.position.z = -0.095;
-    this.scene.add(this.surfaceMesh);
+    const surface = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), this.surfaceMaterial);
+    surface.position.z = -0.095;
+    this.scene.add(surface);
     this.scene.add(new THREE.HemisphereLight(0xa799bd, 0x17141b, 1.2));
     const key = new THREE.DirectionalLight(0xfff0dc, 2.55);
     key.position.set(-3.5, 4.5, 7);
     this.scene.add(key);
-    this.surfaceLight = new THREE.DirectionalLight(0xcadfff, 1.65);
-    this.surfaceLight.position.set(-4.5, 1.8, 2.8);
-    this.surfaceLight.visible = false;
-    this.scene.add(this.surfaceLight);
-    this.emptyMap.needsUpdate = true;
 
     this.stateData = new Uint8Array(simulation.width * simulation.height * 4);
     this.stateSources = nearestStateSources(simulation.state, simulation.width, simulation.height);
@@ -501,11 +446,6 @@ export class PeelRenderer {
     this.stateTexture.minFilter = THREE.LinearFilter;
     this.stateTexture.magFilter = THREE.LinearFilter;
     this.stateTexture.needsUpdate = true;
-    this.elasticPixels = new Uint8Array(simulation.width * simulation.height);
-    this.elasticTexture = new THREE.DataTexture(this.elasticPixels, simulation.width, simulation.height, THREE.RedFormat);
-    this.elasticTexture.minFilter = THREE.LinearFilter;
-    this.elasticTexture.magFilter = THREE.LinearFilter;
-    this.elasticTexture.needsUpdate = true;
 
     this.curlDistances = new Uint8Array(simulation.width * simulation.height);
     this.curlQueue = new Int32Array(this.curlDistances.length);
@@ -558,10 +498,6 @@ export class PeelRenderer {
         uFlatOffset: { value: new THREE.Vector2() },
         uDissolve: { value: 0 },
         uTornOffset: { value: new THREE.Vector2() },
-        uTerrain: { value: this.emptyMap },
-        uTerrainOn: { value: 0 },
-        uElasticWeights: { value: this.elasticTexture },
-        uElasticOffset: { value: new THREE.Vector2() },
       };
       const material = new THREE.ShaderMaterial({
         uniforms,
@@ -591,20 +527,12 @@ export class PeelRenderer {
           uState: { value: this.stateTexture },
           uOpacity: { value: 0.38 },
           uPadding: { value: 58 / 1024 },
-          uTerrain: { value: this.emptyMap },
-          uTerrainOn: { value: 0 },
-          uStickerSize: { value: new THREE.Vector2(this.stickerWidth, this.stickerHeight) },
         },
         vertexShader: /* glsl */ `
           varying vec2 vUv;
-          ${terrainShader}
           void main() {
             vUv = uv;
-            if (uTerrainOn > 0.5) {
-              vec4 world = modelMatrix * vec4(position, 1.0);
-              world.z += terrainHeight(world.xy / uStickerSize + 0.5);
-              gl_Position = projectionMatrix * viewMatrix * world;
-            } else gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
           }
         `,
         fragmentShader: /* glsl */ `
@@ -625,7 +553,6 @@ export class PeelRenderer {
     this.shadow.position.set(0.06, -0.08, -0.055);
     this.shadow.renderOrder = -1;
     this.scene.add(this.shadow);
-    this.setSurface(simulation.surface);
 
     this.resizeObserver = new ResizeObserver(() => {
       if (this.resizeFrame) return;
@@ -646,82 +573,8 @@ export class PeelRenderer {
       writeCurlDistances(this.stateData, this.curlDistances, this.simulation.width, this.curlQueue);
     }
     extendStateTexture(this.stateData, this.stateSources);
-    if (this.simulation.elasticPeel) {
-      this.elasticPixels.set(this.simulation.elasticPeel.weights);
-      extendStateTexture(this.elasticPixels, this.stateSources, 1);
-      this.elasticTexture.needsUpdate = true;
-    }
     this.stateTexture.needsUpdate = true;
     this.updateReleaseHistory();
-  }
-
-  setSurface(terrain: SurfaceField | null) {
-    if (terrain === this.terrain) return;
-    this.terrain = terrain;
-    this.terrainTexture?.dispose();
-    this.terrainTexture = terrain ? new THREE.DataTexture(terrain.pixels, SURFACE_SIZE, SURFACE_SIZE,
-      THREE.RGBAFormat, THREE.HalfFloatType) : null;
-    if (this.terrainTexture) {
-      this.terrainTexture.minFilter = THREE.LinearFilter;
-      this.terrainTexture.magFilter = THREE.LinearFilter;
-      this.terrainTexture.needsUpdate = true;
-    }
-    for (const material of [...this.materials, this.shadow.material]) {
-      material.uniforms.uTerrain.value = this.terrainTexture ?? this.emptyMap;
-      material.uniforms.uTerrainOn.value = Number(!!terrain);
-    }
-
-    this.surfaceMesh.geometry.dispose();
-    const board = terrain
-      ? new THREE.PlaneGeometry(this.stickerWidth * 2, this.stickerHeight * 2, SURFACE_SIZE - 1, SURFACE_SIZE - 1)
-      : new THREE.PlaneGeometry(22, 18);
-    if (terrain) {
-      const positions = board.getAttribute("position");
-      const uv = board.getAttribute("uv");
-      for (let i = 0; i < positions.count; i++) {
-        let x = positions.getX(i);
-        let y = positions.getY(i);
-        const z = this.heightAt(x, y);
-        // The height field is flat at the rim. Extend the outer row to the board edge.
-        if (Math.abs(x) >= this.stickerWidth - 0.00001) x = Math.sign(x) * Math.max(11, this.stickerWidth);
-        if (Math.abs(y) >= this.stickerHeight - 0.00001) y = Math.sign(y) * Math.max(9, this.stickerHeight);
-        positions.setXYZ(i, x, y, z);
-        uv.setXY(i, x / 22 + 0.5, y / 18 + 0.5);
-      }
-      board.computeVertexNormals();
-    }
-    this.surfaceMesh.geometry = board;
-    this.shadow.geometry.dispose();
-    this.shadow.geometry = new THREE.PlaneGeometry(this.stickerWidth * 1.14, this.stickerHeight * 1.14,
-      terrain ? 48 : 1, terrain ? 48 : 1);
-    this.surfaceLight.visible = !!terrain;
-    this.updateBoardLight();
-    this.cameraReady = false;
-  }
-
-  private heightAt(x: number, y: number) {
-    return this.terrain ? this.terrain.height(x / this.stickerWidth + 0.5, y / this.stickerHeight + 0.5) * this.stickerHeight : 0;
-  }
-
-  private elasticOffset() {
-    const displacement = this.simulation.elasticPeel?.displacement;
-    return displacement
-      ? { x: displacement.x * this.stickerWidth / this.simulation.aspect, y: displacement.y * this.stickerHeight }
-      : { x: 0, y: 0 };
-  }
-
-  private elasticAt(uv: Vec2) {
-    const { width, height } = this.simulation;
-    const { elasticPixels } = this;
-    const x = THREE.MathUtils.clamp(uv.x * width - 0.5, 0, width - 1);
-    const y = THREE.MathUtils.clamp(uv.y * height - 0.5, 0, height - 1);
-    const col = Math.floor(x);
-    const row = Math.floor(y);
-    const right = Math.min(width - 1, col + 1);
-    const above = Math.min(height - 1, row + 1);
-    const low = THREE.MathUtils.lerp(elasticPixels[row * width + col], elasticPixels[row * width + right], x - col);
-    const high = THREE.MathUtils.lerp(elasticPixels[above * width + col], elasticPixels[above * width + right], x - col);
-    return THREE.MathUtils.lerp(low, high, y - row) / 255;
   }
 
   private prepareAttachedCurl(grab: Vec2, direction: Vec2, depth: number, profile: CurlProfile) {
@@ -793,7 +646,6 @@ export class PeelRenderer {
     const stretch = tensionStretch(stress, tearThreshold);
     const offsetX = tornOffset.x * this.stickerWidth;
     const offsetY = tornOffset.y * this.stickerHeight;
-    const spring = this.elasticOffset();
     this.movingBounds = null;
     const region = this.movingRegion;
     if (torn && region) {
@@ -808,16 +660,8 @@ export class PeelRenderer {
       includeCurl(this.movingBounds, region.width, region.height, worldGrab, worldDirection,
         worldDepth, radius, profile === "cone", stretch, region);
     }
-    if (this.movingBounds && (spring.x || spring.y || this.terrain)) {
-      this.movingBounds.x += Math.abs(spring.x);
-      this.movingBounds.y += Math.abs(spring.y);
-      this.movingBounds.z += (this.terrain?.amplitude ?? 0) * this.stickerHeight;
-    }
-    const hasExperiment = this.terrain || this.simulation.elasticPeel;
-    for (const mesh of this.stickerMeshes) {
-      const uniforms = mesh.material.uniforms as unknown as PeelUniforms;
-      const layer = uniforms.uLayer.value;
-      mesh.visible = !hasExperiment || layer < 2 || !!region && (layer === 3 ? torn : !torn && !detachedPointer);
+    for (const material of this.materials) {
+      const uniforms = material.uniforms as unknown as PeelUniforms;
       uniforms.uGrab.value.copy(worldGrab);
       uniforms.uDirection.value.copy(worldDirection);
       uniforms.uFrontDepth.value = worldDepth;
@@ -826,7 +670,6 @@ export class PeelRenderer {
       uniforms.uStress.value = stress;
       uniforms.uStretch.value = stretch;
       uniforms.uTornOffset.value.set(offsetX, offsetY);
-      uniforms.uElasticOffset.value.set(spring.x, spring.y);
       if (uniforms.uLayer.value === 2 && region && !torn && !detachedPointer) {
         // Spend the curl mesh's subdivisions on the visible flap.
         uniforms.uUvWindow.value.set(
@@ -881,8 +724,6 @@ export class PeelRenderer {
       uniforms.uReleaseHistory.value = this.releaseTexture;
       uniforms.uState.value = texture;
       uniforms.uAttachedCurl.value = this.curlTexture;
-      uniforms.uTerrain.value = this.terrainTexture ?? this.emptyMap;
-      uniforms.uElasticWeights.value = this.elasticTexture;
       const mesh = new THREE.Mesh(back.geometry, material);
       mesh.renderOrder = back.renderOrder + 6;
       mesh.position.z = back.position.z;
@@ -923,8 +764,7 @@ export class PeelRenderer {
   setAppearance(appearance: PeelAppearance) {
     const background = BACKGROUNDS[appearance.background].color;
     this.surfaceMaterial.emissive.set(background);
-    this.backgroundIndex = appearance.background;
-    this.updateBoardLight();
+    this.surfaceMaterial.emissiveIntensity = appearance.background === 0 ? 0 : 0.95;
     this.scene.background = appearance.background === 0 ? null : new THREE.Color(background).multiplyScalar(0.62);
 
     const sticker = STICKER_COLORS[appearance.sticker].color;
@@ -940,10 +780,6 @@ export class PeelRenderer {
       shape.mesh.material.uniforms.uBackFinish.value = appearance.back;
       shape.mesh.material.uniforms.uReleaseFinish.value = appearance.released;
     }
-  }
-
-  private updateBoardLight() {
-    this.surfaceMaterial.emissiveIntensity = this.backgroundIndex === 0 ? 0 : this.terrain ? 0.58 : 0.95;
   }
 
   setDebug(enabled: boolean) {
@@ -965,18 +801,6 @@ export class PeelRenderer {
     const point = new THREE.Vector3();
     this.hitPlane.constant = -depth;
     if (!this.raycaster.ray.intersectPlane(this.hitPlane, point)) return null;
-    if (this.terrain) {
-      const { ray } = this.raycaster;
-      const amplitude = this.terrain.amplitude * this.stickerHeight;
-      let low = depth - amplitude;
-      let high = depth + amplitude;
-      for (let i = 0; i < 16; i++) {
-        const z = (low + high) / 2;
-        ray.at((z - ray.origin.z) / ray.direction.z, point);
-        if (z < this.heightAt(point.x, point.y) + depth) low = z;
-        else high = z;
-      }
-    }
     return { x: point.x / this.stickerWidth + 0.5, y: point.y / this.stickerHeight + 0.5 };
   }
 
@@ -994,13 +818,11 @@ export class PeelRenderer {
     const theta = Math.min(length / radius, Math.PI);
     const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
     const rise = 0.018 + radius * (1 - Math.cos(theta));
-    const elastic = this.elasticOffset();
-    const weight = this.simulation.elasticPeel ? this.elasticAt(snapshot.grab) : 0;
-    const x = grab.x + snapshot.direction.x * shift + elastic.x * weight;
-    const y = grab.y + snapshot.direction.y * shift + elastic.y * weight;
-    const z = this.terrain
-      ? Math.max(rise + this.heightAt(grab.x, grab.y), this.heightAt(x, y) + 0.018) : rise;
-    const grip = new THREE.Vector3(x, y, 0.004 + z).project(this.camera);
+    const grip = new THREE.Vector3(
+      grab.x + snapshot.direction.x * shift,
+      grab.y + snapshot.direction.y * shift,
+      0.004 + rise,
+    ).project(this.camera);
     const rect = this.domElement.getBoundingClientRect();
     const gripX = rect.left + (1 + grip.x) * rect.width / 2;
     const gripY = rect.top + (1 - grip.y) * rect.height / 2;
@@ -1009,11 +831,7 @@ export class PeelRenderer {
 
   tornGripContact() {
     const input = this.dragInput;
-    const contact = input && this.screenToSticker(input.x, input.y, TORN_LAYER_Z);
-    if (!contact || !this.simulation.elasticPeel) return contact;
-    const offset = this.elasticOffset();
-    const weight = this.elasticAt(this.simulation.snapshot().grab);
-    return { x: contact.x - offset.x * weight / this.stickerWidth, y: contact.y - offset.y * weight / this.stickerHeight };
+    return input && this.screenToSticker(input.x, input.y, TORN_LAYER_Z);
   }
 
   setZoom(zoom: number) {
@@ -1021,8 +839,7 @@ export class PeelRenderer {
   }
 
   beginDrag(clientX: number, clientY: number, point: Vec2) {
-    this.dragInput = { x: clientX, y: clientY, point, heading: { x: 0, y: 0 }, towardEdge: false,
-      boardZ: this.heightAt((point.x - 0.5) * this.stickerWidth, (point.y - 0.5) * this.stickerHeight) };
+    this.dragInput = { x: clientX, y: clientY, point, heading: { x: 0, y: 0 }, towardEdge: false };
   }
 
   updateDragReach() {
@@ -1047,7 +864,7 @@ export class PeelRenderer {
     // Use only physical pointer movement. Reprojecting the same pixel after
     // zooming would move the simulated grip and create tension on its own.
     const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const unitsPerPixel = 2 * (this.camera.position.z - input.boardZ) * tangent / Math.max(1, rect.height);
+    const unitsPerPixel = 2 * this.camera.position.z * tangent / Math.max(1, rect.height);
     const dx = x - input.x;
     const dy = y - input.y;
     if (dx || dy) {
@@ -1093,12 +910,6 @@ export class PeelRenderer {
     this.stateTexture.dispose();
     this.curlTexture.dispose();
     this.releaseTexture.dispose();
-    this.elasticTexture.dispose();
-    this.terrainTexture?.dispose();
-    this.emptyMap.dispose();
-    this.surfaceMesh.geometry.dispose();
-    this.surfaceMaterial.map?.dispose();
-    this.surfaceMaterial.dispose();
     this.renderer.dispose();
     this.domElement.remove();
   }
@@ -1123,9 +934,7 @@ export class PeelRenderer {
     const height = this.viewportHeight;
     const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
     const inset = Math.min(28, Math.min(width, height) * 0.09);
-    const rest = fitDistance({
-      x: this.stickerWidth / 2, y: this.stickerHeight / 2, z: 0.022 + (this.terrain?.amplitude ?? 0) * this.stickerHeight,
-    }, tangent, width, height, inset);
+    const rest = fitDistance({ x: this.stickerWidth / 2, y: this.stickerHeight / 2, z: 0.022 }, tangent, width, height, inset);
     const fit = (margin: number) => Math.max(
       this.movingBounds ? fitDistance(this.movingBounds, tangent, width, height, margin) : 0,
       ...this.dissolves.map(shape => shape.bounds ? fitDistance({

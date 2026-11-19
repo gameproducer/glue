@@ -521,7 +521,7 @@ h1 {
   .control-bar .zoom-controls button { min-width: 40px; min-height: 40px; }
 }
 
-.physics-settings select {
+.visual-settings select {
   width: 100%;
   padding: 8px 10px;
   color: var(--ink);
@@ -531,7 +531,7 @@ h1 {
   font: inherit;
 }
 
-.physics-settings select:focus-visible {
+.visual-settings select:focus-visible {
   outline: 2px solid #9cf3e9;
   outline-offset: 2px;
 }

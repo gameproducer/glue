@@ -10,7 +10,6 @@ import {
   type Vec2,
 } from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
-import { SURFACE_OPTIONS, type SurfaceKind } from "@/lib/peel/SurfaceField";
 import { PEEL_SOUNDS, PeelAudio, readPeelSound, savePeelSound, type PeelSound } from "@/lib/peel/PeelAudio";
 import { APPEARANCE_CONTROLS, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, readAppearance, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
@@ -32,7 +31,6 @@ const RELEASE_JUMP_CONTROL_MAX = 0.66;
 // A screen-space cap tuned to roughly 1.5 cm on an iPhone at normal page scale.
 const GRIP_GAP_LIMIT_PX = 84;
 const DEFAULT_TEAR_FACTORS: TearFactors = { outward: 0.05, bottleneck: 0.05 };
-const EXPERIMENTS_STORAGE_KEY = "peel.experiments";
 const TEAR_FACTOR_CONTROLS = [
   { key: "outward", label: "Outward pull", hint: "How easily a lifted flap tears when pulled back." },
   { key: "bottleneck", label: "Thin neck", hint: "How strongly a constriction between wider sections adds tension." },
@@ -200,9 +198,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
   const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
   const [tearFactors, setTearFactors] = useState(DEFAULT_TEAR_FACTORS);
-  const [elasticity, setElasticity] = useState(0);
-  const [surface, setSurface] = useState<SurfaceKind>("off");
-  const [experimentAttempt, setExperimentAttempt] = useState(0);
   const [zoomIndex, setZoomIndex] = useState(ZOOM_STEPS.indexOf(100));
   const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
@@ -270,7 +265,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       gridWidth: simulation.width,
       gridHeight: simulation.height,
       seed: "0x5045454c",
-      ...simulation.experimentalSettings,
     });
   }, [recordDiagnostic]);
 
@@ -352,14 +346,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           savedJumpThreshold,
         );
         simulation.setTearFactors(savedTearFactors);
-        try {
-          const saved = JSON.parse(localStorage.getItem(EXPERIMENTS_STORAGE_KEY) ?? "{}");
-          const kind = SURFACE_OPTIONS.find(([candidate]) => candidate === saved.surface)?.[0] ?? "off";
-          simulation.setExperiments(saved.elasticity, kind);
-        } catch { /* Defaults apply when storage is unavailable. */ }
-        const experiments = simulation.experimentalSettings;
-        setElasticity(experiments.elasticity);
-        setSurface(experiments.surface);
         const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect, level.artwork.startsWith("/stickers/"));
         renderer.setLiftedTransparency(savedTransparency);
         const savedAppearance = readAppearance();
@@ -613,21 +599,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     refresh(true);
   };
 
-  const changeExperiments = (nextElasticity: number, nextSurface: SurfaceKind) => {
-    const simulation = simulationRef.current;
-    const renderer = rendererRef.current;
-    if (!simulation || !renderer) return;
-    simulation.setExperiments(nextElasticity, nextSurface);
-    renderer.setSurface(simulation.surface);
-    const settings = simulation.experimentalSettings;
-    setElasticity(settings.elasticity);
-    setSurface(settings.surface);
-    try { localStorage.setItem(EXPERIMENTS_STORAGE_KEY, JSON.stringify(settings)); } catch { /* Session-only settings. */ }
-    setExperimentAttempt(attempt => attempt + 1);
-    reset();
-    recordDiagnostic("experiment_settings", null, settings);
-  };
-
   const buildDiagnosticLog = () => {
     const simulation = simulationRef.current;
     const renderer = rendererRef.current;
@@ -654,7 +625,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         liftedTransparency,
         appearance,
         peelSound,
-        ...simulation.experimentalSettings,
       },
       environment: {
         userAgent: navigator.userAgent,
@@ -775,7 +745,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         )}
         <div id="peel-charts" className="bottom-panel-charts">
           <RollingSignalChart
-            key={`tension-${experimentAttempt}`}
             label="Tension"
             value={snapshot.stress}
             threshold={tearThreshold}
@@ -783,7 +752,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             scaleMax={TENSION_CONTROL_MAX}
           />
           <RollingSignalChart
-            key={`area-${experimentAttempt}`}
             label="Area jump"
             value={snapshot.areaJump}
             threshold={releaseJumpThreshold}
@@ -847,19 +815,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
               </label>
             ))}
             <small>Autosaved for {level.name}</small>
-            <label className="setting-control" title="Experimental stretch under load. Changing this setting restarts the level.">
-              <div><span>Elasticity</span><output>{Math.round(elasticity * 100)}</output></div>
-              <input type="range" min="0" max="100" step="1" aria-label="Elasticity" disabled={!ready}
-                value={Math.round(elasticity * 100)}
-                onChange={event => changeExperiments(Number(event.currentTarget.value) / 100, surface)} />
-            </label>
-            <label className="setting-control" title="Experimental board geometry. Changing this setting restarts the level.">
-              <span>Surface</span>
-              <select value={surface} disabled={!ready}
-                onChange={event => changeExperiments(elasticity, event.currentTarget.value as SurfaceKind)}>
-                {SURFACE_OPTIONS.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
-              </select>
-            </label>
             <section className="log-tools" aria-label="Diagnostic recording">
               <header><span>Diagnostic log</span><output>{diagnosticEvents.current.length} events</output></header>
               <p>Local only. Reproduce the issue, then export the peel events and recent frame timings.</p>
