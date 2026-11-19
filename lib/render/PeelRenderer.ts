@@ -80,21 +80,23 @@ const vertexShader = /* glsl */ `
       p.xy += uTornOffset;
       p.z += 0.08;
     } else if (uLayer > 1.5) {
-      float lift = 0.018;
-      #ifndef PEEL_DETACHED
-        // Keep the shared edge pinned and limit the bend by how much free
-        // material there is between this vertex and that edge.
-        float freeCells = max(0.0, texture2D(uCurlDistances, uv).r * 255.0 - 3.0);
-        q = min(q, freeCells * uCurlCellSize * 0.55);
-        lift *= smoothstep(0.0, 0.07, q);
-      #endif
       float arcLength = q * (1.0 + uStretch);
       float coneScale = mix(1.0, clamp(1.0 + lateral * 0.24, 0.58, 1.46), uCone);
       float radius = max(0.12, uRadius * coneScale);
       theta = min(arcLength / radius, PI);
       float extra = max(arcLength - PI * radius, 0.0);
       p.xy += direction * (q + extra - radius * sin(theta));
-      p.z = lift + radius * (1.0 - cos(theta));
+      p.z = 0.018 + radius * (1.0 - cos(theta));
+      #ifndef PEEL_DETACHED
+        // Close small gaps near the glued edge without shortening the curl.
+        // Large displacements need a bounded correction to avoid stretching the sheet.
+        float cellsFromSeam = texture2D(uCurlDistances, uv).r * 255.0;
+        vec3 displacement = p - position;
+        float nearSeam = 1.0 - smoothstep(3.0, 16.0, cellsFromSeam);
+        float correction = nearSeam * min(1.0, 8.0 * uCurlCellSize / max(length(displacement), 0.0001));
+        p -= correction * displacement;
+        theta *= 1.0 - correction;
+      #endif
     } else if (uLayer > 0.5) {
       p.z += 0.018;
     }
