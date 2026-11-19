@@ -29,10 +29,16 @@ function depthForShift(shift: number, depth: number, radius: number) {
   return low;
 }
 
+function pinnedCorrection(depth: number) {
+  const encoded = DataUtils.toHalfFloat(depth);
+  return DataUtils.fromHalfFloat(encoded) < depth ? encoded + 1 : encoded;
+}
+
 /** Shapes one curl while keeping the glued seam pinned and limiting in-plane stretch. */
 export class AttachedCurl {
   readonly pixels: Uint16Array;
   private readonly depths: Float32Array;
+  private readonly nominalDepths: Float32Array;
   private readonly radii: Float32Array;
   private readonly shifts: Float32Array;
   private readonly cells: Int32Array;
@@ -57,27 +63,35 @@ export class AttachedCurl {
     this.stepY = stickerHeight / height;
     this.pixels = new Uint16Array(size);
     this.depths = new Float32Array(size);
+    this.nominalDepths = new Float32Array(size);
     this.radii = new Float32Array(size);
     this.shifts = new Float32Array(size);
     this.cells = new Int32Array(size);
   }
 
   update(state: Uint8Array, seam: Uint8Array, grab: Vec2, direction: Vec2, depth: number, radius: number, cone: boolean) {
-    const { width, height, stepX, stepY, sources, cells, depths, radii, shifts, pixels } = this;
+    const { width, height, stepX, stepY, sources, cells, depths, nominalDepths, radii, shifts, pixels } = this;
     const cellSize = Math.min(stepX, stepY);
     shifts.fill(Infinity);
     pixels.fill(0);
     let count = 0;
     for (let i = 0; i < seam.length; i++) {
-      if (sources[i] !== i || !state[i * 4 + 2]) continue;
+      if (sources[i] !== i) continue;
       const x = (i % width + 0.5 - width / 2) * stepX - grab.x;
       const y = (Math.floor(i / width) + 0.5 - height / 2) * stepY - grab.y;
       const along = x * direction.x + y * direction.y;
+      const nominal = Math.max(0, depth - along);
+      if (!state[i * 4 + 2]) {
+        // Keep the flat side of the feathered join at its original position.
+        pixels[i] = pinnedCorrection(nominal);
+        continue;
+      }
       const lateral = y * direction.x - x * direction.y;
       const localRadius = cone ? Math.max(0.12, radius * Math.max(0.58, Math.min(1.46, 1 + lateral * 0.24))) : radius;
-      const q = attachedCurlDepth(Math.max(0, depth - along), seam[i], cellSize);
+      const q = attachedCurlDepth(nominal, seam[i], cellSize);
       cells[count++] = i;
       depths[i] = q;
+      nominalDepths[i] = nominal;
       radii[i] = localRadius;
       shifts[i] = curlShift(q, localRadius);
     }
@@ -105,24 +119,26 @@ export class AttachedCurl {
       const i = cells[j];
       const q = depths[i];
       const lowShift = shifts[i];
-      if (lowShift + 0.00001 < curlShift(q, radii[i])) depths[i] = depthForShift(lowShift, q, radii[i]);
+      const limited = lowShift + 0.00001 < curlShift(q, radii[i]) ? depthForShift(lowShift, q, radii[i]) : q;
+      depths[i] = Math.max(0, nominalDepths[i] - limited);
     }
+    // Smooth only the correction to the cylindrical arc. Smoothing the arc
+    // itself changes its slope along the artwork edge where neighbors are missing.
     for (let j = 0; j < count; j++) {
       const i = cells[j];
-      const q = depths[i];
-      let sum = q * 4;
+      let sum = depths[i] * 4;
       let weight = 4;
-      // Smooth changes between grid cells on the free flap while keeping the seam pinned.
       if (seam[i] > 2) {
-        const left = i % width > 0 ? i - 1 : -1;
-        const right = i % width < width - 1 ? i + 1 : -1;
-        if (left >= 0 && shifts[left] !== Infinity) { sum += depths[left]; weight++; }
-        if (right >= 0 && shifts[right] !== Infinity) { sum += depths[right]; weight++; }
+        const col = i % width;
+        if (col > 0 && shifts[i - 1] !== Infinity) { sum += depths[i - 1]; weight++; }
+        if (col < width - 1 && shifts[i + 1] !== Infinity) { sum += depths[i + 1]; weight++; }
         if (i >= width && shifts[i - width] !== Infinity) { sum += depths[i - width]; weight++; }
         if (i + width < shifts.length && shifts[i + width] !== Infinity) { sum += depths[i + width]; weight++; }
       }
-      pixels[i] = DataUtils.toHalfFloat(sum / weight);
+      pixels[i] = seam[i] <= 1 ? pinnedCorrection(depths[i]) : DataUtils.toHalfFloat(sum / weight);
     }
+    // Extend the correction into the artwork fringe. The shader evaluates the
+    // nominal arc at the actual vertex, so curved outlines keep a smooth bend.
     for (let i = 0; i < sources.length; i++) {
       const source = sources[i];
       if (source < 0 || source === i) continue;
@@ -152,7 +168,7 @@ export class AttachedCurl {
     return changed;
   }
 
-  sample(uv: Vec2) {
+  sampleDepth(uv: Vec2, nominalDepth: number) {
     const { width, height, pixels } = this;
     const x = Math.max(0, Math.min(width - 1, uv.x * width - 0.5));
     const y = Math.max(0, Math.min(height - 1, uv.y * height - 0.5));
@@ -165,6 +181,6 @@ export class AttachedCurl {
     const depth = (column: number, line: number) => DataUtils.fromHalfFloat(pixels[line * width + column]);
     const low = depth(col, row) * (1 - tx) + depth(right, row) * tx;
     const high = depth(col, above) * (1 - tx) + depth(right, above) * tx;
-    return low * (1 - ty) + high * ty;
+    return Math.max(0, nominalDepth - (low * (1 - ty) + high * ty));
   }
 }

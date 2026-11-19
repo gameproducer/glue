@@ -65,7 +65,10 @@ test("an off-axis seam limits extension while a straight fold keeps its original
   const radius = 0.32;
   const halfTurn = Math.PI * radius;
   const shift = depth => depth >= halfTurn ? 2 * depth - halfTurn : depth - radius * Math.sin(depth / radius);
-  const sample = col => curl.sample({ x: (col + 0.5) / width, y: 0.55 });
+  const sample = (col, grab, depth) => {
+    const x = (col + 0.5) / width;
+    return curl.sampleDepth({ x, y: 0.55 }, Math.max(0, depth - (x - 0.5) * 6 + grab));
+  };
   const run = (flatColumn, grab, depth) => {
     state.fill(0);
     for (let i = 0; i < size; i++) state[i * 4 + (i % width === flatColumn ? 0 : 2)] = 255;
@@ -74,11 +77,35 @@ test("an off-axis seam limits extension while a straight fold keeps its original
   };
 
   run(0, 2.95, 2);
-  assert.equal(sample(1), 0);
-  assert.ok(sample(40) > 0.5);
-  assert.ok(shift(sample(40)) <= (40 - 1) * 0.1 * 0.16 + 0.001);
+  assert.ok(sample(1, 2.95, 2) < 0.002);
+  const extension = sample(40, 2.95, 2);
+  assert.ok(extension > 0.5);
+  assert.ok(shift(extension) <= (40 - 1) * 0.1 * 0.16 + 0.001);
 
   run(width - 1, -2.95, 5.7);
-  assert.equal(sample(58), 0);
-  assert.ok(Math.abs(sample(10) - 4.7) < 0.001);
+  assert.equal(sample(58, -2.95, 5.7), 0);
+  assert.ok(Math.abs(sample(10, -2.95, 5.7) - 4.7) < 0.001);
+});
+
+test("a smooth free curl continues across artwork pixels outside the simulation mask", () => {
+  const width = 60;
+  const height = 10;
+  const size = width * height;
+  const mask = new Uint8Array(size);
+  const state = new Uint8Array(size * 4);
+  for (let i = 0; i < size; i++) {
+    const col = i % width;
+    if (col < 2) continue;
+    mask[i] = 1;
+    state[i * 4 + (col === width - 1 ? 0 : 2)] = 255;
+  }
+  const seam = new Uint8Array(size);
+  writeCurlDistances(state, seam, width, new Int32Array(size));
+  const curl = new AttachedCurl(width, height, 6, 1, nearestStateSources(mask, width, height));
+  curl.update(state, seam, { x: -2.75, y: 0 }, { x: 1, y: 0 }, 5.5, 0.32, false);
+  for (const col of [0, 1]) {
+    const x = (col + 0.5) / width;
+    const nominal = 5.5 - (x - 0.5) * 6 - 2.75;
+    assert.equal(curl.sampleDepth({ x, y: 0.55 }, nominal), nominal);
+  }
 });

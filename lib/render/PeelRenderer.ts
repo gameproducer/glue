@@ -90,8 +90,8 @@ const vertexShader = /* glsl */ `
     } else if (uLayer > 1.5) {
       #ifndef PEEL_DETACHED
         // The depth field pins the actual seam and limits stretch along it.
-        float attachedDepth = texture2D(uAttachedCurl, vUv).r;
-        q = min(q, attachedDepth);
+        float correction = texture2D(uAttachedCurl, vUv).r;
+        q = max(0.0, q - correction);
       #endif
       float arcLength = q * (1.0 + uStretch);
       float coneScale = mix(1.0, clamp(1.0 + lateral * 0.24, 0.58, 1.46), uCone);
@@ -812,7 +812,7 @@ export class PeelRenderer {
     const grab = this.uvToWorld(snapshot.grab);
     const worldDepth = snapshot.frontDepth * this.stickerHeight;
     this.prepareAttachedCurl(grab, snapshot.direction, worldDepth, profile);
-    const depth = Math.min(worldDepth, this.attachedCurl.sample(snapshot.grab));
+    const depth = this.attachedCurl.sampleDepth(snapshot.grab, worldDepth);
     const radius = curlRadius(profile);
     const length = depth * (1 + tensionStretch(snapshot.stress, snapshot.tearThreshold));
     const theta = Math.min(length / radius, Math.PI);
