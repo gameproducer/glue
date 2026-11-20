@@ -4,6 +4,7 @@ import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_
 import { AttachedCurl } from "./AttachedCurl";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
+import { puffyNormals } from "./PuffyFinish";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
@@ -25,6 +26,7 @@ type DissolvingShape = {
 
 type PeelUniforms = {
   uArt: { value: THREE.Texture };
+  uPuff: { value: THREE.Texture };
   uWhiteArtwork: { value: number };
   uStickerColor: { value: THREE.Color };
   uFaceFinish: { value: number };
@@ -119,6 +121,7 @@ const vertexShader = /* glsl */ `
 const fragmentShader = /* glsl */ `
   precision highp float;
   uniform sampler2D uArt;
+  uniform sampler2D uPuff;
   uniform float uWhiteArtwork;
   uniform vec3 uStickerColor;
   uniform float uFaceFinish;
@@ -235,7 +238,28 @@ const fragmentShader = /* glsl */ `
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
-    if (uFaceFinish > 13.5) {
+    if (uFaceFinish > 18.5) {
+      vec3 coating = normalize(texture2D(uPuff, vUv).rgb * 2.0 - 1.0);
+      vec2 axis = normalize(uDirection);
+      vec2 side = vec2(-axis.y, axis.x);
+      // Carry the coating's local normals through the same rotation as the curl.
+      vec3 tangent = vec3(axis * normal.z, -dot(normal.xy, axis));
+      vec3 puffNormal = normalize(tangent * dot(coating.xy, axis)
+        + vec3(side, 0.0) * dot(coating.xy, side) + normal * coating.z);
+      float puffLight = max(dot(puffNormal, lightDirection), 0.0);
+      float rim = pow(1.0 - max(puffNormal.z, 0.0), 3.0);
+      vec3 reflection = reflect(vec3(0.0, 0.0, -1.0), puffNormal);
+      // Two studio strip lights create long, white reflections around the dome.
+      float strip = exp(-pow((reflection.x + 0.38) / 0.095, 2.0)
+        - pow((reflection.y - 0.42) / 0.68, 4.0));
+      float softbox = exp(-pow((reflection.x + 0.31) / 0.32, 2.0)
+        - pow((reflection.y - 0.52) / 0.65, 2.0));
+      float secondary = exp(-pow((reflection.x - 0.60) / 0.065, 2.0)
+        - pow((reflection.y + 0.18) / 0.42, 4.0));
+      printedColor = artworkColor * (0.52 + puffLight * 0.52);
+      printedColor += artworkColor * softbox * 0.16 + vec3(1.0, 0.88, 0.67) * rim * 0.10;
+      printedColor = mix(printedColor, vec3(1.0, 0.985, 0.94), clamp(strip * 0.94 + secondary * 0.56, 0.0, 0.97));
+    } else if (uFaceFinish > 13.5) {
       vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
       // A reflected light panel moves across the coating as the sheet curls.
       vec2 reflected = sheet + reflect(vec3(0.0, 0.0, -1.0), normal).xy * 0.56;
@@ -479,6 +503,7 @@ export class PeelRenderer {
   private readonly shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private readonly resizeObserver: ResizeObserver;
   private readonly originalWhiteArtwork: boolean;
+  private puffTexture: THREE.DataTexture | null = null;
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
   private zoom = 1;
   private viewportWidth = 1;
@@ -503,7 +528,7 @@ export class PeelRenderer {
   constructor(
     private readonly host: HTMLElement,
     private readonly simulation: PeelSimulation,
-    artwork: HTMLImageElement,
+    private readonly artwork: HTMLImageElement,
     artworkAspect: number,
     whiteArtwork = false,
   ) {
@@ -565,6 +590,7 @@ export class PeelRenderer {
     for (const pass of layerPasses) {
       const uniforms: PeelUniforms = {
         uArt: { value: art },
+        uPuff: { value: art },
         uWhiteArtwork: { value: whiteArtwork ? 1 : 0 },
         uStickerColor: { value: new THREE.Color(0xffffff) },
         uFaceFinish: { value: 0 },
@@ -853,6 +879,23 @@ export class PeelRenderer {
   }
 
   setAppearance(appearance: PeelAppearance) {
+    if (appearance.face === 19 && !this.puffTexture) {
+      const width = this.artwork.naturalWidth;
+      const height = this.artwork.naturalHeight;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true })!;
+      context.drawImage(this.artwork, 0, 0);
+      const image = context.getImageData(0, 0, width, height).data;
+      const alpha = new Uint8Array(width * height);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) alpha[y * width + x] = image[((height - y - 1) * width + x) * 4 + 3];
+      }
+      this.puffTexture = new THREE.DataTexture(puffyNormals(alpha, width, height), width, height, THREE.RGBAFormat);
+      this.puffTexture.minFilter = this.puffTexture.magFilter = THREE.LinearFilter;
+      this.puffTexture.needsUpdate = true;
+    }
     const background = BACKGROUNDS[appearance.background].color;
     this.surfaceMaterial.emissive.set(background);
     this.surfaceMaterial.emissiveIntensity = appearance.background === 0 ? 0 : 0.95;
@@ -864,6 +907,7 @@ export class PeelRenderer {
       uniforms.uWhiteArtwork.value = sticker || this.originalWhiteArtwork ? 1 : 0;
       uniforms.uStickerColor.value.set(sticker ?? "#ffffff");
       uniforms.uFaceFinish.value = appearance.face;
+      if (this.puffTexture) uniforms.uPuff.value = this.puffTexture;
       uniforms.uBackFinish.value = appearance.back;
       uniforms.uReleaseFinish.value = appearance.released;
     }
@@ -1001,6 +1045,7 @@ export class PeelRenderer {
     this.stateTexture.dispose();
     this.curlTexture.dispose();
     this.releaseTexture.dispose();
+    this.puffTexture?.dispose();
     this.renderer.dispose();
     this.domElement.remove();
   }

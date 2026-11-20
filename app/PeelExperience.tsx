@@ -10,7 +10,7 @@ import {
   type Vec2,
 } from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
-import { PEEL_SOUNDS, PeelAudio, readPeelSound, savePeelSound, type PeelSound } from "@/lib/peel/PeelAudio";
+import { DEFAULT_PEEL_VOLUME, PEEL_SOUNDS, PeelAudio, readPeelSound, readPeelVolume, savePeelSound, savePeelVolume, type PeelSound } from "@/lib/peel/PeelAudio";
 import { APPEARANCE_CONTROLS, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, readAppearance, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import stickerLevels from "@/lib/peel/levels.json";
@@ -193,6 +193,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const menuRef = useRef<HTMLElement>(null);
   const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
   const [peelSound, setPeelSound] = useState<PeelSound>("off");
+  const [peelVolume, setPeelVolume] = useState(DEFAULT_PEEL_VOLUME);
   const peelSoundRef = useRef<PeelSound>("off");
   const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
   const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
@@ -211,6 +212,9 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     const saved = readPeelSound();
     peelSoundRef.current = saved;
     setPeelSound(saved);
+    const volume = readPeelVolume();
+    setPeelVolume(volume);
+    audio.setVolume(volume);
     audio.setMuted(saved === "off");
   }, [audio]);
 
@@ -832,6 +836,23 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
               </label>
               <button type="button" disabled={peelSound === "off"} onClick={() => audio.preview(peelSound)}>Preview</button>
             </div>
+            <label className="setting-control">
+              <div><span>Sound volume</span><output>{Math.round(peelVolume * 100)}%</output></div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                aria-label="Sound volume"
+                value={Math.round(peelVolume * 100)}
+                onChange={event => {
+                  const volume = Number(event.currentTarget.value) / 100;
+                  setPeelVolume(volume);
+                  audio.setVolume(volume);
+                  savePeelVolume(volume);
+                }}
+              />
+            </label>
             {APPEARANCE_CONTROLS.map(({ key, label, labels }) => (
               <label key={key} className="setting-control">
                 <span>{label}</span>

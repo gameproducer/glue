@@ -9,6 +9,9 @@ export const PEEL_SOUNDS = [
 
 export type PeelSound = (typeof PEEL_SOUNDS)[number]["id"];
 const STORAGE_KEY = "peel.sound";
+const VOLUME_STORAGE_KEY = "peel.sound.volume";
+export const DEFAULT_PEEL_VOLUME = 0.8;
+const MAX_OUTPUT_GAIN = 3.25;
 const GRAIN_GAP = 0.04;
 const BASS_GRAIN_GAP = 0.12;
 
@@ -31,10 +34,24 @@ export function savePeelSound(sound: PeelSound) {
   try { localStorage.setItem(STORAGE_KEY, sound); } catch { /* Storage is optional. */ }
 }
 
+export function readPeelVolume() {
+  try {
+    const saved = localStorage.getItem(VOLUME_STORAGE_KEY);
+    const value = saved === null ? NaN : Number(saved);
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : DEFAULT_PEEL_VOLUME;
+  } catch { return DEFAULT_PEEL_VOLUME; }
+}
+
+export function savePeelVolume(volume: number) {
+  try { localStorage.setItem(VOLUME_STORAGE_KEY, String(volume)); } catch { /* Storage is optional. */ }
+}
+
 export class PeelAudio {
   private context: AudioContext | null = null;
   private noise: AudioBuffer | null = null;
   private output: GainNode | null = null;
+  private volume = DEFAULT_PEEL_VOLUME;
+  private muted = false;
   private accumulated = 0;
   private nextGrain = 0;
   private previewingUntil = 0;
@@ -47,8 +64,15 @@ export class PeelAudio {
         const samples = noise.getChannelData(0);
         for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
         const output = context.createGain();
-        output.gain.value = 0.65;
-        output.connect(context.destination);
+        output.gain.value = this.muted ? 0 : this.volume * MAX_OUTPUT_GAIN;
+        // Leave individual grains dynamic, but catch peaks when several overlap.
+        const limiter = context.createDynamicsCompressor();
+        limiter.threshold.value = -6;
+        limiter.knee.value = 3;
+        limiter.ratio.value = 20;
+        limiter.attack.value = 0.003;
+        limiter.release.value = 0.10;
+        output.connect(limiter).connect(context.destination);
         this.context = context;
         this.noise = noise;
         this.output = output;
@@ -58,8 +82,19 @@ export class PeelAudio {
   }
 
   setMuted(muted: boolean) {
+    this.muted = muted;
+    this.updateVolume();
+  }
+
+  setVolume(volume: number) {
+    if (!Number.isFinite(volume)) return;
+    this.volume = Math.max(0, Math.min(1, volume));
+    this.updateVolume();
+  }
+
+  private updateVolume() {
     if (this.context && this.output) {
-      this.output.gain.setTargetAtTime(muted ? 0 : 0.65, this.context.currentTime, 0.016);
+      this.output.gain.setTargetAtTime(this.muted ? 0 : this.volume * MAX_OUTPUT_GAIN, this.context.currentTime, 0.016);
     }
   }
 
