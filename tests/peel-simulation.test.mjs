@@ -527,6 +527,64 @@ test("a thin neck adds width-dependent tension independently of area jump", () =
   assert.ok(disabled.frame > thin.frame);
 });
 
+test("thin neck tension finds a one-cell connection hidden by a nearby lobe", () => {
+  const width = 100;
+  const height = 84;
+  const mask = Uint8Array.from({ length: width * height }, (_, index) => {
+    const x = index % width;
+    const y = Math.floor(index / width);
+    const flap = x >= 5 && x <= 68 && y >= 10 && y <= 31;
+    const anchor = x >= 12 && x <= 83 && y >= 39 && y <= 72;
+    const connection = (y === 31 && x >= 68 && x <= 78) || (x === 78 && y >= 31 && y <= 39);
+    return flap || anchor || connection ? 1 : 0;
+  });
+  const origin = { x: 5 / (width - 1), y: 20 / (height - 1) };
+  const simulations = [0, 0.5, 1].map((bottleneck) => {
+    const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.4, 1);
+    simulation.setTearFactors({ outward: 0, bottleneck });
+    assert.equal(simulation.begin(origin, 100), true);
+    return simulation;
+  });
+  const [off, half, full] = simulations;
+  for (let frame = 1; frame <= 450 && !full.snapshot().torn; frame++) {
+    for (const simulation of simulations) {
+      simulation.drag({ x: origin.x + frame * 0.003, y: origin.y }, 100 + frame * 32);
+    }
+    assert.ok(off.snapshot().stress <= half.snapshot().stress);
+    assert.ok(half.snapshot().stress <= full.snapshot().stress);
+  }
+  const step = full.diagnostics().lastStep;
+  assert.equal(full.snapshot().tearFailure?.kind, "tension");
+  assert.equal(step.frontCells, 1);
+  assert.ok(step.bottleneckLoad >= 0.75);
+  assert.ok(step.liftedCells >= 1408);
+  assert.equal(off.snapshot().torn, false);
+  assert.ok(full.state.includes(Cell.adhered));
+});
+
+test("maximum thin neck tension leaves a widening tip and a broad edge intact", () => {
+  const width = 100;
+  const height = 84;
+  for (const tip of [false, true]) {
+    const mask = Uint8Array.from({ length: width * height }, (_, index) => {
+      const x = index % width;
+      const y = Math.floor(index / width);
+      const halfWidth = tip ? Math.min(20, Math.floor((x - 5) / 2)) : 20;
+      return x >= 5 && x <= 83 && Math.abs(y - 40) <= halfWidth ? 1 : 0;
+    });
+    const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.4, 1);
+    simulation.setTearFactors({ outward: 0, bottleneck: 1 });
+    const origin = { x: 5 / (width - 1), y: 40 / (height - 1) };
+    assert.equal(simulation.begin(origin, 100), true);
+    for (let frame = 1; frame <= 600 && !simulation.snapshot().complete; frame++) {
+      simulation.drag({ x: origin.x + frame * 0.003, y: origin.y }, 100 + frame * 32);
+      assert.equal(simulation.diagnostics().lastStep.bottleneckLoad, 0);
+      assert.equal(simulation.snapshot().torn, false);
+    }
+    assert.equal(simulation.snapshot().complete, true);
+  }
+});
+
 test("tiny reversals keep measuring and loading a thin neck", () => {
   const width = 128;
   const height = 70;

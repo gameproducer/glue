@@ -22,6 +22,7 @@ const PEEL_QUARTER_TURN = PEEL_HALF_TURN / 2;
 const PEEL_QUARTER_TRAVEL = PEEL_QUARTER_TURN - 0.082;
 const FRONT_PROPAGATION_RATIO = 6;
 const MINIMUM_TEAR_FOOTPRINT = 0.003;
+const LOCAL_NECK_MAX_WIDTH = 8;
 
 export type PeelDiagnostics = {
   current: {
@@ -125,6 +126,7 @@ export class PeelSimulation {
   private readonly minimumTearPiece: number;
   private componentAdheredCells = 0;
   private readonly componentBounds = { left: 0, right: 0, bottom: 0, top: 0 };
+  private shortFrontWeight = 0.54;
   private readonly visited: Uint8Array;
   private readonly queue: Int32Array;
   private readonly nextFrontWave: Int32Array;
@@ -413,7 +415,10 @@ export class PeelSimulation {
     let bottleneckMs = 0;
     if (this.tearFactors.bottleneck > 0 && hasAnchor && this.liftedCells >= minimumPiece) {
       const bottleneckStarted = performance.now();
-      bottleneckLoad = this.measureBottleneck();
+      bottleneckLoad = Math.max(
+        this.measureProjectedBottleneck(),
+        frontCells <= LOCAL_NECK_MAX_WIDTH ? this.measureLocalBottleneck(queuedCells) : 0,
+      );
       bottleneckMs = performance.now() - bottleneckStarted;
     }
     // A newly forming local front is short by construction. Ramp in the
@@ -422,8 +427,8 @@ export class PeelSimulation {
     const resistanceLoad = clamp((averageAdhesion - 0.42) / 0.58);
     const reachLoad = clamp(this.frontDepth / (this.aspect * 0.78));
     const speedLoad = clamp((speed - 1.5) / 5) * 0.12;
-    const shapeLoad = narrowLoad * 0.54 * (1 - this.tearFactors.bottleneck)
-      + bottleneckLoad * 0.8 * this.tearFactors.bottleneck;
+    const frontLoad = narrowLoad * this.shortFrontWeight;
+    const shapeLoad = frontLoad + (1 - frontLoad) * bottleneckLoad * 0.8 * this.tearFactors.bottleneck;
     const targetStress = clamp(shapeLoad + resistanceLoad * 0.28 + reachLoad * 0.18 + speedLoad);
     const wasNearTear = this.tearThreshold > 0 && this.heldStress >= this.tearThreshold * 0.9;
     this.heldStress += (targetStress - this.heldStress) * 0.2;
@@ -711,6 +716,11 @@ export class PeelSimulation {
       if (cell >= this.width) visit(cell - this.width);
       if (cell + this.width < this.state.length) visit(cell + this.width);
     }
+    // A short front alone is meaningful on a thin stroke. Broad components
+    // need evidence of a local constriction before they receive a strong load.
+    const span = Math.hypot(bounds.right - bounds.left, bounds.top - bounds.bottom) * (this.height - 1);
+    const averageWidth = tail / Math.max(1, span);
+    this.shortFrontWeight = 0.1 + 0.44 * clamp((18 - averageWidth) / 12);
     let length = Math.hypot(inwardX, inwardY);
     if (length < 1e-6 && tail === 1 && !grabbingReleased) {
       // For an isolated pixel, only a press off its center identifies an edge.
@@ -815,7 +825,65 @@ export class PeelSimulation {
     this.frontDepth = depth + 1 / this.height;
   }
 
-  private measureBottleneck() {
+  private measureLocalBottleneck(queuedCells: number) {
+    const front: number[] = [];
+    const { state, width } = this;
+    // The projected slice can cross other arms of the sticker. Count only
+    // lifted cells that actually transfer the pull to still-adhered material.
+    for (let i = 0; i < queuedCells; i++) {
+      const cell = this.queue[i];
+      if (state[cell] !== Cell.lifted) continue;
+      const x = cell % width;
+      if ((x > 0 && state[cell - 1] === Cell.adhered)
+        || (x + 1 < width && state[cell + 1] === Cell.adhered)
+        || state[cell - width] === Cell.adhered || state[cell + width] === Cell.adhered) {
+        front.push(cell);
+        if (front.length > LOCAL_NECK_MAX_WIDTH) return 0;
+      }
+    }
+    if (front.length === 0) return 0;
+
+    // A tip or uniform thin strip lacks a broad shoulder on one or both sides.
+    // Use graph distance so the shoulders can wrap around holes or bend away
+    // from the pull direction.
+    const shoulderWidth = Math.max(8, front.length * 2);
+    this.visited.fill(0);
+    if (!this.hasNeckShoulder(front, Cell.lifted, shoulderWidth)
+      || !this.hasNeckShoulder(front, Cell.adhered, shoulderWidth)) return 0;
+
+    return (LOCAL_NECK_MAX_WIDTH + 1 - front.length) / LOCAL_NECK_MAX_WIDTH;
+  }
+
+  private hasNeckShoulder(front: readonly number[], layer: number, shoulderWidth: number) {
+    const { state, width, visited, nextFrontWave: queue } = this;
+    let tail = 0;
+    let broad = false;
+    const visit = (cell: number) => {
+      if (state[cell] !== layer || visited[cell]) return;
+      visited[cell] = 1;
+      queue[tail++] = cell;
+    };
+    const visitNeighbors = (cell: number) => {
+      const x = cell % width;
+      if (x > 0) visit(cell - 1);
+      if (x + 1 < width) visit(cell + 1);
+      visit(cell - width);
+      visit(cell + width);
+    };
+    for (const cell of front) {
+      if (layer === Cell.lifted) visit(cell);
+      else visitNeighbors(cell);
+    }
+    for (let head = 0; head < tail;) {
+      const end = tail;
+      broad ||= end - head >= shoulderWidth;
+      if (broad && tail >= this.minimumTearPiece) return true;
+      while (head < end) visitNeighbors(queue[head++]);
+    }
+    return false;
+  }
+
+  private measureProjectedBottleneck() {
     const widths = this.sectionWidths;
     widths.fill(0);
     const center = (widths.length - 1) / 2;

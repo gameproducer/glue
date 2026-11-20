@@ -33,7 +33,7 @@ const DEFAULT_LEVEL = {
 const GRIP_GAP_LIMIT_PX = 84;
 const TEAR_FACTOR_CONTROLS = [
   { key: "outward", label: "Outward pull", hint: "How easily a lifted flap tears when pulled back." },
-  { key: "bottleneck", label: "Thin neck", hint: "How strongly a constriction between wider sections adds tension." },
+  { key: "bottleneck", label: "Thin neck", hint: "Extra tension when a narrow connection carries the pull between wider sections." },
 ] as const;
 const emptySnapshot: PeelSnapshot = {
   moves: 0,
