@@ -9,6 +9,7 @@ export const BACK_FINISHES = [
   "Amber resin", "Soap bubble", "Lenticular film", "Ripple glass", "Dew beads",
 ] as const;
 export const RELEASE_FINISHES = ["Dimmed", "Transparent", "Frosted", "Diagonal hatch"] as const;
+export const FILM_OPTICS = ["Off", "Fisheye", "Ripple lens", "Psychedelic", "Prismatic"] as const;
 
 export const BACKGROUNDS = [
   { name: "Graphite", color: "#25222b" },
@@ -32,11 +33,12 @@ export const STICKER_COLORS = [
   { name: "Smoky quartz", color: "#d2aea5" },
 ] as const;
 
-export type PeelAppearance = { face: number; back: number; released: number; background: number; sticker: number };
-export const DEFAULT_APPEARANCE: PeelAppearance = { face: 0, back: 0, released: 0, background: 0, sticker: 0 };
+export type PeelAppearance = { face: number; back: number; optics: number; released: number; background: number; sticker: number };
+export const DEFAULT_APPEARANCE: PeelAppearance = { face: 0, back: 0, optics: 0, released: 0, background: 0, sticker: 0 };
 export const APPEARANCE_CONTROLS = [
   { key: "face", label: "Front finish", labels: FACE_FINISHES },
   { key: "back", label: "Back film", labels: BACK_FINISHES },
+  { key: "optics", label: "Film optics", labels: FILM_OPTICS },
   { key: "released", label: "Unglued areas", labels: RELEASE_FINISHES },
   { key: "background", label: "Background", labels: BACKGROUNDS.map(({ name }) => name) },
   { key: "sticker", label: "Sticker color", labels: STICKER_COLORS.map(({ name }) => name) },

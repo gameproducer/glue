@@ -5,6 +5,7 @@ import { AttachedCurl } from "./AttachedCurl";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
 import { puffyNormals } from "./PuffyFinish";
+import { FilmOptics } from "./FilmOptics";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
@@ -27,6 +28,9 @@ type DissolvingShape = {
 type PeelUniforms = {
   uArt: { value: THREE.Texture };
   uPuff: { value: THREE.Texture };
+  uScene: { value: THREE.Texture };
+  uViewport: { value: THREE.Vector2 };
+  uFilmOptics: { value: number };
   uWhiteArtwork: { value: number };
   uStickerColor: { value: THREE.Color };
   uFaceFinish: { value: number };
@@ -71,6 +75,8 @@ const vertexShader = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
+  varying vec2 vLensCenter;
+  varying float vLensRadius;
 
   const float PI = 3.141592653589793;
 
@@ -114,6 +120,15 @@ const vertexShader = /* glsl */ `
       vCurl *= 1.0 - uRelax;
     #endif
     vNormalWorld = vec3(direction * sin(theta), cos(theta));
+    vec3 lens = vec3(uGrab + direction * uFrontDepth, 0.02 + uRadius);
+    if (uLayer > 2.5) lens.xy += uTornOffset;
+    #ifdef PEEL_DETACHED
+      lens = mix(lens, vec3(uGrab + uFlatOffset, 0.14), uRelax);
+    #endif
+    vec4 center = projectionMatrix * modelViewMatrix * vec4(lens, 1.0);
+    vec4 rim = projectionMatrix * modelViewMatrix * vec4(lens + vec3(uRadius * 2.4, 0.0, 0.0), 1.0);
+    vLensCenter = center.xy / center.w * 0.5 + 0.5;
+    vLensRadius = max(0.04, abs(rim.x / rim.w - center.x / center.w) * 0.5);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }
 `;
@@ -122,6 +137,9 @@ const fragmentShader = /* glsl */ `
   precision highp float;
   uniform sampler2D uArt;
   uniform sampler2D uPuff;
+  uniform sampler2D uScene;
+  uniform vec2 uViewport;
+  uniform float uFilmOptics;
   uniform float uWhiteArtwork;
   uniform vec3 uStickerColor;
   uniform float uFaceFinish;
@@ -139,6 +157,8 @@ const fragmentShader = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
+  varying vec2 vLensCenter;
+  varying float vLensRadius;
 
   float grain(vec2 position) {
     return fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
@@ -232,6 +252,40 @@ const fragmentShader = /* glsl */ `
       filmColor = vec3(0.57, 0.72, 0.83) + vec3(speckle * 0.17 + grazing * 0.12);
     }
     vec3 color = filmColor;
+    if (uFilmOptics > 0.5) {
+      vec2 screen = gl_FragCoord.xy / uViewport;
+      vec2 aspect = vec2(uViewport.x / uViewport.y, 1.0);
+      vec2 delta = (screen - vLensCenter) * aspect;
+      float radius = vLensRadius * aspect.x;
+      float falloff = exp(-dot(delta, delta) / (radius * radius));
+      vec2 warped = screen;
+      vec2 dispersion = vec2(0.0);
+      if (uFilmOptics > 3.5) {
+        vec2 facet = fract(vUv * vec2(18.0, 16.0)) - 0.5;
+        warped += facet * vec2(0.028, 0.018) + normal.xy * 0.025;
+        dispersion = normalize(vec2(0.7, 0.3) + normal.xy) * 0.009;
+      } else if (uFilmOptics > 2.5) {
+        float twist = falloff * 2.2 + sin(vUv.y * 18.0 + vCurl * 5.0) * 0.35;
+        mat2 rotation = mat2(cos(twist), -sin(twist), sin(twist), cos(twist));
+        warped = vLensCenter + (rotation * delta) / (aspect * (1.0 + falloff * 0.45));
+        warped += vec2(sin(vUv.y * 31.0), cos(vUv.x * 27.0)) * 0.012;
+        dispersion = vec2(cos(twist), sin(twist)) * 0.014;
+      } else if (uFilmOptics > 1.5) {
+        warped += vec2(sin(vUv.y * 38.0 + vCurl * 4.0), sin(vUv.x * 32.0 - vCurl * 3.0)) * 0.019;
+        warped += normal.xy * 0.018;
+      } else {
+        warped = vLensCenter + delta / (aspect * (1.0 + falloff * 1.25));
+        warped += normal.xy * 0.018;
+      }
+      // Clamp each dispersed ray separately at the drawing-buffer boundary.
+      vec2 edge = 0.5 / uViewport;
+      vec3 refracted = vec3(
+        texture2D(uScene, clamp(warped + dispersion, edge, 1.0 - edge)).r,
+        texture2D(uScene, clamp(warped, edge, 1.0 - edge)).g,
+        texture2D(uScene, clamp(warped - dispersion, edge, 1.0 - edge)).b
+      );
+      color = mix(refracted, filmColor, 0.10 + grazing * 0.12) + specular * 0.08;
+    }
     float alpha = silhouette * uLiftedOpacity;
     #else
     vec3 artworkColor = mix(texture2D(uArt, vUv).rgb, uStickerColor, uWhiteArtwork);
@@ -504,6 +558,8 @@ export class PeelRenderer {
   private readonly resizeObserver: ResizeObserver;
   private readonly originalWhiteArtwork: boolean;
   private puffTexture: THREE.DataTexture | null = null;
+  private filmOptics: FilmOptics | null = null;
+  private opticsMode = 0;
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
   private zoom = 1;
   private viewportWidth = 1;
@@ -591,6 +647,9 @@ export class PeelRenderer {
       const uniforms: PeelUniforms = {
         uArt: { value: art },
         uPuff: { value: art },
+        uScene: { value: art },
+        uViewport: { value: new THREE.Vector2(1, 1) },
+        uFilmOptics: { value: 0 },
         uWhiteArtwork: { value: whiteArtwork ? 1 : 0 },
         uStickerColor: { value: new THREE.Color(0xffffff) },
         uFaceFinish: { value: 0 },
@@ -879,6 +938,7 @@ export class PeelRenderer {
   }
 
   setAppearance(appearance: PeelAppearance) {
+    this.opticsMode = appearance.optics;
     if (appearance.face === 19 && !this.puffTexture) {
       const width = this.artwork.naturalWidth;
       const height = this.artwork.naturalHeight;
@@ -909,10 +969,12 @@ export class PeelRenderer {
       uniforms.uFaceFinish.value = appearance.face;
       if (this.puffTexture) uniforms.uPuff.value = this.puffTexture;
       uniforms.uBackFinish.value = appearance.back;
+      uniforms.uFilmOptics.value = appearance.optics;
       uniforms.uReleaseFinish.value = appearance.released;
     }
     for (const shape of this.dissolves) {
       shape.mesh.material.uniforms.uBackFinish.value = appearance.back;
+      shape.mesh.material.uniforms.uFilmOptics.value = appearance.optics;
       shape.mesh.material.uniforms.uReleaseFinish.value = appearance.released;
     }
   }
@@ -1046,6 +1108,7 @@ export class PeelRenderer {
     this.curlTexture.dispose();
     this.releaseTexture.dispose();
     this.puffTexture?.dispose();
+    this.filmOptics?.dispose();
     this.renderer.dispose();
     this.domElement.remove();
   }
@@ -1115,6 +1178,18 @@ export class PeelRenderer {
     const cameraStarted = performance.now();
     this.frameCamera();
     const renderStarted = performance.now();
+    if (this.opticsMode > 0 && (this.movingRegion || this.dissolves.length)) {
+      this.filmOptics ??= new FilmOptics();
+      const film = [
+        ...this.stickerMeshes.filter(mesh => mesh.material.side === THREE.BackSide),
+        ...this.dissolves.map(shape => shape.mesh),
+      ];
+      this.filmOptics.capture(this.renderer, this.scene, this.camera, film);
+      for (const mesh of film) {
+        mesh.material.uniforms.uScene.value = this.filmOptics.texture;
+        mesh.material.uniforms.uViewport.value.copy(this.filmOptics.size);
+      }
+    }
     this.renderer.render(this.scene, this.camera);
     this.frameTimings.recordFrame(now, {
       phase,

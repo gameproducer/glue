@@ -859,6 +859,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
                 <select value={appearance[key]} onChange={event => changeAppearance(key, Number(event.currentTarget.value))}>
                   {labels.map((name, index) => <option value={index} key={name}>{name}</option>)}
                 </select>
+                {key === "optics" && <small>Distorts the scene behind the lifted film. Lift transparency controls visibility.</small>}
               </label>
             ))}
             <label className="setting-control">
