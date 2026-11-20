@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PeelAudio, DEFAULT_PEEL_VOLUME, readPeelVolume, savePeelVolume } from "../lib/peel/PeelAudio.ts";
+import { DEFAULT_SOUND_RESPONSE, readSoundResponse, saveSoundResponse } from "../lib/peel/PeelSoundResponse.ts";
 
 const withGlobal = (key, value, run) => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -66,5 +67,22 @@ test("sound volume remembers zero and falls back for invalid saved values", () =
       savePeelVolume(invalid);
       assert.equal(readPeelVolume(), DEFAULT_PEEL_VOLUME);
     }
+  });
+});
+
+test("sound response persists across sessions and tolerates unavailable or invalid storage", () => {
+  const data = new Map();
+  withGlobal("localStorage", { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) }, () => {
+    assert.equal(readSoundResponse(), DEFAULT_SOUND_RESPONSE);
+    for (const mode of ["peel", "tension"]) {
+      saveSoundResponse(mode);
+      assert.equal(readSoundResponse(), mode);
+    }
+    data.set("peel.sound.response", "invalid");
+    assert.equal(readSoundResponse(), DEFAULT_SOUND_RESPONSE);
+  });
+  withGlobal("localStorage", { getItem() { throw Error(); }, setItem() { throw Error(); } }, () => {
+    assert.equal(readSoundResponse(), DEFAULT_SOUND_RESPONSE);
+    assert.doesNotThrow(() => saveSoundResponse("tension"));
   });
 });

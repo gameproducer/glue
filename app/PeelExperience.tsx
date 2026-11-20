@@ -12,6 +12,7 @@ import {
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { DEFAULT_PEEL_VOLUME, PEEL_SOUNDS, PeelAudio, readPeelSound, readPeelVolume, savePeelSound, savePeelVolume, type PeelSound } from "@/lib/peel/PeelAudio";
 import { REFERENCE_PEEL_SOUNDS } from "@/lib/peel/ReferencePeelSound";
+import { DEFAULT_SOUND_RESPONSE, PEEL_SOUND_RESPONSES, peelSoundLoad, readSoundResponse, saveSoundResponse, type PeelSoundResponse } from "@/lib/peel/PeelSoundResponse";
 import { APPEARANCE_CONTROLS, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, readAppearance, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import stickerLevels from "@/lib/peel/levels.json";
@@ -196,7 +197,9 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const [peelSound, setPeelSound] = useState<PeelSound>("off");
   const soundDescription = REFERENCE_PEEL_SOUNDS.find(({ id }) => id === peelSound)?.description;
   const [peelVolume, setPeelVolume] = useState(DEFAULT_PEEL_VOLUME);
+  const [soundResponse, setSoundResponse] = useState<PeelSoundResponse>(DEFAULT_SOUND_RESPONSE);
   const peelSoundRef = useRef<PeelSound>("off");
+  const pendingSoundProgress = useRef(0);
   const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
   const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
   const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
@@ -217,6 +220,9 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     const volume = readPeelVolume();
     setPeelVolume(volume);
     audio.setVolume(volume);
+    const response = readSoundResponse();
+    setSoundResponse(response);
+    audio.setResponse(response);
     audio.setMuted(saved === "off");
   }, [audio]);
 
@@ -279,9 +285,11 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     if (!simulation) return;
     let next = simulation.snapshot();
     const textureStarted = performance.now();
+    let gripDistance: number | null = null;
     if (updateTexture) renderer?.updateState();
     if (checkGrip && renderer) {
       const gapPx = renderer.gripGap(next, profileRef.current);
+      gripDistance = gapPx;
       if (gapPx !== null && gapPx > GRIP_GAP_LIMIT_PX / 4) {
         const tore = simulation.applyGripGap(gapPx, GRIP_GAP_LIMIT_PX,
           gapPx >= GRIP_GAP_LIMIT_PX ? renderer.tornGripContact() : null);
@@ -293,6 +301,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         next = simulation.snapshot();
         recordDiagnostic("grip_gap", next.pointer, { gapPx, limitPx: GRIP_GAP_LIMIT_PX });
       }
+    }
+    if (checkGrip) {
+      if (next.torn || next.detached) audio.stop();
+      else if (activePointer.current !== null && next.pulling) {
+        audio.playProgress(peelSoundRef.current, pendingSoundProgress.current, peelSoundLoad(next, gripDistance, GRIP_GAP_LIMIT_PX));
+      }
+      pendingSoundProgress.current = 0;
     }
     const poseStarted = performance.now();
     renderer?.setPeel(
@@ -308,7 +323,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     );
     renderer?.frameTimings.recordState(poseStarted - textureStarted, performance.now() - poseStarted);
     setSnapshot(next);
-  }, [recordDiagnostic]);
+  }, [audio, recordDiagnostic]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -388,6 +403,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           if (!point || !accepted) return;
           if (peelSoundRef.current !== "off") audio.unlock();
           audio.beginGesture();
+          pendingSoundProgress.current = 0;
           event.preventDefault();
           activePointer.current = event.pointerId;
           canvas.setPointerCapture(event.pointerId);
@@ -413,7 +429,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           });
           const next = simulation.snapshot();
           if (!next.torn && !next.outwardPulling) {
-            audio.playProgress(peelSoundRef.current, next.progress - before.progress);
+            pendingSoundProgress.current += Math.max(0, next.progress - before.progress);
           }
           scheduleTextureRefresh();
           if (!before.torn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
@@ -429,6 +445,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           const releasedByPlayer = event.type === "pointerup";
           if (releasedByPlayer && peelSoundRef.current !== "off") audio.unlock();
           activePointer.current = null;
+          pendingSoundProgress.current = 0;
+          audio.stop();
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const beforeRelease = simulation.snapshot();
           const hadGrab = beforeRelease.pulling;
@@ -470,6 +488,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         canvas.addEventListener("lostpointercapture", finishPointer);
 
         teardown = () => {
+          audio.stop();
+          pendingSoundProgress.current = 0;
           canvas.removeEventListener("pointerdown", onPointerDown);
           canvas.removeEventListener("pointermove", onPointerMove);
           canvas.removeEventListener("pointerup", finishPointer);
@@ -582,6 +602,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   };
 
   const reset = () => {
+    audio.stop();
+    pendingSoundProgress.current = 0;
     const renderer = rendererRef.current;
     const pointerId = activePointer.current;
     activePointer.current = null;
@@ -840,6 +862,20 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
               <button type="button" disabled={peelSound === "off"} onClick={() => audio.preview(peelSound)}>Preview</button>
             </div>
             {soundDescription && <small>{soundDescription}</small>}
+            <label className="setting-control">
+              <span>Sound response</span>
+              <select value={soundResponse} onChange={event => {
+                const response = event.currentTarget.value as PeelSoundResponse;
+                setSoundResponse(response);
+                audio.setResponse(response);
+                saveSoundResponse(response);
+              }}>
+                {PEEL_SOUND_RESPONSES.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+              </select>
+              <small>{soundResponse === "tension"
+                ? "Pitch and roughness follow whichever is closer to tearing. Preview rises from relaxed to near-tear."
+                : "Sound follows newly peeled material. Tension and grip distance do not change it."}</small>
+            </label>
             <label className="setting-control">
               <div><span>Sound volume</span><output>{Math.round(peelVolume * 100)}%</output></div>
               <input

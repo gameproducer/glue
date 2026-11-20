@@ -46,6 +46,27 @@ test("voices are distinct and repeatable, while pull strength changes their resp
   }
 });
 
+test("tear proximity brightens every reference voice independently of peel strength without clipping", () => {
+  const brightness = samples => {
+    let difference = 0, energy = 0;
+    for (let i = 1; i < samples.length; i++) {
+      difference += (samples[i] - samples[i - 1]) ** 2;
+      energy += samples[i] ** 2;
+    }
+    return difference / energy;
+  };
+  for (const { id } of REFERENCE_PEEL_SOUNDS) {
+    for (const rate of [22050, 48000]) {
+      const relaxed = synthesizeReferenceGrain(id, rate, 0.7, 137, 0);
+      const strained = synthesizeReferenceGrain(id, rate, 0.7, 137, 1);
+      assert.ok(brightness(strained) > brightness(relaxed) * 1.4, `${id}: tighter, brighter sound`);
+      assert.ok(strained.every(value => Number.isFinite(value) && Math.abs(value) <= 0.19));
+      assert.deepEqual(strained, synthesizeReferenceGrain(id, rate, 0.7, 137, 5), "load is clamped");
+      assert.deepEqual(relaxed, synthesizeReferenceGrain(id, rate, 0.7, 137, NaN), "invalid load is relaxed");
+    }
+  }
+});
+
 test("reference previews and gameplay use the output chain, throttle progress, and cancel scheduled voices", () => {
   const oldContext = globalThis.AudioContext;
   const oldStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -98,6 +119,18 @@ test("reference previews and gameplay use the output chain, throttle progress, a
       audio.stop();
       assert.ok(context.sources.every(source => source.stopped));
       context.sources = [];
+      audio.setResponse("peel");
+      audio.playProgress(id, 0, 1);
+      assert.equal(context.sources.length, 0, "peel-only mode stays silent while stretching");
+      audio.setResponse("tension");
+      audio.playProgress(id, 0, 1);
+      assert.equal(context.sources.length, 1, "loaded stretching is audible without new release");
+      audio.playProgress(id, 0, 1);
+      assert.equal(context.sources.length, 1, "strain sound is also rate-limited");
+      audio.setResponse("peel");
+      assert.ok(context.sources.every(source => source.stopped), "changing response cancels the old sound");
+      context.sources = [];
+      audio.setResponse("tension");
       context.currentTime = 0;
     }
     audio.preview("rubber");

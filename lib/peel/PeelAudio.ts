@@ -1,4 +1,5 @@
 import { isReferencePeelSound, REFERENCE_GRAIN_GAP, REFERENCE_PEEL_SOUNDS, REFERENCE_PREVIEW_PATTERN, synthesizeReferenceGrain, type ReferencePeelSound } from "./ReferencePeelSound.ts";
+import { clampSoundLoad, DEFAULT_SOUND_RESPONSE, type PeelSoundResponse } from "./PeelSoundResponse.ts";
 
 export const PEEL_SOUNDS = [
   { id: "off", label: "Off" },
@@ -59,6 +60,9 @@ export class PeelAudio {
   private nextGrain = 0;
   private previewingUntil = 0;
   private voices = new Set<AudioScheduledSourceNode>();
+  private response: PeelSoundResponse = DEFAULT_SOUND_RESPONSE;
+  private soundLoad = 0;
+  private lastLoadTime: number | null = null;
 
   unlock() {
     try {
@@ -96,6 +100,11 @@ export class PeelAudio {
     this.updateVolume();
   }
 
+  setResponse(response: PeelSoundResponse) {
+    this.stop();
+    this.response = response;
+  }
+
   private updateVolume() {
     if (this.context && this.output) {
       this.output.gain.setTargetAtTime(this.muted ? 0 : this.volume * MAX_OUTPUT_GAIN, this.context.currentTime, 0.016);
@@ -114,6 +123,8 @@ export class PeelAudio {
     this.accumulated = 0;
     this.nextGrain = 0;
     this.previewingUntil = 0;
+    this.soundLoad = 0;
+    this.lastLoadTime = null;
   }
 
   private track(voice: AudioScheduledSourceNode, cleanup: () => void) {
@@ -121,14 +132,19 @@ export class PeelAudio {
     voice.onended = () => { this.voices.delete(voice); cleanup(); };
   }
 
-  playProgress(sound: PeelSound, progress: number) {
-    if (!this.context || this.context.state !== "running" || sound === "off" || !Number.isFinite(progress) || progress <= 0) return;
+  playProgress(sound: PeelSound, progress: number, tearLoad = 0) {
+    if (!this.context || this.context.state !== "running" || sound === "off" || !Number.isFinite(progress) || progress < 0) return;
     const now = this.context.currentTime;
+    const target = this.response === "tension" ? clampSoundLoad(tearLoad) : 0;
+    const blend = this.lastLoadTime === null ? 1 : 1 - Math.exp(-Math.max(0, now - this.lastLoadTime) / 0.045);
+    this.soundLoad += (target - this.soundLoad) * blend;
+    this.lastLoadTime = now;
     this.accumulated += progress;
-    if (this.accumulated < 0.002 || now < this.nextGrain) return;
-    const strength = Math.min(1, 0.34 + Math.sqrt(this.accumulated) * 3.1);
-    this.grain(sound, now, strength);
-    this.nextGrain = now + (isReferencePeelSound(sound) ? REFERENCE_GRAIN_GAP : sound === "bass" || sound === "psychedelic" ? BASS_GRAIN_GAP : GRAIN_GAP);
+    if ((this.accumulated < 0.002 && target < 0.08) || now < this.nextGrain) return;
+    const strength = this.accumulated >= 0.002 ? Math.min(1, 0.34 + Math.sqrt(this.accumulated) * 3.1) : 0.2 + this.soundLoad * 0.45;
+    this.grain(sound, now, strength, undefined, this.soundLoad);
+    const gap = isReferencePeelSound(sound) ? REFERENCE_GRAIN_GAP : sound === "bass" || sound === "psychedelic" ? BASS_GRAIN_GAP : GRAIN_GAP;
+    this.nextGrain = now + gap / (1 + this.soundLoad * 0.4);
     this.accumulated = 0;
   }
 
@@ -142,20 +158,21 @@ export class PeelAudio {
       ? [0, 0.17, 0.32, 0.51]
       : [0, 0.07, 0.13, 0.17, 0.205, 0.255, 0.32, 0.41, 0.52];
     for (const [index, offset] of pattern.entries()) {
-      this.grain(sound, now + offset + 0.025, Math.sin((index + 2) / (pattern.length + 3) * Math.PI) * 0.7 + 0.2, index + 137);
+      const load = this.response === "tension" ? index / (pattern.length - 1) : 0;
+      this.grain(sound, now + offset + 0.025, Math.sin((index + 2) / (pattern.length + 3) * Math.PI) * 0.7 + 0.2, index + 137, load);
     }
     this.previewingUntil = now + (isReferencePeelSound(sound) ? 1.55 : 0.7);
   }
 
-  private grain(sound: Exclude<PeelSound, "off">, time: number, strength: number, seed = Math.floor(Math.random() * 0xffffffff)) {
+  private grain(sound: Exclude<PeelSound, "off">, time: number, strength: number, seed = Math.floor(Math.random() * 0xffffffff), load = 0) {
     const { context, noise, output } = this;
     if (!context || !noise || !output) return;
     if (isReferencePeelSound(sound)) {
-      this.referenceGrain(context, output, sound, time, strength, seed);
+      this.referenceGrain(context, output, sound, time, strength, seed, load);
       return;
     }
     if (sound === "bass" || sound === "psychedelic") {
-      this.bassGrain(context, output, sound === "psychedelic", time, strength);
+      this.bassGrain(context, output, sound === "psychedelic", time, strength, load);
       return;
     }
     const profile = profiles[sound];
@@ -164,8 +181,8 @@ export class PeelAudio {
     source.buffer = noise;
     const filter = context.createBiquadFilter();
     filter.type = "bandpass";
-    filter.frequency.value = profile.frequency * (0.82 + Math.random() * 0.4);
-    filter.Q.value = profile.q;
+    filter.frequency.value = profile.frequency * (0.82 + Math.random() * 0.4) * 2 ** (load * 1.25);
+    filter.Q.value = profile.q + load * 0.7;
     const envelope = context.createGain();
     envelope.gain.setValueAtTime(0, time);
     envelope.gain.linearRampToValueAtTime(profile.volume * strength, time + (sound === "paper" ? 0.003 : 0.012));
@@ -177,7 +194,7 @@ export class PeelAudio {
     if (sound === "chime") {
       const tone = context.createOscillator();
       const toneEnvelope = context.createGain();
-      const pitch = 330 + 220 * strength + Math.random() * 24;
+      const pitch = (330 + 220 * strength + Math.random() * 24) * (1 + load * 0.65);
       tone.frequency.setValueAtTime(pitch, time);
       tone.frequency.exponentialRampToValueAtTime(pitch * 0.84, time + 0.12);
       toneEnvelope.gain.setValueAtTime(0, time);
@@ -190,8 +207,8 @@ export class PeelAudio {
     }
   }
 
-  private referenceGrain(context: AudioContext, output: GainNode, sound: ReferencePeelSound, time: number, strength: number, seed: number) {
-    const samples = synthesizeReferenceGrain(sound, context.sampleRate, strength, seed);
+  private referenceGrain(context: AudioContext, output: GainNode, sound: ReferencePeelSound, time: number, strength: number, seed: number, load: number) {
+    const samples = synthesizeReferenceGrain(sound, context.sampleRate, strength, seed, load);
     const buffer = context.createBuffer(1, samples.length, context.sampleRate);
     buffer.getChannelData(0).set(samples);
     const source = context.createBufferSource();
@@ -202,13 +219,13 @@ export class PeelAudio {
     source.start(Math.max(time, context.currentTime));
   }
 
-  private bassGrain(context: AudioContext, output: GainNode, psychedelic: boolean, time: number, strength: number) {
+  private bassGrain(context: AudioContext, output: GainNode, psychedelic: boolean, time: number, strength: number, load: number) {
     const tone = context.createOscillator();
     const filter = context.createBiquadFilter();
     const envelope = context.createGain();
     const modulator = psychedelic ? context.createOscillator() : null;
     const modulation = modulator ? context.createGain() : null;
-    const pitch = 52 + strength * 15 + Math.random() * 4;
+    const pitch = (52 + strength * 15 + Math.random() * 4) * (1 + load * 0.9);
     const duration = psychedelic ? 0.24 : 0.16;
     const end = time + duration;
 
@@ -216,15 +233,15 @@ export class PeelAudio {
     tone.frequency.setValueAtTime(pitch, time);
     tone.frequency.exponentialRampToValueAtTime(pitch * (psychedelic ? 0.72 : 0.87), end);
     filter.type = "lowpass";
-    filter.frequency.value = psychedelic ? 215 : 175;
-    filter.Q.value = psychedelic ? 4 : 0.65;
+    filter.frequency.value = (psychedelic ? 215 : 175) * (1 + load * 2.5);
+    filter.Q.value = (psychedelic ? 4 : 0.65) + load * 0.8;
     envelope.gain.setValueAtTime(0, time);
     envelope.gain.linearRampToValueAtTime((psychedelic ? 0.105 : 0.14) * strength, time + 0.02);
     envelope.gain.exponentialRampToValueAtTime(0.0001, end);
     tone.connect(filter).connect(envelope).connect(output);
 
     if (modulator && modulation) {
-      modulator.frequency.setValueAtTime(8 + 4 * strength, time);
+      modulator.frequency.setValueAtTime(8 + 4 * strength + load * 15, time);
       modulation.gain.value = 125;
       modulator.connect(modulation).connect(filter.frequency);
       modulator.start(time);
