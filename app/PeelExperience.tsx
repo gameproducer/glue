@@ -11,6 +11,7 @@ import {
 } from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { DEFAULT_PEEL_VOLUME, PEEL_SOUNDS, PeelAudio, readPeelSound, readPeelVolume, savePeelSound, savePeelVolume, type PeelSound } from "@/lib/peel/PeelAudio";
+import { REFERENCE_PEEL_SOUNDS } from "@/lib/peel/ReferencePeelSound";
 import { APPEARANCE_CONTROLS, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, readAppearance, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import stickerLevels from "@/lib/peel/levels.json";
@@ -193,6 +194,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const menuRef = useRef<HTMLElement>(null);
   const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
   const [peelSound, setPeelSound] = useState<PeelSound>("off");
+  const soundDescription = REFERENCE_PEEL_SOUNDS.find(({ id }) => id === peelSound)?.description;
   const [peelVolume, setPeelVolume] = useState(DEFAULT_PEEL_VOLUME);
   const peelSoundRef = useRef<PeelSound>("off");
   const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
@@ -565,6 +567,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   };
 
   const changePeelSound = (sound: PeelSound) => {
+    audio.stop();
     peelSoundRef.current = sound;
     setPeelSound(sound);
     if (sound !== "off") audio.unlock();
@@ -836,6 +839,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
               </label>
               <button type="button" disabled={peelSound === "off"} onClick={() => audio.preview(peelSound)}>Preview</button>
             </div>
+            {soundDescription && <small>{soundDescription}</small>}
             <label className="setting-control">
               <div><span>Sound volume</span><output>{Math.round(peelVolume * 100)}%</output></div>
               <input

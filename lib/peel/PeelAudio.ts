@@ -1,3 +1,5 @@
+import { isReferencePeelSound, REFERENCE_GRAIN_GAP, REFERENCE_PEEL_SOUNDS, REFERENCE_PREVIEW_PATTERN, synthesizeReferenceGrain, type ReferencePeelSound } from "./ReferencePeelSound.ts";
+
 export const PEEL_SOUNDS = [
   { id: "off", label: "Off" },
   { id: "silk", label: "Silk peel (ASMR)" },
@@ -5,6 +7,7 @@ export const PEEL_SOUNDS = [
   { id: "chime", label: "Soft chime" },
   { id: "bass", label: "Deep bass" },
   { id: "psychedelic", label: "Psychedelic bass" },
+  ...REFERENCE_PEEL_SOUNDS,
 ] as const;
 
 export type PeelSound = (typeof PEEL_SOUNDS)[number]["id"];
@@ -55,6 +58,7 @@ export class PeelAudio {
   private accumulated = 0;
   private nextGrain = 0;
   private previewingUntil = 0;
+  private voices = new Set<AudioScheduledSourceNode>();
 
   unlock() {
     try {
@@ -99,18 +103,32 @@ export class PeelAudio {
   }
 
   beginGesture() {
+    this.stop();
+  }
+
+  stop() {
+    for (const voice of this.voices) {
+      try { voice.stop(); } catch { /* An ended voice may await its callback. */ }
+    }
+    this.voices.clear();
     this.accumulated = 0;
     this.nextGrain = 0;
+    this.previewingUntil = 0;
+  }
+
+  private track(voice: AudioScheduledSourceNode, cleanup: () => void) {
+    this.voices.add(voice);
+    voice.onended = () => { this.voices.delete(voice); cleanup(); };
   }
 
   playProgress(sound: PeelSound, progress: number) {
-    if (!this.context || this.context.state !== "running" || sound === "off" || progress <= 0) return;
+    if (!this.context || this.context.state !== "running" || sound === "off" || !Number.isFinite(progress) || progress <= 0) return;
     const now = this.context.currentTime;
     this.accumulated += progress;
     if (this.accumulated < 0.002 || now < this.nextGrain) return;
     const strength = Math.min(1, 0.34 + Math.sqrt(this.accumulated) * 3.1);
     this.grain(sound, now, strength);
-    this.nextGrain = now + (sound === "bass" || sound === "psychedelic" ? BASS_GRAIN_GAP : GRAIN_GAP);
+    this.nextGrain = now + (isReferencePeelSound(sound) ? REFERENCE_GRAIN_GAP : sound === "bass" || sound === "psychedelic" ? BASS_GRAIN_GAP : GRAIN_GAP);
     this.accumulated = 0;
   }
 
@@ -120,18 +138,22 @@ export class PeelAudio {
     if (!this.context) return;
     const now = this.context.currentTime;
     if (now < this.previewingUntil) return;
-    const pattern = sound === "bass" || sound === "psychedelic"
+    const pattern = isReferencePeelSound(sound) ? REFERENCE_PREVIEW_PATTERN : sound === "bass" || sound === "psychedelic"
       ? [0, 0.17, 0.32, 0.51]
       : [0, 0.07, 0.13, 0.17, 0.205, 0.255, 0.32, 0.41, 0.52];
     for (const [index, offset] of pattern.entries()) {
-      this.grain(sound, now + offset + 0.025, Math.sin((index + 2) / (pattern.length + 3) * Math.PI) * 0.7 + 0.2);
+      this.grain(sound, now + offset + 0.025, Math.sin((index + 2) / (pattern.length + 3) * Math.PI) * 0.7 + 0.2, index + 137);
     }
-    this.previewingUntil = now + 0.7;
+    this.previewingUntil = now + (isReferencePeelSound(sound) ? 1.55 : 0.7);
   }
 
-  private grain(sound: Exclude<PeelSound, "off">, time: number, strength: number) {
+  private grain(sound: Exclude<PeelSound, "off">, time: number, strength: number, seed = Math.floor(Math.random() * 0xffffffff)) {
     const { context, noise, output } = this;
     if (!context || !noise || !output) return;
+    if (isReferencePeelSound(sound)) {
+      this.referenceGrain(context, output, sound, time, strength, seed);
+      return;
+    }
     if (sound === "bass" || sound === "psychedelic") {
       this.bassGrain(context, output, sound === "psychedelic", time, strength);
       return;
@@ -150,7 +172,7 @@ export class PeelAudio {
     envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration);
     source.connect(filter).connect(envelope).connect(output);
     source.start(time, Math.random() * 0.13, duration);
-    source.onended = () => { source.disconnect(); filter.disconnect(); envelope.disconnect(); };
+    this.track(source, () => { source.disconnect(); filter.disconnect(); envelope.disconnect(); });
 
     if (sound === "chime") {
       const tone = context.createOscillator();
@@ -164,8 +186,20 @@ export class PeelAudio {
       tone.connect(toneEnvelope).connect(output);
       tone.start(time);
       tone.stop(time + 0.14);
-      tone.onended = () => { tone.disconnect(); toneEnvelope.disconnect(); };
+      this.track(tone, () => { tone.disconnect(); toneEnvelope.disconnect(); });
     }
+  }
+
+  private referenceGrain(context: AudioContext, output: GainNode, sound: ReferencePeelSound, time: number, strength: number, seed: number) {
+    const samples = synthesizeReferenceGrain(sound, context.sampleRate, strength, seed);
+    const buffer = context.createBuffer(1, samples.length, context.sampleRate);
+    buffer.getChannelData(0).set(samples);
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(output);
+    this.track(source, () => source.disconnect());
+    // Synthesis takes a little time; never start a voice behind the audio clock.
+    source.start(Math.max(time, context.currentTime));
   }
 
   private bassGrain(context: AudioContext, output: GainNode, psychedelic: boolean, time: number, strength: number) {
@@ -199,16 +233,17 @@ export class PeelAudio {
 
     tone.start(time);
     tone.stop(end);
-    tone.onended = () => {
+    this.track(tone, () => {
       tone.disconnect();
       filter.disconnect();
       envelope.disconnect();
       modulator?.disconnect();
       modulation?.disconnect();
-    };
+    });
   }
 
   dispose() {
+    this.stop();
     const context = this.context;
     this.context = null;
     this.noise = null;

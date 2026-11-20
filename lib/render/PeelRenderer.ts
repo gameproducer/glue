@@ -963,7 +963,6 @@ export class PeelRenderer {
     this.surfaceMaterial.emissive.set(background);
     this.surfaceMaterial.emissiveIntensity = appearance.background === 0 ? 0 : 0.95;
     this.scene.background = appearance.background === 0 ? null : new THREE.Color(background).multiplyScalar(0.62);
-
     const glassEnabled = appearance.glassDepth === 1;
     if (glassEnabled && !this.glassDepth) {
       this.glassDepth = new GlassDepthScene();
