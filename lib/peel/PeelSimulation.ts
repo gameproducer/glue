@@ -115,6 +115,7 @@ export class PeelSimulation {
 
   private readonly initialState: Uint8Array;
   private readonly releasedHistory: Uint8Array;
+  private readonly previousGrips = new Map<number, Vec2>();
   private readonly gestureBase: Uint8Array;
   private readonly tearCandidate: Uint8Array;
   private readonly grabbedComponent: Uint8Array;
@@ -228,6 +229,7 @@ export class PeelSimulation {
   reset() {
     this.state.set(this.initialState);
     this.releasedHistory.fill(0);
+    this.previousGrips.clear();
     this.releasedHistoryRevision++;
     this.releasedCells = 0;
     this.pendingNewCells = 0;
@@ -500,6 +502,9 @@ export class PeelSimulation {
       }
     }
     if (accepted) {
+      if (!releasedWholeComponent && this.state[this.grabIndex] === Cell.released) {
+        this.previousGrips.set(this.grabIndex, { ...this.direction });
+      }
       this.releasedHistoryRevision++;
       this.releasedCells += this.pendingNewCells;
       this.moves++;
@@ -628,6 +633,10 @@ export class PeelSimulation {
 
   writeReleaseHistory(target: Uint8Array) {
     target.set(this.releasedHistory);
+  }
+
+  get releasedGrips(): ReadonlyMap<number, Vec2> {
+    return this.previousGrips;
   }
 
   setTearThreshold(value: number) {

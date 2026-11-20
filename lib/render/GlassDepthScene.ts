@@ -13,6 +13,7 @@ const fragmentShader = /* glsl */ `
   uniform float uDepth;
   uniform sampler2D uShadow;
   uniform vec2 uShadowExtent;
+  uniform vec3 uBackdrop;
   varying vec3 vWorld;
 
   float noise(vec2 p) {
@@ -36,7 +37,7 @@ const fragmentShader = /* glsl */ `
     vec2 rearUv = hit.xy / uViewScale;
     float lightPool = exp(-dot((rearUv - vec2(-0.55, 0.55)) * vec2(1.15, 0.95),
                               (rearUv - vec2(-0.55, 0.55)) * vec2(1.15, 0.95)) * 1.5);
-    vec3 color = mix(vec3(0.004, 0.025, 0.020), vec3(0.015, 0.31, 0.15), lightPool);
+    vec3 color = uBackdrop * (0.53 + lightPool * 1.37) + vec3(0.012 + lightPool * 0.018);
     // Parallel projection from the upper left light onto the distant plane.
     vec2 shadowUv = (hit.xy + hit.z * vec2(0.42, -0.25)) / (2.0 * uShadowExtent) + 0.5;
     float inside = step(0.0, shadowUv.x) * step(shadowUv.x, 1.0)
@@ -47,7 +48,7 @@ const fragmentShader = /* glsl */ `
     float strip = exp(-pow((paneUv.x + paneUv.y * 0.17 + 0.86 + uParallax.x * 0.6) / 0.045, 2.0));
     float broad = exp(-pow((paneUv.x * 0.42 + paneUv.y - 0.80 + uParallax.y) / 0.17, 2.0));
     float grazing = pow(clamp(length(paneUv) * 0.68, 0.0, 1.0), 4.0);
-    color += vec3(0.30, 0.48, 0.42) * (strip * 0.23 + broad * 0.065 + grazing * 0.035);
+    color += mix(vec3(0.37, 0.42, 0.49), uBackdrop, 0.3) * (strip * 0.23 + broad * 0.065 + grazing * 0.035);
     color += (noise(gl_FragCoord.xy) - 0.5) * 0.003;
     gl_FragColor = vec4(max(color, vec3(0.0)), 1.0);
     #include <tonemapping_fragment>
@@ -104,6 +105,7 @@ export class GlassDepthScene {
         uDepth: { value: 3 },
         uShadow: { value: this.shadowTarget.texture },
         uShadowExtent: { value: new THREE.Vector2(6, 6) },
+        uBackdrop: { value: new THREE.Color("#25222b") },
       },
       vertexShader: /* glsl */ `
         varying vec3 vWorld;
@@ -117,6 +119,10 @@ export class GlassDepthScene {
     }));
     this.mesh.position.z = -0.095;
     this.mesh.visible = false;
+  }
+
+  setBackdrop(color: string) {
+    this.mesh.material.uniforms.uBackdrop.value.set(color);
   }
 
   update(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera, sources: StickerMesh[], now: number, dragging: boolean) {

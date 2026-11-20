@@ -720,10 +720,15 @@ test("the release mark follows a flap through re-grab and tear until reset", () 
   simulation.drag({ x: 0.28, y: 0.5 }, 400);
   simulation.writeReleaseHistory(history);
   assert.ok(!history.some(Boolean), "an uncommitted lift should leave no dark mark");
+  assert.equal(simulation.releasedGrips.size, 0);
   assert.equal(simulation.end(true), true);
   const expected = simulation.state.map(cell => cell === Cell.released ? 255 : 0);
   simulation.writeReleaseHistory(history);
   assert.deepEqual(history, expected);
+  assert.equal(simulation.releasedGrips.size, 1);
+  const [gripIndex, direction] = [...simulation.releasedGrips][0];
+  assert.equal(expected[gripIndex], 255);
+  assert.ok(direction.x > 0.95);
 
   simulation.begin({ x: 0.16, y: 0.5 }, 500);
   simulation.drag({ x: 0.145, y: 0.5 }, 550);
@@ -739,4 +744,5 @@ test("the release mark follows a flap through re-grab and tear until reset", () 
   simulation.reset();
   simulation.writeReleaseHistory(history);
   assert.ok(!history.some(Boolean));
+  assert.equal(simulation.releasedGrips.size, 0);
 });

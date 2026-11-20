@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   type CurlProfile,
   type PeelDiagnostics,
@@ -10,13 +10,15 @@ import {
   type Vec2,
 } from "@/lib/peel/PeelSimulation";
 import { loadStickerAsset } from "@/lib/peel/StickerAsset";
-import { DEFAULT_PEEL_VOLUME, PEEL_SOUNDS, PeelAudio, readPeelSound, readPeelVolume, savePeelSound, savePeelVolume, type PeelSound } from "@/lib/peel/PeelAudio";
+import { PEEL_SOUNDS, PeelAudio, type PeelSound } from "@/lib/peel/PeelAudio";
 import { REFERENCE_PEEL_SOUNDS } from "@/lib/peel/ReferencePeelSound";
-import { DEFAULT_SOUND_RESPONSE, PEEL_SOUND_RESPONSES, peelSoundLoad, readSoundResponse, saveSoundResponse, type PeelSoundResponse } from "@/lib/peel/PeelSoundResponse";
-import { APPEARANCE_CONTROLS, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, readAppearance, type PeelAppearance } from "@/lib/render/PeelAppearance";
+import { PEEL_SOUND_RESPONSES, peelSoundLoad, type PeelSoundResponse } from "@/lib/peel/PeelSoundResponse";
+import { APPEARANCE_OPTIONS, FIRST_REFRACTIVE_FINISH, type PeelAppearance } from "@/lib/render/PeelAppearance";
+import { MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, type CameraSettings } from "@/lib/render/PeelFraming";
 import {
-  DEFAULT_CAMERA_SETTINGS, MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, readCameraSettings, saveCameraSettings, type CameraSettings,
-} from "@/lib/render/PeelFraming";
+  DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX, ZOOM_STEPS,
+  readLevelSettings, saveLevelSettings, type LevelSettings,
+} from "@/lib/peel/LevelSettings";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import stickerLevels from "@/lib/peel/levels.json";
 
@@ -26,16 +28,9 @@ const DEFAULT_LEVEL = {
   id: "octopus-v1",
   name: "Octopus",
   artwork: "/octopus-sticker.webp",
-  tearThreshold: 0.40,
-  releaseJumpThreshold: 0.15,
-  liftedTransparency: 0.5,
 } as const;
-const ZOOM_STEPS = [60, 75, 90, 100, 108, 115];
-const TENSION_CONTROL_MAX = 0.66;
-const RELEASE_JUMP_CONTROL_MAX = 0.66;
 // A screen-space cap tuned to roughly 1.5 cm on an iPhone at normal page scale.
 const GRIP_GAP_LIMIT_PX = 84;
-const DEFAULT_TEAR_FACTORS: TearFactors = { outward: 0.05, bottleneck: 0.05 };
 const TEAR_FACTOR_CONTROLS = [
   { key: "outward", label: "Outward pull", hint: "How easily a lifted flap tears when pulled back." },
   { key: "bottleneck", label: "Thin neck", hint: "How strongly a constriction between wider sections adds tension." },
@@ -57,8 +52,8 @@ const emptySnapshot: PeelSnapshot = {
   tearFailure: null,
   torn: false,
   tearDragging: false,
-  tearThreshold: DEFAULT_LEVEL.tearThreshold,
-  releaseJumpThreshold: DEFAULT_LEVEL.releaseJumpThreshold,
+  tearThreshold: DEFAULT_LEVEL_SETTINGS.tearThreshold,
+  releaseJumpThreshold: DEFAULT_LEVEL_SETTINGS.releaseJumpThreshold,
   tornOffset: { x: 0, y: 0 },
   grab: { x: 0.08, y: 0.5 },
   pointer: { x: 0.08, y: 0.5 },
@@ -149,6 +144,37 @@ type Level = { id: string; name: string; pack: string; artwork: string; maxMoves
 const LEVELS: Level[] = [DEFAULT_LEVEL, ...stickerLevels];
 const PACKS = [...new Set(LEVELS.map(level => level.pack))];
 
+function SettingsDialog({ id, title, levelName, onDismiss, children }: {
+  id: string;
+  title: string;
+  levelName: string;
+  onDismiss: () => void;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+  return (
+    <dialog ref={ref} id={id} className="settings-dialog" aria-labelledby="settings-title"
+      onCancel={event => { event.preventDefault(); onDismiss(); }}
+      onClick={event => { if (event.target === event.currentTarget) onDismiss(); }}>
+      <div className="settings-sheet">
+        <header className="settings-header">
+          <div>
+            <h2 id="settings-title">{title}</h2>
+            <p>Autosaved for {levelName}</p>
+          </div>
+          <button type="button" onClick={onDismiss} autoFocus>Done</button>
+        </header>
+        <div className="settings-grid">{children}</div>
+      </div>
+    </dialog>
+  );
+}
+
 export default function PeelExperience() {
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
@@ -176,10 +202,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   onBottomPanelChange: (open: boolean) => void;
   audio: PeelAudio;
 }) {
-  const tearThresholdStorageKey = `peel.level.${level.id}.tearThreshold`;
-  const releaseJumpStorageKey = `peel.level.${level.id}.releaseJumpThreshold`;
-  const liftedTransparencyStorageKey = `peel.level.${level.id}.liftedTransparency`;
-  const tearFactorsStorageKey = `peel.level.${level.id}.tearFactors`;
   const levelIndex = LEVELS.findIndex(item => item.id === level.id);
   const hostRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<PeelSimulation | null>(null);
@@ -187,29 +209,20 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const activePointer = useRef<number | null>(null);
   const textureFrame = useRef(0);
   const moveToastTimer = useRef<number | null>(null);
-  const profileRef = useRef<CurlProfile>("cylinder");
   const diagnosticEvents = useRef<DiagnosticEvent[]>([]);
   const diagnosticStartedAt = useRef(0);
   const diagnosticStartedWallClock = useRef("");
   const diagnosticSessionId = useRef("");
-  const [profile, setProfile] = useState<CurlProfile>("cylinder");
-  const [debug, setDebug] = useState(false);
-  const [menu, setMenu] = useState<"physics" | "visuals" | null>(null);
-  const menuRef = useRef<HTMLElement>(null);
-  const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
-  const [peelSound, setPeelSound] = useState<PeelSound>("off");
+  const settingsRef = useRef(DEFAULT_LEVEL_SETTINGS);
+  const [settings, setSettings] = useState(DEFAULT_LEVEL_SETTINGS);
+  const {
+    profile, appearance, peelSound, peelVolume, soundResponse, tearThreshold, releaseJumpThreshold,
+    liftedTransparency, tearFactors, zoom, camera: cameraSettings,
+  } = settings;
+  const zoomIndex = ZOOM_STEPS.indexOf(zoom);
+  const [menu, setMenu] = useState<"physics" | "visuals" | "camera-sound" | null>(null);
   const soundDescription = REFERENCE_PEEL_SOUNDS.find(({ id }) => id === peelSound)?.description;
-  const [peelVolume, setPeelVolume] = useState(DEFAULT_PEEL_VOLUME);
-  const [soundResponse, setSoundResponse] = useState<PeelSoundResponse>(DEFAULT_SOUND_RESPONSE);
-  const peelSoundRef = useRef<PeelSound>("off");
   const pendingSoundProgress = useRef(0);
-  const [tearThreshold, setTearThreshold] = useState<number>(DEFAULT_LEVEL.tearThreshold);
-  const [releaseJumpThreshold, setReleaseJumpThreshold] = useState<number>(DEFAULT_LEVEL.releaseJumpThreshold);
-  const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
-  const [tearFactors, setTearFactors] = useState(DEFAULT_TEAR_FACTORS);
-  const [zoomIndex, setZoomIndex] = useState(ZOOM_STEPS.indexOf(100));
-  const [cameraSettings, setCameraSettings] = useState(DEFAULT_CAMERA_SETTINGS);
-  const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
   const [miss, setMiss] = useState(false);
   const [webglError, setWebglError] = useState(false);
@@ -217,33 +230,16 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const [moveLimitToast, setMoveLimitToast] = useState(false);
   const [logStatus, setLogStatus] = useState("Recording locally");
 
-  useEffect(() => {
-    const saved = readPeelSound();
-    peelSoundRef.current = saved;
-    setPeelSound(saved);
-    const volume = readPeelVolume();
-    setPeelVolume(volume);
-    audio.setVolume(volume);
-    const response = readSoundResponse();
-    setSoundResponse(response);
-    audio.setResponse(response);
-    audio.setMuted(saved === "off");
-  }, [audio]);
+  const updateSettings = (patch: Partial<LevelSettings>) => {
+    const next = { ...settingsRef.current, ...patch };
+    settingsRef.current = next;
+    setSettings(next);
+    saveLevelSettings(level.id, next);
+  };
 
   useEffect(() => {
-    if (!menu) return;
-    const dismissOutside = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element) || menuRef.current?.contains(target) || target.closest("[data-settings-trigger]")) return;
-      setMenu(null);
-      if (hostRef.current?.contains(target)) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    };
-    document.addEventListener("pointerdown", dismissOutside, true);
-    return () => document.removeEventListener("pointerdown", dismissOutside, true);
-  }, [menu]);
+    rendererRef.current?.setSettingsOpen(menu !== null);
+  }, [menu, ready]);
 
   const recordDiagnostic = useCallback((
     type: string,
@@ -259,7 +255,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       elapsedMs: Number((now - diagnosticStartedAt.current).toFixed(3)),
       type,
       point: point ? { ...point } : null,
-      profile: profileRef.current,
+      profile: settingsRef.current.profile,
       snapshot: simulation.snapshot(),
       solver: simulation.diagnostics(),
       details,
@@ -292,7 +288,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     let gripDistance: number | null = null;
     if (updateTexture) renderer?.updateState();
     if (checkGrip && renderer) {
-      const gapPx = renderer.gripGap(next, profileRef.current);
+      const gapPx = renderer.gripGap(next, settingsRef.current.profile);
       gripDistance = gapPx;
       if (gapPx !== null && gapPx > GRIP_GAP_LIMIT_PX / 4) {
         const tore = simulation.applyGripGap(gapPx, GRIP_GAP_LIMIT_PX,
@@ -308,7 +304,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     if (checkGrip) {
       if (next.torn || next.detached) audio.stop();
       else if (activePointer.current !== null && next.pulling) {
-        audio.playProgress(peelSoundRef.current, pendingSoundProgress.current, peelSoundLoad(next, gripDistance, GRIP_GAP_LIMIT_PX));
+        audio.playProgress(settingsRef.current.peelSound, pendingSoundProgress.current, peelSoundLoad(next, gripDistance, GRIP_GAP_LIMIT_PX));
       }
       pendingSoundProgress.current = 0;
     }
@@ -317,7 +313,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       next.grab,
       next.direction,
       next.frontDepth,
-      profileRef.current,
+      settingsRef.current.profile,
       next.stress,
       next.tearThreshold,
       next.tornOffset,
@@ -332,55 +328,35 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     if (!hostRef.current) return;
     let disposed = false;
     let teardown = () => {};
+    const saved = readLevelSettings(level.id);
+    settingsRef.current = saved;
+    setSettings(saved);
+    audio.setVolume(saved.peelVolume);
+    audio.setResponse(saved.soundResponse);
+    audio.setMuted(saved.peelSound === "off");
 
     void (async () => {
       try {
         const asset = await loadStickerAsset(level.artwork);
         if (disposed || !hostRef.current) return;
-        const readSavedSetting = (key: string, fallback: number, minimum: number, maximum: number) => {
-          const stored = Number(window.localStorage.getItem(key) ?? Number.NaN);
-          return Number.isFinite(stored) && stored >= minimum && stored <= maximum ? stored : fallback;
-        };
-        let savedThreshold: number = DEFAULT_LEVEL.tearThreshold;
-        let savedJumpThreshold: number = DEFAULT_LEVEL.releaseJumpThreshold;
-        let savedTransparency: number = DEFAULT_LEVEL.liftedTransparency;
-        const savedTearFactors = { ...DEFAULT_TEAR_FACTORS };
-        try {
-          savedThreshold = readSavedSetting(tearThresholdStorageKey, savedThreshold, 0, TENSION_CONTROL_MAX);
-          savedJumpThreshold = readSavedSetting(releaseJumpStorageKey, savedJumpThreshold, 0, RELEASE_JUMP_CONTROL_MAX);
-          savedTransparency = readSavedSetting(liftedTransparencyStorageKey, savedTransparency, 0.05, 0.9);
-          for (const { key } of TEAR_FACTOR_CONTROLS) {
-            savedTearFactors[key] = readSavedSetting(`${tearFactorsStorageKey}.${key}`, savedTearFactors[key], 0, 1);
-          }
-        } catch {
-          // Storage can be unavailable in locked-down browser contexts; the level default remains valid.
-        }
-        setTearThreshold(savedThreshold);
-        setReleaseJumpThreshold(savedJumpThreshold);
-        setLiftedTransparency(savedTransparency);
-        setTearFactors(savedTearFactors);
+        const current = settingsRef.current;
         const simulation = new PeelSimulation(
           asset.width,
           asset.height,
           0x5045454c,
           level.maxMoves,
           asset.mask,
-          savedThreshold,
-          savedJumpThreshold,
+          current.tearThreshold,
+          current.releaseJumpThreshold,
         );
-        simulation.setTearFactors(savedTearFactors);
-        const savedCameraSettings = readCameraSettings();
+        simulation.setTearFactors(current.tearFactors);
         const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect,
-          level.artwork.startsWith("/stickers/"), savedCameraSettings);
-        setCameraSettings(savedCameraSettings);
-        renderer.setLiftedTransparency(savedTransparency);
-        const savedAppearance = readAppearance();
-        renderer.setAppearance(savedAppearance);
-        setAppearance(savedAppearance);
+          level.artwork.startsWith("/stickers/"), current.camera, current.zoom / 100);
+        renderer.setLiftedTransparency(current.liftedTransparency);
+        renderer.setAppearance(current.appearance);
         simulationRef.current = simulation;
         rendererRef.current = renderer;
         startDiagnosticRecording("level_load");
-        renderer.onFps = setFps;
         const canvas = renderer.domElement;
         canvas.setAttribute("aria-label", `Interactive ${level.name} sticker. Sweep from an exposed edge through the sticker to peel it.`);
 
@@ -407,7 +383,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             pointerType: event.pointerType,
           });
           if (!point || !accepted) return;
-          if (peelSoundRef.current !== "off") audio.unlock();
+          if (settingsRef.current.peelSound !== "off") audio.unlock();
           audio.beginGesture();
           pendingSoundProgress.current = 0;
           event.preventDefault();
@@ -449,13 +425,14 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             textureFrame.current = 0;
             refresh(true, true);
           }
-          if (releasedByPlayer && peelSoundRef.current !== "off") audio.unlock();
+          if (releasedByPlayer && settingsRef.current.peelSound !== "off") audio.unlock();
           activePointer.current = null;
           pendingSoundProgress.current = 0;
           audio.stop();
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const beforeRelease = simulation.snapshot();
           const hadGrab = beforeRelease.pulling;
+          const lift = hadGrab && !beforeRelease.detached && !beforeRelease.torn ? simulation.diagnostics().current : null;
           if (beforeRelease.detached) refresh(true);
           // Browser interruptions settle the last valid lift like a normal release.
           const solverStarted = performance.now();
@@ -478,6 +455,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             solverMs,
           });
           renderer.endDrag();
+          if (lift) renderer.settleLift(lift.liftedCells, lift.totalCells);
           refresh(true);
           if (!accepted && !hadGrab) {
             setMiss(true);
@@ -519,98 +497,64 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       activePointer.current = null;
       teardown();
     };
-  }, [level, audio, recordDiagnostic, refresh, startDiagnosticRecording, tearThresholdStorageKey, releaseJumpStorageKey, liftedTransparencyStorageKey, tearFactorsStorageKey]);
+  }, [level, audio, recordDiagnostic, refresh, startDiagnosticRecording]);
 
-  const toggleProfile = () => {
-    const next = profile === "cylinder" ? "cone" : "cylinder";
-    profileRef.current = next;
-    setProfile(next);
-    recordDiagnostic("curl_profile", null, { profile: next });
+  const changeProfile = (profile: CurlProfile) => {
+    updateSettings({ profile });
+    recordDiagnostic("curl_profile", null, { profile });
     refresh(false);
   };
 
-  const toggleDebug = () => {
-    const next = !debug;
-    setDebug(next);
-    rendererRef.current?.setDebug(next);
+  const changeTearThreshold = (tearThreshold: number) => {
+    updateSettings({ tearThreshold });
+    simulationRef.current?.setTearThreshold(tearThreshold);
+    recordDiagnostic("tension_threshold", null, { value: tearThreshold });
   };
 
-  const changeTearThreshold = (value: number) => {
-    const next = Math.max(0, Math.min(TENSION_CONTROL_MAX, value));
-    setTearThreshold(next);
-    simulationRef.current?.setTearThreshold(next);
-    recordDiagnostic("tension_threshold", null, { value: next });
-    try {
-      window.localStorage.setItem(tearThresholdStorageKey, next.toFixed(2));
-    } catch {
-      // The setting remains active for this session when persistent storage is unavailable.
-    }
+  const changeReleaseJumpThreshold = (releaseJumpThreshold: number) => {
+    updateSettings({ releaseJumpThreshold });
+    simulationRef.current?.setReleaseJumpThreshold(releaseJumpThreshold);
+    recordDiagnostic("area_jump_threshold", null, { value: releaseJumpThreshold });
   };
 
-  const changeReleaseJumpThreshold = (value: number) => {
-    const next = Math.max(0, Math.min(RELEASE_JUMP_CONTROL_MAX, value));
-    setReleaseJumpThreshold(next);
-    simulationRef.current?.setReleaseJumpThreshold(next);
-    recordDiagnostic("area_jump_threshold", null, { value: next });
-    try {
-      window.localStorage.setItem(releaseJumpStorageKey, next.toFixed(2));
-    } catch {
-      // The setting remains active for this session when persistent storage is unavailable.
-    }
-  };
-
-  const changeLiftedTransparency = (value: number) => {
-    const next = Math.max(0.05, Math.min(0.9, value));
-    setLiftedTransparency(next);
-    rendererRef.current?.setLiftedTransparency(next);
-    recordDiagnostic("lift_transparency", null, { value: next });
-    try {
-      window.localStorage.setItem(liftedTransparencyStorageKey, next.toFixed(2));
-    } catch {
-      // The setting remains active for this session when persistent storage is unavailable.
-    }
+  const changeLiftedTransparency = (liftedTransparency: number) => {
+    updateSettings({ liftedTransparency });
+    rendererRef.current?.setLiftedTransparency(liftedTransparency);
+    recordDiagnostic("lift_transparency", null, { value: liftedTransparency });
   };
 
   const changeTearFactor = (key: keyof TearFactors, value: number) => {
-    const next = { ...tearFactors, [key]: value };
-    setTearFactors(next);
+    const next = { ...settingsRef.current.tearFactors, [key]: value };
+    updateSettings({ tearFactors: next });
     simulationRef.current?.setTearFactors(next);
     recordDiagnostic(`tear_factor_${key}`, null, { value });
-    try {
-      window.localStorage.setItem(`${tearFactorsStorageKey}.${key}`, value.toFixed(2));
-    } catch {
-      // The setting remains active for this session when persistent storage is unavailable.
-    }
   };
 
   const changeAppearance = (key: keyof PeelAppearance, value: number) => {
-    const next = { ...appearance, [key]: value };
-    setAppearance(next);
+    const next = { ...settingsRef.current.appearance, [key]: value };
+    updateSettings({ appearance: next });
     rendererRef.current?.setAppearance(next);
     recordDiagnostic("appearance", null, { key, value });
-    try { localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(next)); } catch { /* Storage is optional. */ }
   };
 
-  const changePeelSound = (sound: PeelSound) => {
+  const changePeelSound = (peelSound: PeelSound) => {
     audio.stop();
-    peelSoundRef.current = sound;
-    setPeelSound(sound);
-    if (sound !== "off") audio.unlock();
-    audio.setMuted(sound === "off");
-    savePeelSound(sound);
+    updateSettings({ peelSound });
+    if (peelSound !== "off") audio.unlock();
+    audio.setMuted(peelSound === "off");
   };
 
   const changeZoom = (step: number) => {
-    const index = Math.max(0, Math.min(ZOOM_STEPS.length - 1, zoomIndex + step));
-    rendererRef.current?.setZoom(ZOOM_STEPS[index] / 100);
-    setZoomIndex(index);
+    const index = Math.max(0, Math.min(ZOOM_STEPS.length - 1, ZOOM_STEPS.indexOf(settingsRef.current.zoom) + step));
+    const zoom = ZOOM_STEPS[index];
+    rendererRef.current?.setZoom(zoom / 100);
+    updateSettings({ zoom });
   };
 
-  const changeCameraSettings = (next: CameraSettings) => {
-    setCameraSettings(next);
-    rendererRef.current?.setCameraSettings(next);
-    saveCameraSettings(next);
-    recordDiagnostic("camera_settings", null, next);
+  const changeCameraSettings = (camera: CameraSettings) => {
+    updateSettings({ camera });
+    rendererRef.current?.setCameraSettings(camera);
+    recordDiagnostic("camera_settings", null, camera);
   };
 
   const reset = () => {
@@ -626,7 +570,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     textureFrame.current = 0;
     simulationRef.current?.reset();
     renderer?.endDrag();
-    renderer?.clearDissolves();
+    renderer?.clearReleaseAnimations();
     if (moveToastTimer.current !== null) window.clearTimeout(moveToastTimer.current);
     setMoveLimitToast(false);
     startDiagnosticRecording("level_reset");
@@ -653,14 +597,16 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         gridHeight: simulation.height,
       },
       settings: {
-        curlProfile: profileRef.current,
+        curlProfile: settingsRef.current.profile,
         tensionThreshold: simulation.snapshot().tearThreshold,
         areaJumpThreshold: simulation.snapshot().releaseJumpThreshold,
         tearFactors,
         liftedTransparency,
         appearance,
-        camera: { ...cameraSettings, zoom: ZOOM_STEPS[zoomIndex] },
+        camera: { ...cameraSettings, zoom },
         peelSound,
+        peelVolume,
+        soundResponse,
       },
       environment: {
         userAgent: navigator.userAgent,
@@ -740,12 +686,33 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             : snapshot.canCommit ? "Let go to keep this peel, or keep sweeping." : "Keep sweeping the peel front."
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
+  const appearanceControl = (key: keyof PeelAppearance, label: string, hint?: string) => {
+    const options = APPEARANCE_OPTIONS[key];
+    const option = (name: string, index: number) => <option key={name} value={index}>{name}</option>;
+    return (
+      <label className="setting-control">
+        <span>{label}</span>
+        <select aria-label={label} aria-describedby={hint ? `appearance-${key}-hint` : undefined}
+          value={appearance[key]} onChange={event => changeAppearance(key, Number(event.currentTarget.value))}>
+          {key === "face" ? (
+            <>
+              {option(options[0], 0)}
+              <optgroup label="Translucent">{options.slice(FIRST_REFRACTIVE_FINISH).map((name, index) => option(name, index + FIRST_REFRACTIVE_FINISH))}</optgroup>
+              <optgroup label="Coatings and print">{options.slice(1, FIRST_REFRACTIVE_FINISH).map((name, index) => option(name, index + 1))}</optgroup>
+            </>
+          ) : options.map(option)}
+        </select>
+        {hint && <small id={`appearance-${key}-hint`}>{hint}</small>}
+      </label>
+    );
+  };
+
   return (
     <main className={`prototype-shell${miss ? " miss" : ""}${bottomPanelOpen ? "" : " mobile-panel-collapsed"}`}>
       <header className="prototype-header">
-        <div className="brand-block">
-          <p className="eyebrow">Interactive material study</p>
-          <h1>PEEL</h1>
+        <div className="header-settings" role="group" aria-label="Level settings">
+          <button type="button" aria-haspopup="dialog" onClick={() => setMenu("visuals")}>Visuals</button>
+          <button type="button" aria-haspopup="dialog" onClick={() => setMenu("camera-sound")}>Camera &amp; sound</button>
         </div>
         <nav className="level-switcher" aria-label="Choose sticker level">
           <button type="button" aria-label="Previous level" disabled={levelIndex === 0} onClick={() => onLevelChange(LEVELS[levelIndex - 1])}>‹</button>
@@ -808,50 +775,58 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             <path d="m8.2 19.3 7.8-7.8M12.5 19.3H21" />
           </svg>
         </button>
-        <p className="interaction-hint" aria-live="polite">{status}</p>
 
         {menu === "physics" && (
-          <aside ref={menuRef} className="physics-settings" aria-label="Level material settings">
-            <label className="setting-control">
-              <div><span>Tension tear</span><output>{Math.round(tearThreshold * 100)}%</output></div>
-              <input
-                type="range"
-                min="0"
-                max={Math.round(TENSION_CONTROL_MAX * 100)}
-                step="1"
-                value={Math.round(tearThreshold * 100)}
-                onChange={(event) => changeTearThreshold(Number(event.currentTarget.value) / 100)}
-              />
-            </label>
-            <label className="setting-control">
-              <div><span>Area jump</span><output>{Math.round(releaseJumpThreshold * 100)}%</output></div>
-              <input
-                type="range"
-                min="0"
-                max={Math.round(RELEASE_JUMP_CONTROL_MAX * 100)}
-                step="1"
-                value={Math.round(releaseJumpThreshold * 100)}
-                onChange={(event) => changeReleaseJumpThreshold(Number(event.currentTarget.value) / 100)}
-              />
-            </label>
-            {TEAR_FACTOR_CONTROLS.map(({ key, label, hint }) => (
-              <label key={key} className="setting-control" title={hint}>
-                <div><span>{label}</span><output>{tearFactors[key] === 0 ? "Off" : `${Math.round(tearFactors[key] * 100)}%`}</output></div>
+          <SettingsDialog id="physics-settings" title="Physics" levelName={level.name} onDismiss={() => setMenu(null)}>
+            <section className="settings-group" aria-label="Peel behavior">
+              <h3>Peel behavior</h3>
+              <label className="setting-control">
+                <span>Curl profile</span>
+                <select value={profile} onChange={event => changeProfile(event.currentTarget.value as CurlProfile)}>
+                  <option value="cylinder">Cylinder</option>
+                  <option value="cone">Cone</option>
+                </select>
+              </label>
+              <label className="setting-control">
+                <div><span>Tension tear</span><output>{Math.round(tearThreshold * 100)}%</output></div>
                 <input
                   type="range"
                   min="0"
-                  max="100"
+                  max={Math.round(TENSION_CONTROL_MAX * 100)}
                   step="1"
-                  aria-label={label}
-                  aria-valuetext={tearFactors[key] === 0 ? "Off" : `${Math.round(tearFactors[key] * 100)} percent`}
-                  value={Math.round(tearFactors[key] * 100)}
-                  onChange={(event) => changeTearFactor(key, Number(event.currentTarget.value) / 100)}
+                  value={Math.round(tearThreshold * 100)}
+                  onChange={(event) => changeTearThreshold(Number(event.currentTarget.value) / 100)}
                 />
               </label>
-            ))}
-            <small>Autosaved for {level.name}</small>
-            <section className="log-tools" aria-label="Diagnostic recording">
-              <header><span>Diagnostic log</span><output>{diagnosticEvents.current.length} events</output></header>
+              <label className="setting-control">
+                <div><span>Area jump</span><output>{Math.round(releaseJumpThreshold * 100)}%</output></div>
+                <input
+                  type="range"
+                  min="0"
+                  max={Math.round(RELEASE_JUMP_CONTROL_MAX * 100)}
+                  step="1"
+                  value={Math.round(releaseJumpThreshold * 100)}
+                  onChange={(event) => changeReleaseJumpThreshold(Number(event.currentTarget.value) / 100)}
+                />
+              </label>
+              {TEAR_FACTOR_CONTROLS.map(({ key, label, hint }) => (
+                <label key={key} className="setting-control" title={hint}>
+                  <div><span>{label}</span><output>{tearFactors[key] === 0 ? "Off" : `${Math.round(tearFactors[key] * 100)}%`}</output></div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    aria-label={label}
+                    aria-valuetext={tearFactors[key] === 0 ? "Off" : `${Math.round(tearFactors[key] * 100)} percent`}
+                    value={Math.round(tearFactors[key] * 100)}
+                    onChange={(event) => changeTearFactor(key, Number(event.currentTarget.value) / 100)}
+                  />
+                </label>
+              ))}
+            </section>
+            <section className="settings-group log-tools" aria-label="Diagnostic recording">
+              <header><h3>Diagnostic log</h3><output>{diagnosticEvents.current.length} events</output></header>
               <p>Local only. Reproduce the issue, then export the peel events and recent frame timings.</p>
               <div className="log-actions">
                 <button type="button" onClick={() => void copyDiagnosticLog()}>Copy log</button>
@@ -860,89 +835,96 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
               </div>
               <small role="status">{logStatus}</small>
             </section>
-          </aside>
+          </SettingsDialog>
         )}
 
         {menu === "visuals" && (
-          <aside ref={menuRef} className="physics-settings visual-settings" aria-label="Visual settings">
-            <label className="setting-control">
-              <span>Peel camera</span>
-              <select value={cameraSettings.pan ? "pan" : "centered"}
-                onChange={event => changeCameraSettings({ ...cameraSettings, pan: event.currentTarget.value === "pan" })}>
-                <option value="pan">Pan and zoom</option>
-                <option value="centered">Centered zoom</option>
-              </select>
-            </label>
-            <label className="setting-control">
-              <div><span>Edge clearance</span><output>{cameraSettings.edgeClearance} px</output></div>
-              <input type="range" aria-label="Edge clearance" min={MIN_EDGE_CLEARANCE} max={MAX_EDGE_CLEARANCE}
-                step="4" value={cameraSettings.edgeClearance}
-                onChange={event => changeCameraSettings({ ...cameraSettings, edgeClearance: Number(event.currentTarget.value) })} />
-              <small>Target space between your pointer and the screen edge when the sticker comes free.</small>
-            </label>
-            <div className="peel-sound-setting">
+          <SettingsDialog id="visual-settings" title="Visuals" levelName={level.name} onDismiss={() => setMenu(null)}>
+            <section className="settings-group" aria-label="Sticker front">
+              <h3>Sticker front</h3>
+              {appearanceControl("face", "Front finish")}
+              {appearanceControl("sticker", "Sticker color")}
+            </section>
+            <section className="settings-group" aria-label="Lifted film">
+              <h3>Lifted film</h3>
+              {appearanceControl("back", "Back finish")}
               <label className="setting-control">
-                <span>Peel sound</span>
-                <select value={peelSound} onChange={event => changePeelSound(event.currentTarget.value as PeelSound)}>
-                  {PEEL_SOUNDS.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+                <div><span>Lift transparency</span><output>{Math.round(liftedTransparency * 100)}%</output></div>
+                <input type="range" aria-label="Lift transparency" min="5" max="90" step="1"
+                  value={Math.round(liftedTransparency * 100)}
+                  onChange={event => changeLiftedTransparency(Number(event.currentTarget.value) / 100)} />
+                <small>Clearer film shows more of the scene through the lens.</small>
+              </label>
+              {appearanceControl("optics", "Optical effect")}
+              {appearance.optics !== 0 && appearanceControl("filmFilter", "Optical color filter")}
+            </section>
+            <section className="settings-group" aria-label="Unglued areas">
+              <h3>Unglued areas</h3>
+              {appearanceControl("released", "Surface treatment", "Raised ridge lifts the unglued material above the adhesive seam.")}
+              {appearanceControl("gripCurl", "Curl at previous grips", "Leaves a small curl where you held the sticker on earlier moves.")}
+            </section>
+            <section className="settings-group" aria-label="Surface">
+              <h3>Surface</h3>
+              {appearanceControl("background", "Background color")}
+              {appearanceControl("glassDepth", "Glass depth", "The pane uses the selected background color.")}
+            </section>
+          </SettingsDialog>
+        )}
+
+        {menu === "camera-sound" && (
+          <SettingsDialog id="camera-sound-settings" title="Camera & sound" levelName={level.name} onDismiss={() => setMenu(null)}>
+            <section className="settings-group" aria-label="Camera">
+              <h3>Camera</h3>
+              <label className="setting-control">
+                <span>Peel camera</span>
+                <select value={cameraSettings.pan ? "pan" : "centered"}
+                  onChange={event => changeCameraSettings({ ...cameraSettings, pan: event.currentTarget.value === "pan" })}>
+                  <option value="pan">Pan and zoom</option>
+                  <option value="centered">Centered zoom</option>
                 </select>
               </label>
-              <button type="button" disabled={peelSound === "off"} onClick={() => audio.preview(peelSound)}>Preview</button>
-            </div>
-            {soundDescription && <small>{soundDescription}</small>}
-            <label className="setting-control">
-              <span>Sound response</span>
-              <select value={soundResponse} onChange={event => {
-                const response = event.currentTarget.value as PeelSoundResponse;
-                setSoundResponse(response);
-                audio.setResponse(response);
-                saveSoundResponse(response);
-              }}>
-                {PEEL_SOUND_RESPONSES.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
-              </select>
-              <small>{soundResponse === "tension"
-                ? "Pitch and roughness follow whichever is closer to tearing. Preview rises from relaxed to near-tear."
-                : "Sound follows newly peeled material. Tension and grip distance do not change it."}</small>
-            </label>
-            <label className="setting-control">
-              <div><span>Sound volume</span><output>{Math.round(peelVolume * 100)}%</output></div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                aria-label="Sound volume"
-                value={Math.round(peelVolume * 100)}
-                onChange={event => {
-                  const volume = Number(event.currentTarget.value) / 100;
-                  setPeelVolume(volume);
-                  audio.setVolume(volume);
-                  savePeelVolume(volume);
-                }}
-              />
-            </label>
-            {APPEARANCE_CONTROLS.map(({ key, label, labels }) => (
-              <label key={key} className="setting-control">
-                <span>{label}</span>
-                <select value={appearance[key]} onChange={event => changeAppearance(key, Number(event.currentTarget.value))}>
-                  {labels.map((name, index) => <option value={index} key={name}>{name}</option>)}
-                </select>
-                {key === "glassDepth" && <small>A glass pane, soft rear shadow, and depth behind the sticker.</small>}
-                {key === "optics" && <small>Distorts the scene behind the lifted film. Lift transparency controls visibility.</small>}
+              <label className="setting-control">
+                <div><span>Edge clearance</span><output>{cameraSettings.edgeClearance} px</output></div>
+                <input type="range" aria-label="Edge clearance" min={MIN_EDGE_CLEARANCE} max={MAX_EDGE_CLEARANCE}
+                  step="4" value={cameraSettings.edgeClearance}
+                  onChange={event => changeCameraSettings({ ...cameraSettings, edgeClearance: Number(event.currentTarget.value) })} />
+                <small>Target space between your pointer and the screen edge when the sticker comes free.</small>
               </label>
-            ))}
-            <label className="setting-control">
-              <div><span>Lift transparency</span><output>{Math.round(liftedTransparency * 100)}%</output></div>
-              <input
-                type="range"
-                min="5"
-                max="90"
-                step="1"
-                value={Math.round(liftedTransparency * 100)}
-                onChange={(event) => changeLiftedTransparency(Number(event.currentTarget.value) / 100)}
-              />
-            </label>
-          </aside>
+            </section>
+            <section className="settings-group" aria-label="Sound">
+              <h3>Sound</h3>
+              <div className="peel-sound-setting">
+                <label className="setting-control">
+                  <span>Peel sound</span>
+                  <select value={peelSound} onChange={event => changePeelSound(event.currentTarget.value as PeelSound)}>
+                    {PEEL_SOUNDS.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+                  </select>
+                </label>
+                <button type="button" disabled={peelSound === "off"} onClick={() => audio.preview(peelSound)}>Preview</button>
+              </div>
+              {soundDescription && <small>{soundDescription}</small>}
+              <label className="setting-control">
+                <span>Sound response</span>
+                <select value={soundResponse} onChange={event => {
+                  const soundResponse = event.currentTarget.value as PeelSoundResponse;
+                  updateSettings({ soundResponse });
+                  audio.setResponse(soundResponse);
+                }}>
+                  {PEEL_SOUND_RESPONSES.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+                </select>
+              </label>
+              <label className="setting-control">
+                <div><span>Sound volume</span><output>{Math.round(peelVolume * 100)}%</output></div>
+                <input type="range" min="0" max="100" step="1" aria-label="Sound volume"
+                  value={Math.round(peelVolume * 100)}
+                  onChange={event => {
+                    const peelVolume = Number(event.currentTarget.value) / 100;
+                    updateSettings({ peelVolume });
+                    audio.setVolume(peelVolume);
+                  }} />
+              </label>
+            </section>
+          </SettingsDialog>
         )}
 
         {!snapshot.tracking && (snapshot.complete || snapshot.failed) && (
@@ -960,40 +942,19 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           </div>
         )}
 
-        {debug && (
-          <aside className="debug-panel">
-            <span>FPS {fps}</span>
-            <span>GRID {simulationRef.current?.width ?? 208}×{simulationRef.current?.height ?? 166}</span>
-            <span>FRONT {(snapshot.frontDepth * 100).toFixed(1)}</span>
-            <span>TEAR {Math.round(tearThreshold * 100)}%</span>
-            <span>JUMP {Math.round(releaseJumpThreshold * 100)}%</span>
-            <span>FILM {Math.round(liftedTransparency * 100)}%</span>
-            <span>GPU WEBGL</span>
-          </aside>
-        )}
       </section>
 
       <footer id="peel-controls" className="control-bar" aria-label="Prototype settings">
         <div className="zoom-controls" role="group" aria-label="Level zoom">
           <button type="button" onClick={() => changeZoom(-1)} disabled={!ready || zoomIndex === 0} aria-label="Zoom out">−</button>
-          <output aria-label="Manual zoom">{ZOOM_STEPS[zoomIndex]}%</output>
+          <output aria-label="Manual zoom">{zoom}%</output>
           <button type="button" onClick={() => changeZoom(1)} disabled={!ready || zoomIndex === ZOOM_STEPS.length - 1} aria-label="Zoom in">+</button>
         </div>
-        <button type="button" onClick={toggleProfile} aria-label={`Curl profile: ${profile}`}>
-          <span>Curl</span>{profile}
-        </button>
-        <button type="button" onClick={toggleDebug} aria-pressed={debug}>
-          <span>Debug</span>{debug ? "On" : "Off"}
-        </button>
-        <button type="button" data-settings-trigger onClick={() => setMenu(current => current === "physics" ? null : "physics")} aria-expanded={menu === "physics"}>
-          <span>Physics</span>Tune
-        </button>
-        <button type="button" data-settings-trigger onClick={() => setMenu(current => current === "visuals" ? null : "visuals")} aria-expanded={menu === "visuals"}>
-          <span>Visuals</span>Style
-        </button>
+        <button type="button" aria-haspopup="dialog" onClick={() => setMenu("physics")}>Physics</button>
         <button type="button" onClick={reset}>
           <span>Level</span>Reset
         </button>
+        <p className="interaction-hint" aria-live="polite">{status}</p>
       </footer>
       <button
         type="button"
@@ -1002,7 +963,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         aria-expanded={bottomPanelOpen}
         aria-label={bottomPanelOpen ? "Hide bottom panel" : "Show bottom panel"}
         onClick={() => {
-          if (bottomPanelOpen) setMenu(null);
           onBottomPanelChange(!bottomPanelOpen);
         }}
       >

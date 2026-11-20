@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
+import { BACKGROUNDS, FILM_FILTERS, FIRST_REFRACTIVE_FINISH, PUFFY_FINISH, RIDGE_FINISH, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
 import {
   curlBounds, DEFAULT_CAMERA_SETTINGS, dragScaleForReach, fitFrustum, MAX_TENSION_STRETCH,
   regionBounds, stepCamera, translateBounds, unionBounds,
@@ -11,12 +11,14 @@ import { FrameTimings } from "./FrameTimings";
 import { GlassDepthScene } from "./GlassDepthScene";
 import { puffyNormals } from "./PuffyFinish";
 import { FilmOptics } from "./FilmOptics";
+import { releaseSettleDuration, writeReleaseSurface } from "./ReleaseSurface";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
-const RELAX_MS = 420;
 const DISSOLVE_MS = 1800;
 const TORN_LAYER_Z = 0.086;
+const RIDGE_HEIGHT = 0.065;
+const GRIP_CURL_HEIGHT = 0.105;
 const curlRadius = (profile: CurlProfile) => profile === "cone" ? 0.28 : 0.32;
 const tensionStretch = (stress: number, threshold: number) => threshold > 0
   ? MAX_TENSION_STRETCH * THREE.MathUtils.smoothstep(stress / threshold, 0.9, 1) : 0;
@@ -24,10 +26,23 @@ const tensionStretch = (stress: number, threshold: number) => threshold > 0
 type DissolvingShape = {
   texture: THREE.DataTexture;
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
-  started: number;
+  releasedAt: number | null;
+  settleMs: number;
   origin: Vec2;
   offset: Vec2;
   bounds: PeelBounds | null;
+};
+
+type StickerMesh = THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+type SettlingFlap = {
+  meshes: StickerMesh[];
+  state: THREE.DataTexture;
+  curl: THREE.DataTexture;
+  from: PeelBounds;
+  to: PeelBounds;
+  started: number;
+  duration: number;
+  progress: number;
 };
 
 type DragInput = {
@@ -45,6 +60,8 @@ type PeelUniforms = {
   uScene: { value: THREE.Texture };
   uViewport: { value: THREE.Vector2 };
   uFilmOptics: { value: number };
+  uOpticsTint: { value: THREE.Color };
+  uMaterialTime: { value: number };
   uWhiteArtwork: { value: number };
   uStickerColor: { value: THREE.Color };
   uFaceFinish: { value: number };
@@ -53,6 +70,12 @@ type PeelUniforms = {
   uState: { value: THREE.DataTexture };
   uAttachedCurl: { value: THREE.DataTexture };
   uReleaseHistory: { value: THREE.DataTexture };
+  uReleaseTexel: { value: THREE.Vector2 };
+  uRidgeHeight: { value: number };
+  uGripCurlHeight: { value: number };
+  uSettlingMask: { value: THREE.DataTexture };
+  uHideSettling: { value: number };
+  uRestState: { value: THREE.DataTexture };
   uLayer: { value: number };
   uFilmColor: { value: THREE.Color };
   uLiftedOpacity: { value: number };
@@ -83,6 +106,10 @@ const vertexShader = /* glsl */ `
   uniform vec2 uStickerSize;
   uniform vec4 uUvWindow;
   uniform sampler2D uAttachedCurl;
+  uniform sampler2D uReleaseHistory;
+  uniform sampler2D uRestState;
+  uniform float uRidgeHeight;
+  uniform float uGripCurlHeight;
   uniform float uRelax;
   uniform vec2 uFlatOffset;
   uniform vec2 uTornOffset;
@@ -123,21 +150,33 @@ const vertexShader = /* glsl */ `
       p.xy += direction * (q + extra - radius * sin(theta));
       p.z = 0.018 + radius * (1.0 - cos(theta));
     } else if (uLayer > 0.5) {
-      p.z += 0.018;
+      vec2 relief = texture2D(uReleaseHistory, vUv).gb;
+      p.z += 0.018 + dot(relief, vec2(uRidgeHeight, uGripCurlHeight));
     }
     vCurl = smoothstep(0.0, PI, theta);
+    #ifdef PEEL_SETTLING
+      vec2 relief = texture2D(uReleaseHistory, vUv).gb;
+      float restingLift = smoothstep(0.02, 0.98, texture2D(uRestState, vUv).g);
+      float restHeight = (0.018 + dot(relief, vec2(uRidgeHeight, uGripCurlHeight))) * restingLift;
+      p = mix(p, vec3(sheetPosition, restHeight), uRelax);
+      theta *= 1.0 - uRelax;
+      vCurl *= 1.0 - uRelax;
+    #endif
     #ifdef PEEL_DETACHED
       // Open around the grip with the same handedness as the folded-over flap.
       vec2 flatPosition = sheetPosition - 2.0 * along * direction + uFlatOffset;
-      p = mix(p, vec3(flatPosition, 0.14), uRelax);
+      p = mix(p, vec3(flatPosition, 0.022), uRelax);
       theta = mix(theta, PI, uRelax);
       vCurl *= 1.0 - uRelax;
     #endif
     vNormalWorld = vec3(direction * sin(theta), cos(theta));
     vec3 lens = vec3(uGrab + direction * uFrontDepth, 0.02 + uRadius);
     if (uLayer > 2.5) lens.xy += uTornOffset;
+    #ifdef PEEL_SETTLING
+      lens = mix(lens, vec3(uGrab, 0.022), uRelax);
+    #endif
     #ifdef PEEL_DETACHED
-      lens = mix(lens, vec3(uGrab + uFlatOffset, 0.14), uRelax);
+      lens = mix(lens, vec3(uGrab + uFlatOffset, 0.022), uRelax);
     #endif
     vec4 center = projectionMatrix * modelViewMatrix * vec4(lens, 1.0);
     vec4 rim = projectionMatrix * modelViewMatrix * vec4(lens + vec3(uRadius * 2.4, 0.0, 0.0), 1.0);
@@ -154,6 +193,8 @@ const fragmentShader = /* glsl */ `
   uniform sampler2D uScene;
   uniform vec2 uViewport;
   uniform float uFilmOptics;
+  uniform vec3 uOpticsTint;
+  uniform float uMaterialTime;
   uniform float uWhiteArtwork;
   uniform vec3 uStickerColor;
   uniform float uFaceFinish;
@@ -161,6 +202,12 @@ const fragmentShader = /* glsl */ `
   uniform float uReleaseFinish;
   uniform sampler2D uState;
   uniform sampler2D uReleaseHistory;
+  uniform vec2 uReleaseTexel;
+  uniform sampler2D uSettlingMask;
+  uniform float uHideSettling;
+  uniform float uRidgeHeight;
+  uniform float uGripCurlHeight;
+  uniform float uRelax;
   uniform float uLayer;
   uniform vec3 uFilmColor;
   uniform float uLiftedOpacity;
@@ -209,16 +256,32 @@ const fragmentShader = /* glsl */ `
       float foldOverlap = step(0.02, state.r) * step(0.02, state.b);
       layerCoverage = max(layerCoverage, foldOverlap);
     }
+    if (uLayer < 1.5 && uHideSettling > 0.5) {
+      layerCoverage *= 1.0 - smoothstep(0.02, 0.98, texture2D(uSettlingMask, vUv).b);
+    }
     if (layerCoverage < 0.01) discard;
     float silhouette = texture2D(uArt, vUv).a;
     if (silhouette <= 0.0) discard;
 
+    bool flatReleased = uLayer > 0.5 && uLayer < 1.5;
     // Three.js reverses WebGL winding for BackSide materials, so
     // gl_FrontFacing does not identify the sticker's physical side.
     #ifdef PEEL_BACK_FACE
       vec3 normal = normalize(-vNormalWorld);
     #else
       vec3 normal = normalize(vNormalWorld);
+      if (flatReleased && uRidgeHeight + uGripCurlHeight > 0.0) {
+        // Shade from the height texture to avoid a faceted seam across mesh triangles.
+        vec2 texel = uReleaseTexel * 2.0;
+        vec2 height = vec2(uRidgeHeight, uGripCurlHeight);
+        vec2 x = vec2(texel.x, 0.0);
+        vec2 y = vec2(0.0, texel.y);
+        vec2 slope = vec2(
+          dot(texture2D(uReleaseHistory, vUv + x).gb - texture2D(uReleaseHistory, vUv - x).gb, height),
+          dot(texture2D(uReleaseHistory, vUv + y).gb - texture2D(uReleaseHistory, vUv - y).gb, height)
+        ) / (2.0 * texel * uStickerSize);
+        normal = normalize(vec3(-slope, 1.0));
+      }
     #endif
     #ifdef PEEL_DETACHED
       if (normal.z < 0.0) normal = -normal;
@@ -266,6 +329,7 @@ const fragmentShader = /* glsl */ `
       filmColor = vec3(0.57, 0.72, 0.83) + vec3(speckle * 0.17 + grazing * 0.12);
     }
     vec3 color = filmColor;
+    float alpha = silhouette * uLiftedOpacity;
     if (uFilmOptics > 0.5) {
       vec2 screen = gl_FragCoord.xy / uViewport;
       vec2 aspect = vec2(uViewport.x / uViewport.y, 1.0);
@@ -298,9 +362,9 @@ const fragmentShader = /* glsl */ `
         texture2D(uScene, clamp(warped, edge, 1.0 - edge)).g,
         texture2D(uScene, clamp(warped - dispersion, edge, 1.0 - edge)).b
       );
-      color = mix(refracted, filmColor, 0.10 + grazing * 0.12) + specular * 0.08;
+      color = mix(refracted * uOpticsTint, filmColor, uLiftedOpacity) + specular * 0.08;
+      alpha = silhouette;
     }
-    float alpha = silhouette * uLiftedOpacity;
     #else
     vec3 artworkColor = mix(texture2D(uArt, vUv).rgb, uStickerColor, uWhiteArtwork);
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
@@ -316,17 +380,60 @@ const fragmentShader = /* glsl */ `
         + vec3(side, 0.0) * dot(coating.xy, side) + normal * coating.z);
       float puffLight = max(dot(puffNormal, lightDirection), 0.0);
       float rim = pow(1.0 - max(puffNormal.z, 0.0), 3.0);
-      vec3 reflection = reflect(vec3(0.0, 0.0, -1.0), puffNormal);
-      // Two studio strip lights create long, white reflections around the dome.
-      float strip = exp(-pow((reflection.x + 0.38) / 0.095, 2.0)
-        - pow((reflection.y - 0.42) / 0.68, 4.0));
-      float softbox = exp(-pow((reflection.x + 0.31) / 0.32, 2.0)
-        - pow((reflection.y - 0.52) / 0.65, 2.0));
-      float secondary = exp(-pow((reflection.x - 0.60) / 0.065, 2.0)
-        - pow((reflection.y + 0.18) / 0.42, 4.0));
-      printedColor = artworkColor * (0.52 + puffLight * 0.52);
-      printedColor += artworkColor * softbox * 0.16 + vec3(1.0, 0.88, 0.67) * rim * 0.10;
-      printedColor = mix(printedColor, vec3(1.0, 0.985, 0.94), clamp(strip * 0.94 + secondary * 0.56, 0.0, 0.97));
+      if (uFaceFinish > 19.5) {
+        vec2 screen = gl_FragCoord.xy / uViewport;
+        vec2 aspect = vec2(uViewport.y / uViewport.x, 1.0);
+        vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
+        vec2 flow = vec2(
+          sin(sheet.y * 20.0 + sheet.x * 7.0 + uMaterialTime * 1.35),
+          cos(sheet.x * 17.0 - sheet.y * 9.0 - uMaterialTime * 1.1)
+        );
+        float bend = 0.038;
+        float coatingStrength = 0.10;
+        float shimmer = 0.0;
+        if (uFaceFinish > 22.5) {
+          // Water has fine, crossing waves and a narrow moving caustic.
+          float ripple = cos(dot(sheet, vec2(29.0, 35.0)) - uMaterialTime * 2.4 + flow.x * 1.8);
+          puffNormal = normalize(puffNormal + vec3(flow * 0.12, 0.0));
+          bend = 0.018;
+          coatingStrength = 0.13;
+          shimmer = pow(max(0.0, ripple), 12.0) * 0.24;
+        } else if (uFaceFinish > 21.5) {
+          // Liquid glass bends longer light streaks around broad moving lobes.
+          puffNormal = normalize(puffNormal + vec3(flow * 0.23, 0.0));
+          coatingStrength = 0.19;
+          bend = 0.066;
+        } else if (uFaceFinish < 20.5) {
+          // Jelly holds a saturated core and blooms softly around the bevel.
+          coatingStrength = 0.57;
+          bend = 0.054;
+          shimmer = puffLight * 0.10;
+        }
+        vec2 ray = screen - puffNormal.xy * bend * aspect;
+        vec2 edge = 0.5 / uViewport;
+        vec3 transmitted = texture2D(uScene, clamp(ray, edge, 1.0 - edge)).rgb;
+        vec3 reflection = reflect(vec3(0.0, 0.0, -1.0), puffNormal);
+        float stripWidth = uFaceFinish < 20.5 ? 0.20 : 0.07;
+        float strip = exp(-pow((reflection.x + 0.38) / stripWidth, 2.0) - pow((reflection.y - 0.36) / 0.62, 4.0));
+        float panel = dot(sheet, vec2(0.58, 0.81)) + reflection.x * 0.32 + 0.11;
+        float sweep = exp(-pow(panel / (uFaceFinish < 20.5 ? 0.14 : 0.061), 2.0));
+        vec3 tint = artworkColor * (0.38 + puffLight * 0.46);
+        if (uFaceFinish > 22.5) tint = mix(tint, vec3(0.16, 0.57, 0.78), 0.62);
+        printedColor = mix(transmitted, tint, coatingStrength);
+        printedColor += vec3(0.88, 0.95, 1.0) * (strip * 0.69 + sweep * 0.16 + rim * 0.38 + shimmer);
+      } else {
+        vec3 reflection = reflect(vec3(0.0, 0.0, -1.0), puffNormal);
+        // Two studio strip lights create long, white reflections around the dome.
+        float strip = exp(-pow((reflection.x + 0.38) / 0.095, 2.0)
+          - pow((reflection.y - 0.42) / 0.68, 4.0));
+        float softbox = exp(-pow((reflection.x + 0.31) / 0.32, 2.0)
+          - pow((reflection.y - 0.52) / 0.65, 2.0));
+        float secondary = exp(-pow((reflection.x - 0.60) / 0.065, 2.0)
+          - pow((reflection.y + 0.18) / 0.42, 4.0));
+        printedColor = artworkColor * (0.52 + puffLight * 0.52);
+        printedColor += artworkColor * softbox * 0.16 + vec3(1.0, 0.88, 0.67) * rim * 0.10;
+        printedColor = mix(printedColor, vec3(1.0, 0.985, 0.94), clamp(strip * 0.94 + secondary * 0.56, 0.0, 0.97));
+      }
     } else if (uFaceFinish > 13.5) {
       vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
       // A reflected light panel moves across the coating as the sheet curls.
@@ -459,13 +566,22 @@ const fragmentShader = /* glsl */ `
     // The flat released layer already gets its coverage from state.g. Applying
     // the history mask again there weakens the finish at the feathered edge.
     // The back film has its own appearance, independent of release history.
-    bool flatReleased = uLayer > 0.5 && uLayer < 1.5;
     float released = flatReleased ? 1.0
       : smoothstep(0.02, 0.98, texture2D(uReleaseHistory, vUv).r);
+    #ifdef PEEL_SETTLING
+      released *= uRelax;
+    #endif
     if (released > 0.0) {
       vec3 releaseColor = vec3(0.21, 0.18, 0.23);
       float releaseAlpha = min(alpha, 0.70 * silhouette);
-      if (uReleaseFinish > 2.5) {
+      if (uReleaseFinish > 4.5) {
+        releaseColor = color;
+        releaseAlpha = alpha;
+      } else if (uReleaseFinish > 3.5) {
+        float bevel = texture2D(uReleaseHistory, vUv).g;
+        releaseColor = mix(color * 0.68, color * 0.96, bevel);
+        releaseAlpha = alpha;
+      } else if (uReleaseFinish > 2.5) {
         float stripe = 0.5 + 0.5 * sin((vUv.x + vUv.y) * 260.0);
         releaseColor = mix(vec3(0.16, 0.14, 0.20), vec3(0.57, 0.50, 0.65), smoothstep(0.55, 0.86, stripe));
       } else if (uReleaseFinish > 1.5) {
@@ -475,6 +591,13 @@ const fragmentShader = /* glsl */ `
       } else if (uReleaseFinish > 0.5) {
         releaseColor = color;
         releaseAlpha = alpha * 0.30;
+      }
+      if (flatReleased && uRidgeHeight + uGripCurlHeight > 0.0) {
+        float slope = length(normal.xy);
+        float reliefLight = dot(normal.xy, normalize(vec2(-0.38, 0.55)));
+        releaseColor = releaseColor * (1.0 + reliefLight * 0.46)
+          + vec3(0.77, 0.70, 0.84) * (slope * 0.08 + max(0.0, reliefLight) * 0.25);
+        releaseAlpha = max(releaseAlpha, silhouette * min(0.72, slope));
       }
       color = mix(color, releaseColor, released);
       alpha = mix(alpha, releaseAlpha, released);
@@ -487,6 +610,9 @@ const fragmentShader = /* glsl */ `
       float veil = 1.0 - smoothstep(0.0, 1.0, uDissolve) * 0.35;
       alpha *= veil * (1.0 - smoothstep(dissolveStart, dissolveStart + 0.34, uDissolve));
     }
+    #if defined(PEEL_SETTLING) && defined(PEEL_BACK_FACE)
+      alpha *= 1.0 - smoothstep(0.78, 1.0, uRelax);
+    #endif
     gl_FragColor = vec4(color, alpha * layerCoverage);
   }
 `;
@@ -562,23 +688,30 @@ export class PeelRenderer {
   private readonly attachedCurl: AttachedCurl;
   private readonly curlTexture: THREE.DataTexture;
   private curlPreparedFor: CurlProfile | null = null;
+  private readonly releaseHistory: Uint8Array;
   private readonly releaseData: Uint8Array;
   private readonly releaseTexture: THREE.DataTexture;
   private lastReleaseRevision = -1;
   private readonly materials: THREE.ShaderMaterial[] = [];
-  private readonly stickerMeshes: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>[] = [];
+  private readonly stickerMeshes: StickerMesh[] = [];
   private readonly dissolves: DissolvingShape[] = [];
   private heldDissolve: DissolvingShape | null = null;
+  private settling: SettlingFlap | null = null;
   private readonly shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private readonly resizeObserver: ResizeObserver;
   private readonly originalWhiteArtwork: boolean;
   private puffTexture: THREE.DataTexture | null = null;
   private filmOptics: FilmOptics | null = null;
+  private readonly reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   private opticsMode = 0;
+  private frontFinish = 0;
+  private reliefHeight = 0;
+  private settingsOpen = false;
+  private settingsPreviewDirty = false;
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
   private readonly surface: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
   private glassDepth: GlassDepthScene | null = null;
-  private zoom = 1;
+  private zoom: number;
   private cameraSettings: CameraSettings;
   private cameraMotion: CameraMotion | null = null;
   private lastCameraTime = performance.now();
@@ -592,13 +725,10 @@ export class PeelRenderer {
   private readonly stickerHeight: number;
   private frame = 0;
   private resizeFrame = 0;
-  private lastFpsTime = performance.now();
-  private fpsFrames = 0;
   // Keep render resolution stable. Reallocating the WebGL drawing buffer mid-gesture
   // caused intermittent single-frame flashes on devices near the FPS thresholds.
   private readonly pixelRatio = Math.min(window.devicePixelRatio, 1.75);
   private disposed = false;
-  onFps?: (fps: number) => void;
 
   constructor(
     private readonly host: HTMLElement,
@@ -607,11 +737,13 @@ export class PeelRenderer {
     artworkAspect: number,
     whiteArtwork = false,
     cameraSettings = DEFAULT_CAMERA_SETTINGS,
+    zoom = 1,
   ) {
     this.originalWhiteArtwork = whiteArtwork;
     this.stickerHeight = this.stickerWidth / artworkAspect;
     this.stickerBounds = regionBounds({ x: 0, y: 0, width: this.stickerWidth, height: this.stickerHeight }, 0.022);
     this.cameraSettings = cameraSettings;
+    this.zoom = zoom;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -649,8 +781,9 @@ export class PeelRenderer {
     this.curlTexture.magFilter = THREE.LinearFilter;
     this.curlTexture.needsUpdate = true;
 
-    this.releaseData = new Uint8Array(simulation.width * simulation.height);
-    this.releaseTexture = new THREE.DataTexture(this.releaseData, simulation.width, simulation.height, THREE.RedFormat);
+    this.releaseHistory = new Uint8Array(simulation.width * simulation.height);
+    this.releaseData = new Uint8Array(this.releaseHistory.length * 4);
+    this.releaseTexture = new THREE.DataTexture(this.releaseData, simulation.width, simulation.height, THREE.RGBAFormat);
     this.releaseTexture.minFilter = THREE.LinearFilter;
     this.releaseTexture.magFilter = THREE.LinearFilter;
     this.updateReleaseHistory();
@@ -672,6 +805,8 @@ export class PeelRenderer {
         uScene: { value: art },
         uViewport: { value: new THREE.Vector2(1, 1) },
         uFilmOptics: { value: 0 },
+        uOpticsTint: { value: new THREE.Color(0xffffff) },
+        uMaterialTime: { value: 0 },
         uWhiteArtwork: { value: whiteArtwork ? 1 : 0 },
         uStickerColor: { value: new THREE.Color(0xffffff) },
         uFaceFinish: { value: 0 },
@@ -680,6 +815,12 @@ export class PeelRenderer {
         uState: { value: this.stateTexture },
         uAttachedCurl: { value: this.curlTexture },
         uReleaseHistory: { value: this.releaseTexture },
+        uReleaseTexel: { value: new THREE.Vector2(1 / simulation.width, 1 / simulation.height) },
+        uRidgeHeight: { value: 0 },
+        uGripCurlHeight: { value: 0 },
+        uRestState: { value: this.stateTexture },
+        uSettlingMask: { value: this.stateTexture },
+        uHideSettling: { value: 0 },
         uLayer: { value: pass.layer },
         uFilmColor: { value: new THREE.Color(0xf05fa8) },
         uLiftedOpacity: { value: 0.5 },
@@ -820,8 +961,9 @@ export class PeelRenderer {
   private updateReleaseHistory() {
     const revision = this.simulation.releaseHistoryRevision;
     if (revision === this.lastReleaseRevision) return;
-    this.simulation.writeReleaseHistory(this.releaseData);
-    extendStateTexture(this.releaseData, this.stateSources, 1);
+    this.simulation.writeReleaseHistory(this.releaseHistory);
+    writeReleaseSurface(this.releaseData, this.releaseHistory, this.stateSources, this.simulation.width,
+      this.simulation.releasedGrips);
     this.releaseTexture.needsUpdate = true;
     this.lastReleaseRevision = revision;
   }
@@ -899,7 +1041,7 @@ export class PeelRenderer {
       texture.magFilter = THREE.LinearFilter;
       texture.needsUpdate = true;
       let bounds = this.movingBounds;
-      const material = back.material.clone();
+      const material = this.cloneMaterial(back.material);
       const uniforms = material.uniforms as unknown as PeelUniforms;
       material.defines = { ...material.defines, PEEL_DETACHED: 1 };
       material.side = THREE.DoubleSide;
@@ -912,10 +1054,7 @@ export class PeelRenderer {
       const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
       const direction = uniforms.uDirection.value;
       const flatOffset = uniforms.uFlatOffset.value.copy(direction).multiplyScalar(shift);
-      uniforms.uArt.value = back.material.uniforms.uArt.value;
-      uniforms.uReleaseHistory.value = this.releaseTexture;
       uniforms.uState.value = texture;
-      uniforms.uAttachedCurl.value = this.curlTexture;
       const mesh = new THREE.Mesh(back.geometry, material);
       mesh.renderOrder = back.renderOrder + 6;
       mesh.position.z = back.position.z;
@@ -934,8 +1073,11 @@ export class PeelRenderer {
           height: cross * width + diagonal * height,
         }, 0.15));
       }
-      this.heldDissolve = { texture, mesh, started: performance.now(), origin: { ...pointer },
-        offset: { x: 0, y: 0 }, bounds };
+      const { liftedCells, totalCells } = this.simulation.diagnostics().current;
+      this.heldDissolve = {
+        texture, mesh, releasedAt: null, settleMs: releaseSettleDuration(liftedCells, totalCells),
+        origin: { ...pointer }, offset: { x: 0, y: 0 }, bounds,
+      };
       this.dissolves.push(this.heldDissolve);
     }
     const shape = this.heldDissolve;
@@ -944,7 +1086,69 @@ export class PeelRenderer {
     shape.mesh.position.setX(shape.offset.x).setY(shape.offset.y);
   }
 
-  clearDissolves() {
+  private cloneMaterial(source: THREE.ShaderMaterial) {
+    const material = source.clone();
+    const uniforms = material.uniforms as unknown as PeelUniforms;
+    uniforms.uArt.value = source.uniforms.uArt.value;
+    uniforms.uPuff.value = source.uniforms.uPuff.value;
+    uniforms.uScene.value = source.uniforms.uScene.value;
+    uniforms.uReleaseHistory.value = this.releaseTexture;
+    uniforms.uAttachedCurl.value = this.curlTexture;
+    uniforms.uRestState.value = this.stateTexture;
+    uniforms.uSettlingMask.value = this.stateTexture;
+    return material;
+  }
+
+  settleLift(liftedCells: number, totalCells: number) {
+    if (!liftedCells || !this.movingRegion || !this.movingBounds || this.reducedMotion.matches) return;
+    this.clearSettling();
+    const { width, height } = this.simulation;
+    const state = new THREE.DataTexture(this.stateData.slice(), width, height, THREE.RGBAFormat);
+    const curl = new THREE.DataTexture(this.attachedCurl.pixels.slice(), width, height, THREE.RedFormat, THREE.HalfFloatType);
+    for (const texture of [state, curl]) {
+      texture.minFilter = texture.magFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+    }
+    const meshes = this.stickerMeshes.filter(mesh => mesh.material.uniforms.uLayer.value === 2).map(source => {
+      const material = this.cloneMaterial(source.material);
+      material.defines = { ...material.defines, PEEL_SETTLING: 1 };
+      material.uniforms.uState.value = state;
+      material.uniforms.uAttachedCurl.value = curl;
+      const mesh = new THREE.Mesh(source.geometry, material);
+      mesh.position.copy(source.position);
+      mesh.renderOrder = source.renderOrder;
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      return mesh;
+    });
+    for (const material of this.materials) {
+      material.uniforms.uSettlingMask.value = state;
+      material.uniforms.uHideSettling.value = 1;
+    }
+    this.settling = {
+      meshes, state, curl, from: this.movingBounds, to: regionBounds(this.movingRegion, 0.022 + this.reliefHeight),
+      started: performance.now(), duration: releaseSettleDuration(liftedCells, totalCells), progress: 0,
+    };
+  }
+
+  private clearSettling() {
+    const flap = this.settling;
+    if (!flap) return;
+    for (const mesh of flap.meshes) {
+      this.scene.remove(mesh);
+      mesh.material.dispose();
+    }
+    flap.state.dispose();
+    flap.curl.dispose();
+    this.settling = null;
+    for (const material of this.materials) {
+      material.uniforms.uSettlingMask.value = this.stateTexture;
+      material.uniforms.uHideSettling.value = 0;
+    }
+  }
+
+  clearReleaseAnimations() {
+    this.clearSettling();
     for (const shape of this.dissolves) this.disposeDissolve(shape);
     this.dissolves.length = 0;
     this.heldDissolve = null;
@@ -957,8 +1161,13 @@ export class PeelRenderer {
   }
 
   setAppearance(appearance: PeelAppearance) {
+    this.settingsPreviewDirty = true;
     this.opticsMode = appearance.optics;
-    if (appearance.face === 19 && !this.puffTexture) {
+    this.frontFinish = appearance.face;
+    const ridgeHeight = appearance.released === RIDGE_FINISH ? RIDGE_HEIGHT : 0;
+    const curlHeight = appearance.gripCurl ? GRIP_CURL_HEIGHT : 0;
+    this.reliefHeight = ridgeHeight + curlHeight;
+    if (appearance.face >= PUFFY_FINISH && !this.puffTexture) {
       const width = this.artwork.naturalWidth;
       const height = this.artwork.naturalHeight;
       const canvas = document.createElement("canvas");
@@ -984,12 +1193,16 @@ export class PeelRenderer {
       this.glassDepth = new GlassDepthScene();
       this.scene.add(this.glassDepth.mesh);
     }
-    if (this.glassDepth) this.glassDepth.mesh.visible = glassEnabled;
+    if (this.glassDepth) {
+      this.glassDepth.mesh.visible = glassEnabled;
+      this.glassDepth.setBackdrop(background);
+    }
     this.surface.visible = !glassEnabled;
     this.shadow.visible = !glassEnabled;
 
     const sticker = STICKER_COLORS[appearance.sticker].color;
-    for (const material of this.materials) {
+    const moving = [...this.dissolves.map(shape => shape.mesh), ...(this.settling?.meshes ?? [])];
+    for (const material of [...this.materials, ...moving.map(mesh => mesh.material)]) {
       const uniforms = material.uniforms as unknown as PeelUniforms;
       uniforms.uWhiteArtwork.value = sticker || this.originalWhiteArtwork ? 1 : 0;
       uniforms.uStickerColor.value.set(sticker ?? "#ffffff");
@@ -997,25 +1210,21 @@ export class PeelRenderer {
       if (this.puffTexture) uniforms.uPuff.value = this.puffTexture;
       uniforms.uBackFinish.value = appearance.back;
       uniforms.uFilmOptics.value = appearance.optics;
+      uniforms.uOpticsTint.value.setHex(FILM_FILTERS[appearance.filmFilter].color, THREE.LinearSRGBColorSpace);
       uniforms.uReleaseFinish.value = appearance.released;
+      uniforms.uRidgeHeight.value = ridgeHeight;
+      uniforms.uGripCurlHeight.value = curlHeight;
     }
-    for (const shape of this.dissolves) {
-      shape.mesh.material.uniforms.uBackFinish.value = appearance.back;
-      shape.mesh.material.uniforms.uFilmOptics.value = appearance.optics;
-      shape.mesh.material.uniforms.uReleaseFinish.value = appearance.released;
-    }
-  }
-
-  setDebug(enabled: boolean) {
-    for (const material of this.materials) material.wireframe = enabled;
   }
 
   setLiftedTransparency(transparency: number) {
+    this.settingsPreviewDirty = true;
     const opacity = 1 - THREE.MathUtils.clamp(transparency, 0, 0.95);
     for (const material of this.materials) {
       (material.uniforms as unknown as PeelUniforms).uLiftedOpacity.value = opacity;
     }
     for (const shape of this.dissolves) shape.mesh.material.uniforms.uLiftedOpacity.value = opacity;
+    for (const mesh of this.settling?.meshes ?? []) mesh.material.uniforms.uLiftedOpacity.value = opacity;
   }
 
   screenToSticker(clientX: number, clientY: number, depth = 0): Vec2 | null {
@@ -1071,7 +1280,12 @@ export class PeelRenderer {
     this.cameraSettings = settings;
   }
 
+  setSettingsOpen(open: boolean) {
+    this.settingsOpen = open;
+  }
+
   beginDrag(clientX: number, clientY: number, point: Vec2) {
+    this.clearSettling();
     const start = { x: clientX, y: clientY };
     this.dragInput = {
       screen: start, start, point, cameraStart: this.camera.position.clone(), assist: null,
@@ -1117,6 +1331,7 @@ export class PeelRenderer {
 
   endDrag() {
     this.dragInput = null;
+    if (this.heldDissolve) this.heldDissolve.releasedAt ??= performance.now();
   }
 
   dispose() {
@@ -1124,7 +1339,7 @@ export class PeelRenderer {
     cancelAnimationFrame(this.frame);
     cancelAnimationFrame(this.resizeFrame);
     this.resizeObserver.disconnect();
-    this.clearDissolves();
+    this.clearReleaseAnimations();
     for (const mesh of this.stickerMeshes) mesh.geometry.dispose();
     for (const material of this.materials) material.dispose();
     this.shadow.geometry.dispose();
@@ -1155,6 +1370,7 @@ export class PeelRenderer {
     this.viewportWidth = width;
     this.viewportHeight = height;
     this.camera.updateProjectionMatrix();
+    this.settingsPreviewDirty = true;
     if (!this.cameraMotion) this.frameCamera(performance.now());
   }
 
@@ -1163,11 +1379,22 @@ export class PeelRenderer {
     const height = this.viewportHeight;
     const shortSide = Math.min(width, height);
     const fill = Math.min(0.945, 0.82 * this.zoom);
-    const bounds = [this.stickerBounds];
+    const relief = this.simulation.releasedGrips.size > 0 ? this.reliefHeight : 0;
+    const bounds = [{ ...this.stickerBounds, z: this.stickerBounds.z + relief }];
     const { pan } = this.cameraSettings;
     if (this.movingBounds) bounds.push(this.movingBounds);
+    if (this.settling) {
+      const { from, to, progress } = this.settling;
+      const lerp = THREE.MathUtils.lerp;
+      bounds.push({
+        left: lerp(from.left, to.left, progress), right: lerp(from.right, to.right, progress),
+        bottom: lerp(from.bottom, to.bottom, progress), top: lerp(from.top, to.top, progress),
+        z: lerp(from.z, to.z, progress),
+      });
+    }
     for (const shape of this.dissolves) {
-      const foreground = this.dragInput ? shape === this.heldDissolve : now - shape.started < RELAX_MS + DISSOLVE_MS * 0.65;
+      const foreground = this.dragInput ? shape === this.heldDissolve
+        : shape.releasedAt === null || now - shape.releasedAt < shape.settleMs + DISSOLVE_MS * 0.65;
       if (shape.bounds && foreground) bounds.push(translateBounds(shape.bounds, shape.offset));
     }
     const flatDistance = Math.max(this.stickerWidth * height / width, this.stickerHeight) / (2 * this.tangent);
@@ -1197,17 +1424,33 @@ export class PeelRenderer {
   private animate = () => {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
+    // Keep the preview responsive while the settings dialog covers the stage.
+    if (this.settingsOpen && !this.settingsPreviewDirty && !this.dragInput && !this.settling && !this.dissolves.length) return;
+    this.settingsPreviewDirty = false;
     const now = performance.now();
-    const phase = this.dissolves.length ? "dissolve" : this.dragInput ? "drag" : "idle";
+    const phase = this.dissolves.length || this.settling ? "dissolve" : this.dragInput ? "drag" : "idle";
+    if (this.settling) {
+      const { started, duration, meshes } = this.settling;
+      const elapsed = now - started;
+      if (elapsed >= duration) {
+        this.clearSettling();
+      } else {
+        const progress = THREE.MathUtils.smoothstep(elapsed, 0, duration);
+        this.settling.progress = progress;
+        for (const mesh of meshes) mesh.material.uniforms.uRelax.value = progress;
+      }
+    }
     for (let i = this.dissolves.length - 1; i >= 0; i--) {
       const shape = this.dissolves[i];
-      const elapsed = now - shape.started;
-      if (elapsed >= RELAX_MS + DISSOLVE_MS) {
+      if (shape.releasedAt === null) continue;
+      const elapsed = now - shape.releasedAt;
+      const settleMs = this.reducedMotion.matches ? 0 : shape.settleMs;
+      if (elapsed >= settleMs + DISSOLVE_MS) {
         this.disposeDissolve(shape);
         this.dissolves.splice(i, 1);
       } else {
-        const relax = THREE.MathUtils.smoothstep(elapsed, 0, RELAX_MS);
-        const dissolve = Math.max(0, (elapsed - RELAX_MS) / DISSOLVE_MS);
+        const relax = settleMs === 0 ? 1 : THREE.MathUtils.smoothstep(elapsed, 0, settleMs);
+        const dissolve = Math.max(0, (elapsed - settleMs) / DISSOLVE_MS);
         shape.mesh.material.uniforms.uRelax.value = relax;
         shape.mesh.material.uniforms.uDissolve.value = dissolve;
       }
@@ -1215,22 +1458,21 @@ export class PeelRenderer {
     const cameraStarted = performance.now();
     this.frameCamera(now);
     const renderStarted = performance.now();
+    const fronts = this.frontFinish >= FIRST_REFRACTIVE_FINISH;
+    const backs = this.opticsMode > 0 && (this.movingRegion !== null || this.dissolves.length > 0 || this.settling !== null);
+    const meshes = [...this.stickerMeshes, ...(this.settling?.meshes ?? []), ...this.dissolves.map(shape => shape.mesh)];
     if (this.glassDepth?.mesh.visible) {
-      this.glassDepth.update(this.renderer, this.camera, [
-        ...this.stickerMeshes.filter(mesh => mesh.material.side === THREE.FrontSide),
-        ...this.dissolves.map(shape => shape.mesh),
-      ], now, this.dragInput !== null);
+      this.glassDepth.update(this.renderer, this.camera, meshes.filter(mesh => mesh.material.side !== THREE.BackSide),
+        now, this.dragInput !== null);
     }
-    if (this.opticsMode > 0 && (this.movingRegion || this.dissolves.length)) {
+    if (fronts || backs) {
       this.filmOptics ??= new FilmOptics();
-      const film = [
-        ...this.stickerMeshes.filter(mesh => mesh.material.side === THREE.BackSide),
-        ...this.dissolves.map(shape => shape.mesh),
-      ];
-      this.filmOptics.capture(this.renderer, this.scene, this.camera, film);
-      for (const mesh of film) {
+      const refracting = meshes.filter(mesh => mesh.material.side === THREE.FrontSide ? fronts : backs);
+      this.filmOptics.capture(this.renderer, this.scene, this.camera, refracting);
+      for (const mesh of refracting) {
         mesh.material.uniforms.uScene.value = this.filmOptics.texture;
         mesh.material.uniforms.uViewport.value.copy(this.filmOptics.size);
+        mesh.material.uniforms.uMaterialTime.value = this.reducedMotion.matches ? 0 : now / 1000;
       }
     }
     this.renderer.render(this.scene, this.camera);
@@ -1241,12 +1483,5 @@ export class PeelRenderer {
       cameraMs: renderStarted - cameraStarted,
       renderSubmitMs: performance.now() - renderStarted,
     });
-    this.fpsFrames++;
-    if (now - this.lastFpsTime > 650) {
-      const fps = Math.round(this.fpsFrames * 1000 / (now - this.lastFpsTime));
-      this.onFps?.(fps);
-      this.fpsFrames = 0;
-      this.lastFpsTime = now;
-    }
   };
 }

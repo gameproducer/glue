@@ -3,13 +3,25 @@ export const FACE_FINISHES = [
   "Topographic ink", "Marbled ink", "Halftone print", "Holographic foil", "Speckled enamel",
   "Hammered gold", "Engine-turned silver", "Oil-slick foil", "Cracked ice foil", "Lenticular checker foil",
   "Gloss laminate", "Soft-touch matte", "Linen laminate", "Spot UV varnish", "Dichroic laminate", "Puffy gloss",
+  "Jelly", "Glass", "Liquid glass", "Water",
 ] as const;
 export const BACK_FINISHES = [
   "Clear", "Frosted", "Prismatic", "Fine mesh",
   "Amber resin", "Soap bubble", "Lenticular film", "Ripple glass", "Dew beads",
 ] as const;
-export const RELEASE_FINISHES = ["Dimmed", "Transparent", "Frosted", "Diagonal hatch"] as const;
+export const RELEASE_FINISHES = ["Dimmed", "Transparent", "Frosted", "Diagonal hatch", "Raised ridge", "Keep artwork"] as const;
 export const FILM_OPTICS = ["Off", "Fisheye", "Ripple lens", "Psychedelic", "Prismatic"] as const;
+export const FILM_FILTERS = [
+  { name: "Neutral", color: 0xffffff },
+  { name: "Ice blue", color: 0x9cdcff },
+  { name: "Deep blue", color: 0x728dff },
+  { name: "Rose", color: 0xff92bf },
+  { name: "Amber", color: 0xffba70 },
+  { name: "Smoke", color: 0x98919c },
+] as const;
+export const PUFFY_FINISH = 19;
+export const FIRST_REFRACTIVE_FINISH = 20;
+export const RIDGE_FINISH = 4;
 
 export const BACKGROUNDS = [
   { name: "Graphite", color: "#25222b" },
@@ -17,6 +29,9 @@ export const BACKGROUNDS = [
   { name: "Forest", color: "#23443b" },
   { name: "Burgundy", color: "#532e40" },
   { name: "Warm clay", color: "#735443" },
+  { name: "Glacier blue", color: "#538ec3" },
+  { name: "Slate gray", color: "#717783" },
+  { name: "Pearl white", color: "#e3e6ed" },
 ] as const;
 
 export const STICKER_COLORS = [
@@ -33,28 +48,39 @@ export const STICKER_COLORS = [
   { name: "Smoky quartz", color: "#d2aea5" },
 ] as const;
 
-export type PeelAppearance = { face: number; back: number; optics: number; released: number; background: number; sticker: number; glassDepth: number };
-export const DEFAULT_APPEARANCE: PeelAppearance = { face: 0, back: 0, optics: 0, released: 0, background: 0, sticker: 0, glassDepth: 0 };
-export const APPEARANCE_CONTROLS = [
-  { key: "glassDepth", label: "Glass depth experiment", labels: ["Off", "On"] },
-  { key: "face", label: "Front finish", labels: FACE_FINISHES },
-  { key: "back", label: "Back film", labels: BACK_FINISHES },
-  { key: "optics", label: "Film optics", labels: FILM_OPTICS },
-  { key: "released", label: "Unglued areas", labels: RELEASE_FINISHES },
-  { key: "background", label: "Background", labels: BACKGROUNDS.map(({ name }) => name) },
-  { key: "sticker", label: "Sticker color", labels: STICKER_COLORS.map(({ name }) => name) },
-] as const;
+export const APPEARANCE_OPTIONS = {
+  face: FACE_FINISHES,
+  sticker: STICKER_COLORS.map(({ name }) => name),
+  back: BACK_FINISHES,
+  optics: FILM_OPTICS,
+  filmFilter: FILM_FILTERS.map(({ name }) => name),
+  released: RELEASE_FINISHES,
+  gripCurl: ["Off", "On"],
+  background: BACKGROUNDS.map(({ name }) => name),
+  glassDepth: ["Off", "On"],
+} as const;
+export type PeelAppearance = Record<keyof typeof APPEARANCE_OPTIONS, number>;
+export const DEFAULT_APPEARANCE: PeelAppearance = {
+  face: 0, sticker: 0, back: 0, optics: 0, filmFilter: 0, released: 0,
+  gripCurl: 0, background: 0, glassDepth: 0,
+};
 
 export const APPEARANCE_STORAGE_KEY = "peel.appearance";
 
-export function readAppearance(): PeelAppearance {
-  const appearance = { ...DEFAULT_APPEARANCE };
-  try {
-    const saved = JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "{}");
-    for (const { key, labels } of APPEARANCE_CONTROLS) {
-      const value = saved?.[key];
-      if (Number.isInteger(value) && value >= 0 && value < labels.length) appearance[key] = value;
+export function normalizeAppearance(saved: unknown, defaults = DEFAULT_APPEARANCE): PeelAppearance {
+  const appearance = { ...defaults };
+  if (typeof saved !== "object" || saved === null) return appearance;
+  for (const key of Object.keys(APPEARANCE_OPTIONS) as (keyof PeelAppearance)[]) {
+    const value = (saved as Partial<PeelAppearance>)[key];
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < APPEARANCE_OPTIONS[key].length) {
+      appearance[key] = value;
     }
-  } catch { /* The defaults also work when storage is unavailable. */ }
+  }
   return appearance;
+}
+
+export function readAppearance(): PeelAppearance {
+  try {
+    return normalizeAppearance(JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "{}"));
+  } catch { return { ...DEFAULT_APPEARANCE }; }
 }
