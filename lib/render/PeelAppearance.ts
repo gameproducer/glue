@@ -33,9 +33,10 @@ export const STICKER_COLORS = [
   { name: "Smoky quartz", color: "#d2aea5" },
 ] as const;
 
-export type PeelAppearance = { face: number; back: number; optics: number; released: number; background: number; sticker: number };
-export const DEFAULT_APPEARANCE: PeelAppearance = { face: 0, back: 0, optics: 0, released: 0, background: 0, sticker: 0 };
+export type PeelAppearance = { face: number; back: number; optics: number; released: number; background: number; sticker: number; glassDepth: number };
+export const DEFAULT_APPEARANCE: PeelAppearance = { face: 0, back: 0, optics: 0, released: 0, background: 0, sticker: 0, glassDepth: 0 };
 export const APPEARANCE_CONTROLS = [
+  { key: "glassDepth", label: "Glass depth experiment", labels: ["Off", "On"] },
   { key: "face", label: "Front finish", labels: FACE_FINISHES },
   { key: "back", label: "Back film", labels: BACK_FINISHES },
   { key: "optics", label: "Film optics", labels: FILM_OPTICS },

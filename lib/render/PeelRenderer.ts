@@ -4,6 +4,7 @@ import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_
 import { AttachedCurl } from "./AttachedCurl";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
+import { GlassDepthScene } from "./GlassDepthScene";
 import { puffyNormals } from "./PuffyFinish";
 import { FilmOptics } from "./FilmOptics";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
@@ -561,6 +562,8 @@ export class PeelRenderer {
   private filmOptics: FilmOptics | null = null;
   private opticsMode = 0;
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
+  private readonly surface: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
+  private glassDepth: GlassDepthScene | null = null;
   private zoom = 1;
   private viewportWidth = 1;
   private viewportHeight = 1;
@@ -600,9 +603,9 @@ export class PeelRenderer {
     this.host.appendChild(this.domElement);
 
     this.surfaceMaterial = new THREE.MeshStandardMaterial({ map: makeSurfaceTexture(), roughness: 0.88, metalness: 0.04 });
-    const surface = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), this.surfaceMaterial);
-    surface.position.z = -0.095;
-    this.scene.add(surface);
+    this.surface = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), this.surfaceMaterial);
+    this.surface.position.z = -0.095;
+    this.scene.add(this.surface);
     this.scene.add(new THREE.HemisphereLight(0xa799bd, 0x17141b, 1.2));
     const key = new THREE.DirectionalLight(0xfff0dc, 2.55);
     key.position.set(-3.5, 4.5, 7);
@@ -961,6 +964,15 @@ export class PeelRenderer {
     this.surfaceMaterial.emissiveIntensity = appearance.background === 0 ? 0 : 0.95;
     this.scene.background = appearance.background === 0 ? null : new THREE.Color(background).multiplyScalar(0.62);
 
+    const glassEnabled = appearance.glassDepth === 1;
+    if (glassEnabled && !this.glassDepth) {
+      this.glassDepth = new GlassDepthScene();
+      this.scene.add(this.glassDepth.mesh);
+    }
+    if (this.glassDepth) this.glassDepth.mesh.visible = glassEnabled;
+    this.surface.visible = !glassEnabled;
+    this.shadow.visible = !glassEnabled;
+
     const sticker = STICKER_COLORS[appearance.sticker].color;
     for (const material of this.materials) {
       const uniforms = material.uniforms as unknown as PeelUniforms;
@@ -1109,6 +1121,10 @@ export class PeelRenderer {
     this.releaseTexture.dispose();
     this.puffTexture?.dispose();
     this.filmOptics?.dispose();
+    this.glassDepth?.dispose();
+    this.surface.geometry.dispose();
+    this.surfaceMaterial.map?.dispose();
+    this.surfaceMaterial.dispose();
     this.renderer.dispose();
     this.domElement.remove();
   }
@@ -1178,6 +1194,12 @@ export class PeelRenderer {
     const cameraStarted = performance.now();
     this.frameCamera();
     const renderStarted = performance.now();
+    if (this.glassDepth?.mesh.visible) {
+      this.glassDepth.update(this.renderer, this.camera, [
+        ...this.stickerMeshes.filter(mesh => mesh.material.side === THREE.FrontSide),
+        ...this.dissolves.map(shape => shape.mesh),
+      ], now, this.dragInput !== null);
+    }
     if (this.opticsMode > 0 && (this.movingRegion || this.dissolves.length)) {
       this.filmOptics ??= new FilmOptics();
       const film = [
