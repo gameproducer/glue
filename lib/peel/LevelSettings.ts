@@ -13,6 +13,7 @@ export type LevelSettings = {
   tearThreshold: number;
   releaseJumpThreshold: number;
   tearFactors: TearFactors;
+  tearWarning: boolean;
   liftedTransparency: number;
   appearance: PeelAppearance;
   camera: CameraSettings;
@@ -29,6 +30,7 @@ export const DEFAULT_LEVEL_SETTINGS: LevelSettings = {
   tearThreshold: 0.40,
   releaseJumpThreshold: 0.15,
   tearFactors: { outward: 0.05, bottleneck: 0.05 },
+  tearWarning: true,
   liftedTransparency: 0.5,
   appearance: DEFAULT_APPEARANCE,
   camera: DEFAULT_CAMERA_SETTINGS,
@@ -68,6 +70,7 @@ export function readLevelSettings(id: string): LevelSettings {
       outward: bounded(saved?.tearFactors?.outward ?? readLegacy("tearFactors.outward"), defaults.tearFactors.outward, 0, 1),
       bottleneck: bounded(saved?.tearFactors?.bottleneck ?? readLegacy("tearFactors.bottleneck"), defaults.tearFactors.bottleneck, 0, 1),
     },
+    tearWarning: typeof saved?.tearWarning === "boolean" ? saved.tearWarning : defaults.tearWarning,
     liftedTransparency: bounded(saved?.liftedTransparency ?? readLegacy("liftedTransparency"), defaults.liftedTransparency, 0.05, 0.9),
     appearance: saved ? normalizeAppearance(saved.appearance) : readAppearance(),
     camera: {

@@ -11,6 +11,7 @@ import { FrameTimings } from "./FrameTimings";
 import { GlassDepthScene } from "./GlassDepthScene";
 import { puffyNormals } from "./PuffyFinish";
 import { FilmOptics } from "./FilmOptics";
+import { CREASE_START_RISK, GESTURE_START_RISK, TearWarningOverlay } from "./TearWarningOverlay";
 import { detachedAlignmentDuration, detachedAnimation, releaseSettleDuration, writeReleaseSurface } from "./ReleaseSurface";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 
@@ -86,7 +87,6 @@ type PeelUniforms = {
   uFrontDepth: { value: number };
   uRadius: { value: number };
   uCone: { value: number };
-  uStress: { value: number };
   uStretch: { value: number };
   uStickerSize: { value: THREE.Vector2 };
   uUvWindow: { value: THREE.Vector4 };
@@ -213,7 +213,6 @@ const fragmentShader = /* glsl */ `
   uniform float uLayer;
   uniform vec3 uFilmColor;
   uniform float uLiftedOpacity;
-  uniform float uStress;
   uniform float uDissolve;
   uniform vec2 uDirection;
   uniform vec2 uStickerSize;
@@ -295,7 +294,6 @@ const fragmentShader = /* glsl */ `
     #ifdef PEEL_BACK_FACE
     vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
     filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
-    filmColor = mix(filmColor, vec3(1.0, 0.28, 0.52), uStress * vCurl * 0.12);
     if (uBackFinish > 7.5) {
       vec2 tile = vUv * 31.0;
       vec2 bead = fract(tile) - vec2(0.36, 0.57);
@@ -371,7 +369,6 @@ const fragmentShader = /* glsl */ `
     vec3 artworkColor = mix(texture2D(uArt, vUv).rgb, uStickerColor, uWhiteArtwork);
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
-    printedColor = mix(printedColor, vec3(1.0, 0.52, 0.66), uStress * vCurl * 0.12);
     if (uFaceFinish > 18.5) {
       vec3 coating = normalize(texture2D(uPuff, vUv).rgb * 2.0 - 1.0);
       vec2 axis = normalize(uDirection);
@@ -687,6 +684,10 @@ export class PeelRenderer {
   private readonly stateTexture: THREE.DataTexture;
   private readonly curlDistances: Uint8Array;
   private readonly curlQueue: Int32Array;
+  private curlSeamCount = 0;
+  private readonly warningOverlay: TearWarningOverlay;
+  private warningPose: { point: THREE.Vector3 | null; angle: number; risk: number; redirect: Vec2 | null } | null = null;
+  private readonly warningProjection = new THREE.Vector3();
   private readonly attachedCurl: AttachedCurl;
   private readonly curlTexture: THREE.DataTexture;
   private curlPreparedFor: CurlProfile | null = null;
@@ -754,6 +755,7 @@ export class PeelRenderer {
     this.domElement = this.renderer.domElement;
     this.domElement.className = "peel-canvas";
     this.host.appendChild(this.domElement);
+    this.warningOverlay = new TearWarningOverlay(host);
 
     this.surfaceMaterial = new THREE.MeshStandardMaterial({ map: makeSurfaceTexture(), roughness: 0.88, metalness: 0.04 });
     this.surface = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), this.surfaceMaterial);
@@ -831,7 +833,6 @@ export class PeelRenderer {
         uFrontDepth: { value: 0 },
         uRadius: { value: 0.31 },
         uCone: { value: 0 },
-        uStress: { value: 0 },
         uStretch: { value: 0 },
         uStickerSize: { value: new THREE.Vector2(this.stickerWidth, this.stickerHeight) },
         uUvWindow: { value: new THREE.Vector4(0, 0, 1, 1) },
@@ -910,9 +911,8 @@ export class PeelRenderer {
   updateState() {
     this.curlPreparedFor = null;
     this.simulation.writeTexture(this.stateData);
-    if (this.updateMovingRegion() === Cell.lifted) {
-      writeCurlDistances(this.stateData, this.curlDistances, this.simulation.width, this.curlQueue);
-    }
+    this.curlSeamCount = this.updateMovingRegion() === Cell.lifted
+      ? writeCurlDistances(this.stateData, this.curlDistances, this.simulation.width, this.curlQueue) : 0;
     extendStateTexture(this.stateData, this.stateSources);
     this.stateTexture.needsUpdate = true;
     this.updateReleaseHistory();
@@ -1003,7 +1003,6 @@ export class PeelRenderer {
       uniforms.uFrontDepth.value = worldDepth;
       uniforms.uRadius.value = radius;
       uniforms.uCone.value = profile === "cone" ? 1 : 0;
-      uniforms.uStress.value = stress;
       uniforms.uStretch.value = stretch;
       uniforms.uTornOffset.value.set(offsetX, offsetY);
       if (uniforms.uLayer.value === 2 && region && !torn && !detachedPointer) {
@@ -1028,6 +1027,45 @@ export class PeelRenderer {
     this.shadow.scale.set(1 + lift * 0.08, 1 + lift * 0.12, 1);
     this.shadow.position.set(-direction.x * lift * 0.08 + 0.06, -direction.y * lift * 0.08 - 0.08, -0.055);
     this.shadow.material.uniforms.uOpacity.value = 0.3 + lift * 0.18;
+  }
+
+  setTearWarning(snapshot: PeelSnapshot, warning: ReturnType<PeelSimulation["tearWarning"]>) {
+    if (!warning || warning.risk < CREASE_START_RISK) {
+      if (this.warningPose) this.warningOverlay.hide();
+      this.warningPose = null;
+      return;
+    }
+    const { grab, direction, frontDepth } = snapshot;
+    const { width, height } = this.simulation;
+    const aim = this.uvToWorld(grab);
+    aim.x += direction.x * frontDepth * this.stickerHeight;
+    aim.y += direction.y * frontDepth * this.stickerHeight;
+    let closest = Infinity;
+    let point: THREE.Vector3 | null = null;
+    // The queue starts with the actual seam cells, including around holes and concave edges.
+    for (let i = 0; i < this.curlSeamCount; i++) {
+      const cell = this.curlQueue[i];
+      const x = (cell % width / (width - 1) - 0.5) * this.stickerWidth;
+      const y = (Math.floor(cell / width) / (height - 1) - 0.5) * this.stickerHeight;
+      const distance = (x - aim.x) ** 2 + (y - aim.y) ** 2;
+      if (distance >= closest) continue;
+      closest = distance;
+      (point ??= new THREE.Vector3()).set(x, y, 0.018);
+    }
+    const angle = Math.atan2(-direction.x, -direction.y) * 180 / Math.PI;
+    this.warningPose = { point, angle, ...warning };
+  }
+
+  private drawTearWarning() {
+    if (!this.warningPose || !this.dragInput) return;
+    const { point, angle, risk, redirect } = this.warningPose;
+    const projected = point && this.warningProjection.copy(point).project(this.camera);
+    this.warningOverlay.drawCrease(projected && {
+      x: (projected.x + 1) * this.viewportWidth / 2,
+      y: (1 - projected.y) * this.viewportHeight / 2,
+    }, angle, risk);
+    const pointer = risk >= GESTURE_START_RISK ? this.dragInput.screen : null;
+    this.warningOverlay.drawGesture(pointer, pointer && this.domElement.getBoundingClientRect(), redirect);
   }
 
   private moveDissolve(pointer: Vec2) {
@@ -1334,6 +1372,8 @@ export class PeelRenderer {
 
   endDrag() {
     this.dragInput = null;
+    this.warningPose = null;
+    this.warningOverlay.hide();
     if (this.heldDissolve) this.heldDissolve.releasedAt ??= performance.now();
   }
 
@@ -1359,6 +1399,7 @@ export class PeelRenderer {
     this.surfaceMaterial.dispose();
     this.renderer.dispose();
     this.domElement.remove();
+    this.warningOverlay.dispose();
   }
 
   private uvToWorld(point: Vec2) {
@@ -1478,6 +1519,7 @@ export class PeelRenderer {
       }
     }
     this.renderer.render(this.scene, this.camera);
+    this.drawTearWarning();
     this.frameTimings.recordFrame(now, {
       phase,
       visible: document.visibilityState === "visible",

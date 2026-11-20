@@ -18,7 +18,7 @@ function withStorage(entries, run) {
 test("whole settings round-trip by level and keep intentional zero values", () => {
   withStorage([], () => {
     const first = {
-      profile: "cone", tearThreshold: 0, releaseJumpThreshold: 0.46,
+      profile: "cone", tearThreshold: 0, releaseJumpThreshold: 0.46, tearWarning: false,
       tearFactors: { outward: 0, bottleneck: 0.82 }, liftedTransparency: 0.88,
       appearance: { face: 23, sticker: 3, back: 7, optics: 4, filmFilter: 2, released: 5, ridge: 1, gripCurl: 1, background: 7, glassDepth: 1 },
       camera: { pan: false, edgeClearance: 76 }, zoom: 115,
@@ -39,6 +39,7 @@ test("the old ridge preset keeps its relief after becoming an independent toggle
     assert.equal(settings.appearance.released, 5);
     assert.equal(settings.appearance.ridge, 1);
     assert.equal(settings.edgeClick, true);
+    assert.equal(settings.tearWarning, true);
     assert.equal(settings.releaseDynamics, false);
     settings.appearance.ridge = 0;
     saveLevelSettings("bread", settings);

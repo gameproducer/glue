@@ -161,6 +161,8 @@ export class PeelSimulation {
   private direction: Vec2 = { x: 1, y: 0 };
   private frontDepth = 0;
   private stress = 0;
+  private warningLoad = 0;
+  private warningDirection: Vec2 | null = null;
   private areaJump = 0;
   private edgeCueSent = false;
   private frontTravelRemainder = 0;
@@ -275,6 +277,8 @@ export class PeelSimulation {
     this.lastTime = time;
     this.frontDepth = 0;
     this.stress = 0;
+    this.warningLoad = 0;
+    this.warningDirection = null;
     this.areaJump = 0;
     this.physicsSample++;
     this.lastDiagnosticStep = emptyDiagnosticStep();
@@ -286,6 +290,8 @@ export class PeelSimulation {
 
   drag(point: Vec2, time: number) {
     if (!this.tracking) return;
+    this.warningLoad = 0;
+    this.warningDirection = null;
     this.areaJump = 0;
     this.physicsSample++;
     this.lastDiagnosticStep = emptyDiagnosticStep();
@@ -338,6 +344,8 @@ export class PeelSimulation {
       this.outwardSeconds = distanceLoad > 0 ? this.outwardSeconds + elapsed : 0;
       const outwardLoad = clamp(this.tearFactors.outward * (distanceLoad + this.outwardSeconds * 2.5));
       this.stress = Math.max(this.heldStress, outwardLoad);
+      this.warningLoad = outwardLoad;
+      this.warningDirection = inward;
       this.lastPointer = { ...point };
       this.lastTime = time;
       const outwardTear = outwardLoad > 0 && outwardLoad >= this.tearThreshold;
@@ -457,7 +465,9 @@ export class PeelSimulation {
         tearCandidateCells++;
       }
     }
-    const stressTear = hasAnchor && this.stress >= this.tearThreshold && this.liftedCells >= minimumPiece;
+    const canTearUnderTension = hasAnchor && this.liftedCells >= minimumPiece;
+    if (canTearUnderTension) this.warningLoad = this.stress;
+    const stressTear = canTearUnderTension && this.stress >= this.tearThreshold;
     this.lastDiagnosticStep = {
       previousPendingCells,
       pendingNewCells: this.pendingNewCells,
@@ -536,7 +546,7 @@ export class PeelSimulation {
   }
 
   applyGripGap(distance: number, limit: number, tornContact: Vec2 | null) {
-    if (!this.tracking || this.torn || this.liftedCells < this.minimumTearPiece || this.detached) return false;
+    if (!this.canTearAtGrip) return false;
 
     // Leave some slack for the curl, then load the remaining tension cubically.
     const extension = clamp((distance / limit - 0.25) / 0.75);
@@ -549,6 +559,20 @@ export class PeelSimulation {
       this.tornOffset = { ...this.tearRecoil };
     }
     return true;
+  }
+
+  private get canTearAtGrip() {
+    return this.tracking && !this.torn && this.liftedCells >= this.minimumTearPiece && !this.detached;
+  }
+
+  tearWarning(gripDistance: number | null, gripLimit: number) {
+    if (!this.canTearAtGrip) return null;
+    // Use the active failure checks' own loads. Display stress can also include
+    // old tension during a reversal and the visual stretch caused by grip gap.
+    const peelRisk = this.tearThreshold > 0 ? this.warningLoad / this.tearThreshold : 0;
+    const gripRisk = gripDistance === null ? 0 : gripDistance / gripLimit;
+    const redirect = peelRisk > gripRisk && gripRisk < 0.75 ? this.warningDirection : null;
+    return { risk: Math.max(peelRisk, gripRisk), redirect };
   }
 
   private get detached() {

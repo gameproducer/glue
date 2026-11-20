@@ -61,6 +61,7 @@ export function writeCurlDistances(state: Uint8Array, distances: Uint8Array, wid
       queue[tail++] = i;
     }
   }
+  const seamCount = tail;
   const visit = (index: number, distance: number) => {
     if (distances[index] !== 255 || !state[index * 4 + 2]) return;
     distances[index] = distance;
@@ -76,4 +77,5 @@ export function writeCurlDistances(state: Uint8Array, distances: Uint8Array, wid
     if (i >= width) visit(i - width, distance);
     if (i + width < size) visit(i + width, distance);
   }
+  return seamCount;
 }

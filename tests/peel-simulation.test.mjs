@@ -434,15 +434,23 @@ test("pulling back softly stalls, while a strong reversal tears only the held fl
   const held = simulation.state.map(cell => cell === Cell.lifted ? 1 : 0);
   const progress = simulation.snapshot().progress;
   assert.ok(progress > 0 && progress < 1);
+  const tensionRisk = simulation.tearWarning(null, 84);
+  assert.ok(tensionRisk.risk > 0 && tensionRisk.risk < 1);
+  assert.equal(tensionRisk.redirect, null);
   simulation.drag({ x: 0.26, y: 0.5 }, 530);
   assert.equal(simulation.snapshot().outwardPulling, true);
   assert.equal(simulation.snapshot().progress, progress);
   assert.equal(simulation.snapshot().torn, false);
+  const outwardRisk = simulation.tearWarning(null, 84);
+  assert.ok(outwardRisk.risk > 0 && outwardRisk.risk < 1);
+  assert.ok(outwardRisk.redirect.x > 0);
+  assert.deepEqual(simulation.tearWarning(83, 84), { risk: 83 / 84, redirect: null });
 
   simulation.drag({ x: 0.20, y: 0.5 }, 620);
   assert.equal(simulation.diagnostics().lastStep.outwardTear, true);
   assert.equal(simulation.snapshot().areaJump, 0);
   assert.equal(simulation.snapshot().tearDragging, true);
+  assert.equal(simulation.tearWarning(83, 84), null);
   assert.deepEqual(simulation.state.map(cell => cell === Cell.torn ? 1 : 0), held);
   assert.ok(simulation.state.includes(Cell.adhered));
 });
@@ -698,6 +706,7 @@ test("a grip gap cannot tear a fully unglued sticker", () => {
   simulation.begin({ x: 8 / 51, y: 0.5 }, 100);
   simulation.drag({ x: 0.9, y: 0.5 }, 400);
   assert.equal(simulation.snapshot().detached, true);
+  assert.equal(simulation.tearWarning(83, 84), null);
   assert.equal(simulation.applyGripGap(100, 84, null), false);
   assert.equal(simulation.end(), true);
 });

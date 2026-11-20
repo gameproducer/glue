@@ -217,7 +217,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const [settings, setSettings] = useState(DEFAULT_LEVEL_SETTINGS);
   const {
     profile, appearance, peelSound, peelVolume, soundResponse, tearThreshold, releaseJumpThreshold,
-    liftedTransparency, tearFactors, zoom, edgeClick, releaseDynamics, camera: cameraSettings,
+    liftedTransparency, tearFactors, tearWarning, zoom, edgeClick, releaseDynamics, camera: cameraSettings,
   } = settings;
   const zoomIndex = ZOOM_STEPS.indexOf(zoom);
   const [menu, setMenu] = useState<"physics" | "visuals" | "camera-sound" | null>(null);
@@ -322,6 +322,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       next.torn,
       next.detached ? next.pointer : undefined,
     );
+    renderer?.setTearWarning(next, settingsRef.current.tearWarning
+      ? simulation.tearWarning(gripDistance, GRIP_GAP_LIMIT_PX) : null);
     renderer?.frameTimings.recordState(poseStarted - textureStarted, performance.now() - poseStarted);
     setSnapshot(next);
   }, [audio, recordDiagnostic]);
@@ -693,9 +695,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       : snapshot.tracking && !snapshot.pulling
         ? "Cross an exposed edge to pick it up."
         : snapshot.pulling
-          ? snapshot.outwardPulling ? "Pulling back loads the lifted edge toward a tear."
-            : snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
-            : snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction."
+          ? snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
             : snapshot.canCommit ? "Let go to keep this peel, or keep sweeping." : "Keep sweeping the peel front."
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
@@ -793,6 +793,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           <SettingsDialog id="physics-settings" title="Physics" levelName={level.name} onDismiss={() => setMenu(null)}>
             <section className="settings-group" aria-label="Peel behavior">
               <h3>Peel behavior</h3>
+              <label className="setting-toggle">
+                <input type="checkbox" role="switch" checked={tearWarning} onChange={event => {
+                  updateSettings({ tearWarning: event.currentTarget.checked });
+                  refresh(false);
+                }} />
+                <span>Tear warning</span>
+              </label>
               <label className="setting-control">
                 <span>Curl profile</span>
                 <select value={profile} onChange={event => changeProfile(event.currentTarget.value as CurlProfile)}>
@@ -927,7 +934,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
                   {PEEL_SOUND_RESPONSES.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
                 </select>
               </label>
-              <label className="sound-toggle">
+              <label className="setting-toggle">
                 <input type="checkbox" checked={releaseDynamics} onChange={event => {
                   const releaseDynamics = event.currentTarget.checked;
                   updateSettings({ releaseDynamics });
@@ -936,7 +943,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
                 <span>Louder for larger releases</span>
               </label>
               <div className="peel-sound-setting">
-                <label className="sound-toggle">
+                <label className="setting-toggle">
                   <input type="checkbox" checked={edgeClick} onChange={event => updateSettings({ edgeClick: event.currentTarget.checked })} />
                   <span>Edge release click</span>
                 </label>

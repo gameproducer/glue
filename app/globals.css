@@ -116,6 +116,23 @@ button { font: inherit; }
 
 .peel-canvas:active { cursor: grabbing; }
 
+.tear-warning-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.tear-warning-overlay:not([data-action]) .tear-warning-gesture,
+.tear-warning-overlay:not([data-action="release"]) .tear-warning-hand,
+.tear-warning-overlay:not([data-action="redirect"]) .tear-warning-arrow { display: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .tear-warning-overlay[data-action="release"] .tear-warning-hand { animation: tear-warning-lift 180ms ease-out; }
+  @keyframes tear-warning-lift { from { translate: 0 3px; } to { translate: 0 0; } }
+}
+
 .surface-glow {
   position: absolute;
   top: 50%;
@@ -592,7 +609,7 @@ button { font: inherit; }
 .peel-sound-setting button:disabled { opacity: .45; cursor: default; }
 .peel-sound-setting button:focus-visible { outline: 2px solid #9cf3e9; outline-offset: 2px; }
 
-.sound-toggle {
+.setting-toggle {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -601,7 +618,7 @@ button { font: inherit; }
   cursor: pointer;
 }
 
-.sound-toggle input { width: 17px; height: 17px; margin: 0; accent-color: #ed6cab; }
+.setting-toggle input { width: 17px; height: 17px; margin: 0; accent-color: #ed6cab; }
 
 .bottom-panel-toggle { display: none; }
 
