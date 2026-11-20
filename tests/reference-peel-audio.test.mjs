@@ -95,6 +95,19 @@ test("reference previews and gameplay use the output chain, throttle progress, a
   try {
     const audio = new PeelAudio();
     audio.setVolume(0.5);
+    audio.unlock();
+    audio.playEdgeClick();
+    const click = context.sources.pop();
+    assert.ok(click && click.target === context.output);
+    assert.ok(rms(click.buffer.getChannelData(0)) > 0);
+    audio.stopPeeling();
+    assert.ok(!click.stopped, "stopping the peel at detachment or pointer-up lets the click finish");
+    audio.setVolume(0);
+    audio.playEdgeClick();
+    assert.equal(context.sources.length, 0);
+    audio.setVolume(0.5);
+    audio.stop();
+    assert.ok(click.stopped && click.disconnected);
     for (const { id } of REFERENCE_PEEL_SOUNDS) {
       savePeelSound(id);
       assert.equal(readPeelSound(), id);

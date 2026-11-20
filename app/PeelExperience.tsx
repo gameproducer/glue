@@ -13,7 +13,7 @@ import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { PEEL_SOUNDS, PeelAudio, type PeelSound } from "@/lib/peel/PeelAudio";
 import { REFERENCE_PEEL_SOUNDS } from "@/lib/peel/ReferencePeelSound";
 import { PEEL_SOUND_RESPONSES, peelSoundLoad, type PeelSoundResponse } from "@/lib/peel/PeelSoundResponse";
-import { APPEARANCE_OPTIONS, FIRST_REFRACTIVE_FINISH, type PeelAppearance } from "@/lib/render/PeelAppearance";
+import { APPEARANCE_OPTIONS, FIRST_REFRACTIVE_FINISH, LEGACY_RIDGE_FINISH, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, type CameraSettings } from "@/lib/render/PeelFraming";
 import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX, ZOOM_STEPS,
@@ -217,12 +217,12 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const [settings, setSettings] = useState(DEFAULT_LEVEL_SETTINGS);
   const {
     profile, appearance, peelSound, peelVolume, soundResponse, tearThreshold, releaseJumpThreshold,
-    liftedTransparency, tearFactors, zoom, camera: cameraSettings,
+    liftedTransparency, tearFactors, zoom, edgeClick, releaseDynamics, camera: cameraSettings,
   } = settings;
   const zoomIndex = ZOOM_STEPS.indexOf(zoom);
   const [menu, setMenu] = useState<"physics" | "visuals" | "camera-sound" | null>(null);
   const soundDescription = REFERENCE_PEEL_SOUNDS.find(({ id }) => id === peelSound)?.description;
-  const pendingSoundProgress = useRef(0);
+  const pendingSound = useRef({ progress: 0, peak: 0, edge: false });
   const [ready, setReady] = useState(false);
   const [miss, setMiss] = useState(false);
   const [webglError, setWebglError] = useState(false);
@@ -302,11 +302,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       }
     }
     if (checkGrip) {
-      if (next.torn || next.detached) audio.stop();
+      const { progress, peak, edge } = pendingSound.current;
+      if (next.torn || next.detached) audio.stopPeeling();
       else if (activePointer.current !== null && next.pulling) {
-        audio.playProgress(settingsRef.current.peelSound, pendingSoundProgress.current, peelSoundLoad(next, gripDistance, GRIP_GAP_LIMIT_PX));
+        audio.playProgress(settingsRef.current.peelSound, progress, peelSoundLoad(next, gripDistance, GRIP_GAP_LIMIT_PX), peak);
       }
-      pendingSoundProgress.current = 0;
+      if (edge && !next.torn && settingsRef.current.edgeClick) audio.playEdgeClick();
+      pendingSound.current = { progress: 0, peak: 0, edge: false };
     }
     const poseStarted = performance.now();
     renderer?.setPeel(
@@ -333,7 +335,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     setSettings(saved);
     audio.setVolume(saved.peelVolume);
     audio.setResponse(saved.soundResponse);
-    audio.setMuted(saved.peelSound === "off");
+    audio.setReleaseDynamics(saved.releaseDynamics);
 
     void (async () => {
       try {
@@ -383,9 +385,9 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             pointerType: event.pointerType,
           });
           if (!point || !accepted) return;
-          if (settingsRef.current.peelSound !== "off") audio.unlock();
+          if (settingsRef.current.peelSound !== "off" || settingsRef.current.edgeClick) audio.unlock();
           audio.beginGesture();
-          pendingSoundProgress.current = 0;
+          pendingSound.current = { progress: 0, peak: 0, edge: false };
           event.preventDefault();
           activePointer.current = event.pointerId;
           canvas.setPointerCapture(event.pointerId);
@@ -400,17 +402,22 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           event.preventDefault();
           const before = simulation.snapshot();
           const simulationTime = performance.now();
-          simulation.drag(point, simulationTime);
+          const feedback = simulation.drag(point, simulationTime);
           const solverMs = performance.now() - simulationTime;
           renderer.frameTimings.recordInput(solverMs);
           recordDiagnostic("pointer_move", point, {
             simulationTime,
             solverMs,
             pointerId: event.pointerId,
+            edgeReleased: feedback?.edgeReleased ?? false,
+            releasedFraction: feedback?.releasedFraction ?? 0,
           });
           const next = simulation.snapshot();
-          if (!next.torn && !next.outwardPulling) {
-            pendingSoundProgress.current += Math.max(0, next.progress - before.progress);
+          if (feedback) {
+            const pending = pendingSound.current;
+            pending.progress += Math.max(0, next.progress - before.progress);
+            pending.peak = Math.max(pending.peak, feedback.releasedFraction);
+            pending.edge ||= feedback.edgeReleased;
           }
           scheduleTextureRefresh();
           if (!before.torn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
@@ -427,8 +434,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           }
           if (releasedByPlayer && settingsRef.current.peelSound !== "off") audio.unlock();
           activePointer.current = null;
-          pendingSoundProgress.current = 0;
-          audio.stop();
+          pendingSound.current = { progress: 0, peak: 0, edge: false };
+          audio.stopPeeling();
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const beforeRelease = simulation.snapshot();
           const hadGrab = beforeRelease.pulling;
@@ -472,7 +479,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
         teardown = () => {
           audio.stop();
-          pendingSoundProgress.current = 0;
+          pendingSound.current = { progress: 0, peak: 0, edge: false };
           canvas.removeEventListener("pointerdown", onPointerDown);
           canvas.removeEventListener("pointermove", onPointerMove);
           canvas.removeEventListener("pointerup", finishPointer);
@@ -541,7 +548,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     audio.stop();
     updateSettings({ peelSound });
     if (peelSound !== "off") audio.unlock();
-    audio.setMuted(peelSound === "off");
   };
 
   const changeZoom = (step: number) => {
@@ -559,7 +565,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
   const reset = () => {
     audio.stop();
-    pendingSoundProgress.current = 0;
+    pendingSound.current = { progress: 0, peak: 0, edge: false };
     const renderer = rendererRef.current;
     const pointerId = activePointer.current;
     activePointer.current = null;
@@ -607,6 +613,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         peelSound,
         peelVolume,
         soundResponse,
+        edgeClick,
+        releaseDynamics,
       },
       environment: {
         userAgent: navigator.userAgent,
@@ -700,7 +708,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
               <optgroup label="Translucent">{options.slice(FIRST_REFRACTIVE_FINISH).map((name, index) => option(name, index + FIRST_REFRACTIVE_FINISH))}</optgroup>
               <optgroup label="Coatings and print">{options.slice(1, FIRST_REFRACTIVE_FINISH).map((name, index) => option(name, index + 1))}</optgroup>
             </>
-          ) : options.map(option)}
+          ) : options.map((name, index) => key === "released" && index === LEGACY_RIDGE_FINISH ? null : option(name, index))}
         </select>
         {hint && <small id={`appearance-${key}-hint`}>{hint}</small>}
       </label>
@@ -860,7 +868,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             </section>
             <section className="settings-group" aria-label="Unglued areas">
               <h3>Unglued areas</h3>
-              {appearanceControl("released", "Surface treatment", "Raised ridge lifts the unglued material above the adhesive seam.")}
+              {appearanceControl("released", "Surface treatment")}
+              {appearanceControl("ridge", "Raised ridge", "Lifts the unglued material above the adhesive seam.")}
               {appearanceControl("gripCurl", "Curl at previous grips", "Leaves a small curl where you held the sticker on earlier moves.")}
             </section>
             <section className="settings-group" aria-label="Surface">
@@ -913,6 +922,21 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
                   {PEEL_SOUND_RESPONSES.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
                 </select>
               </label>
+              <label className="sound-toggle">
+                <input type="checkbox" checked={releaseDynamics} onChange={event => {
+                  const releaseDynamics = event.currentTarget.checked;
+                  updateSettings({ releaseDynamics });
+                  audio.setReleaseDynamics(releaseDynamics);
+                }} />
+                <span>Louder for larger releases</span>
+              </label>
+              <div className="peel-sound-setting">
+                <label className="sound-toggle">
+                  <input type="checkbox" checked={edgeClick} onChange={event => updateSettings({ edgeClick: event.currentTarget.checked })} />
+                  <span>Edge release click</span>
+                </label>
+                <button type="button" disabled={!edgeClick} onClick={() => { audio.unlock(); audio.playEdgeClick(); }}>Preview click</button>
+              </div>
               <label className="setting-control">
                 <div><span>Sound volume</span><output>{Math.round(peelVolume * 100)}%</output></div>
                 <input type="range" min="0" max="100" step="1" aria-label="Sound volume"

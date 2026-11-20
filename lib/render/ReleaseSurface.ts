@@ -12,6 +12,17 @@ export function releaseSettleDuration(liftedCells: number, totalCells: number) {
   return 500 + 500 * Math.sqrt(Math.max(0, Math.min(1, liftedCells / Math.max(1, totalCells))));
 }
 
+export function detachedAlignmentDuration(liftedCells: number, totalCells: number) {
+  return releaseSettleDuration(liftedCells, totalCells) / 1.75;
+}
+
+export function detachedAnimation(now: number, detachedAt: number, releasedAt: number | null, alignmentMs: number) {
+  return {
+    alignment: alignmentMs === 0 ? 1 : smooth((now - detachedAt) / alignmentMs),
+    fadeStart: releasedAt === null ? null : Math.max(releasedAt, detachedAt + alignmentMs),
+  };
+}
+
 /** Red records release, green holds the seam bevel, and blue holds previous grip curls. */
 export function writeReleaseSurface(
   target: Uint8Array, history: Uint8Array, sources: Int32Array, width: number, grips: ReadonlyMap<number, Vec2>,

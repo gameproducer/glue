@@ -20,6 +20,8 @@ export type LevelSettings = {
   peelSound: PeelSound;
   peelVolume: number;
   soundResponse: PeelSoundResponse;
+  edgeClick: boolean;
+  releaseDynamics: boolean;
 };
 
 export const DEFAULT_LEVEL_SETTINGS: LevelSettings = {
@@ -34,6 +36,8 @@ export const DEFAULT_LEVEL_SETTINGS: LevelSettings = {
   peelSound: "off",
   peelVolume: DEFAULT_PEEL_VOLUME,
   soundResponse: DEFAULT_SOUND_RESPONSE,
+  edgeClick: true,
+  releaseDynamics: false,
 };
 
 const levelKey = (id: string) => `peel.level.${id}`;
@@ -76,6 +80,8 @@ export function readLevelSettings(id: string): LevelSettings {
     soundResponse: saved
       ? PEEL_SOUND_RESPONSES.find(({ id: response }) => response === saved.soundResponse)?.id ?? defaults.soundResponse
       : readSoundResponse(),
+    edgeClick: typeof saved?.edgeClick === "boolean" ? saved.edgeClick : defaults.edgeClick,
+    releaseDynamics: typeof saved?.releaseDynamics === "boolean" ? saved.releaseDynamics : defaults.releaseDynamics,
   };
 }
 

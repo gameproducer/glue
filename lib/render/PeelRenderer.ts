@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BACKGROUNDS, FILM_FILTERS, FIRST_REFRACTIVE_FINISH, PUFFY_FINISH, RIDGE_FINISH, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
+import { BACKGROUNDS, FILM_FILTERS, FIRST_REFRACTIVE_FINISH, PUFFY_FINISH, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
 import {
   curlBounds, DEFAULT_CAMERA_SETTINGS, dragScaleForReach, fitFrustum, MAX_TENSION_STRETCH,
   regionBounds, stepCamera, translateBounds, unionBounds,
@@ -11,7 +11,7 @@ import { FrameTimings } from "./FrameTimings";
 import { GlassDepthScene } from "./GlassDepthScene";
 import { puffyNormals } from "./PuffyFinish";
 import { FilmOptics } from "./FilmOptics";
-import { releaseSettleDuration, writeReleaseSurface } from "./ReleaseSurface";
+import { detachedAlignmentDuration, detachedAnimation, releaseSettleDuration, writeReleaseSurface } from "./ReleaseSurface";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 
 const STICKER_WIDTH = 4.8;
@@ -26,8 +26,10 @@ const tensionStretch = (stress: number, threshold: number) => threshold > 0
 type DissolvingShape = {
   texture: THREE.DataTexture;
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  detachedAt: number;
   releasedAt: number | null;
-  settleMs: number;
+  alignmentMs: number;
+  fadeStart: number | null;
   origin: Vec2;
   offset: Vec2;
   bounds: PeelBounds | null;
@@ -577,10 +579,10 @@ const fragmentShader = /* glsl */ `
       if (uReleaseFinish > 4.5) {
         releaseColor = color;
         releaseAlpha = alpha;
-      } else if (uReleaseFinish > 3.5) {
-        float bevel = texture2D(uReleaseHistory, vUv).g;
-        releaseColor = mix(color * 0.68, color * 0.96, bevel);
-        releaseAlpha = alpha;
+        if (uRidgeHeight > 0.0) {
+          float bevel = texture2D(uReleaseHistory, vUv).g;
+          releaseColor *= mix(0.68, 0.96, bevel);
+        }
       } else if (uReleaseFinish > 2.5) {
         float stripe = 0.5 + 0.5 * sin((vUv.x + vUv.y) * 260.0);
         releaseColor = mix(vec3(0.16, 0.14, 0.20), vec3(0.57, 0.50, 0.65), smoothstep(0.55, 0.86, stripe));
@@ -1075,7 +1077,8 @@ export class PeelRenderer {
       }
       const { liftedCells, totalCells } = this.simulation.diagnostics().current;
       this.heldDissolve = {
-        texture, mesh, releasedAt: null, settleMs: releaseSettleDuration(liftedCells, totalCells),
+        texture, mesh, detachedAt: performance.now(), releasedAt: null, fadeStart: null,
+        alignmentMs: detachedAlignmentDuration(liftedCells, totalCells),
         origin: { ...pointer }, offset: { x: 0, y: 0 }, bounds,
       };
       this.dissolves.push(this.heldDissolve);
@@ -1164,7 +1167,7 @@ export class PeelRenderer {
     this.settingsPreviewDirty = true;
     this.opticsMode = appearance.optics;
     this.frontFinish = appearance.face;
-    const ridgeHeight = appearance.released === RIDGE_FINISH ? RIDGE_HEIGHT : 0;
+    const ridgeHeight = appearance.ridge ? RIDGE_HEIGHT : 0;
     const curlHeight = appearance.gripCurl ? GRIP_CURL_HEIGHT : 0;
     this.reliefHeight = ridgeHeight + curlHeight;
     if (appearance.face >= PUFFY_FINISH && !this.puffTexture) {
@@ -1394,7 +1397,7 @@ export class PeelRenderer {
     }
     for (const shape of this.dissolves) {
       const foreground = this.dragInput ? shape === this.heldDissolve
-        : shape.releasedAt === null || now - shape.releasedAt < shape.settleMs + DISSOLVE_MS * 0.65;
+        : shape.fadeStart === null || now - shape.fadeStart < DISSOLVE_MS * 0.65;
       if (shape.bounds && foreground) bounds.push(translateBounds(shape.bounds, shape.offset));
     }
     const flatDistance = Math.max(this.stickerWidth * height / width, this.stickerHeight) / (2 * this.tangent);
@@ -1442,17 +1445,16 @@ export class PeelRenderer {
     }
     for (let i = this.dissolves.length - 1; i >= 0; i--) {
       const shape = this.dissolves[i];
-      if (shape.releasedAt === null) continue;
-      const elapsed = now - shape.releasedAt;
-      const settleMs = this.reducedMotion.matches ? 0 : shape.settleMs;
-      if (elapsed >= settleMs + DISSOLVE_MS) {
+      const { alignment, fadeStart } = detachedAnimation(now, shape.detachedAt, shape.releasedAt,
+        this.reducedMotion.matches ? 0 : shape.alignmentMs);
+      shape.fadeStart = fadeStart;
+      const fadeElapsed = fadeStart === null ? 0 : Math.max(0, now - fadeStart);
+      if (fadeElapsed >= DISSOLVE_MS) {
         this.disposeDissolve(shape);
         this.dissolves.splice(i, 1);
       } else {
-        const relax = settleMs === 0 ? 1 : THREE.MathUtils.smoothstep(elapsed, 0, settleMs);
-        const dissolve = Math.max(0, (elapsed - settleMs) / DISSOLVE_MS);
-        shape.mesh.material.uniforms.uRelax.value = relax;
-        shape.mesh.material.uniforms.uDissolve.value = dissolve;
+        shape.mesh.material.uniforms.uRelax.value = alignment;
+        shape.mesh.material.uniforms.uDissolve.value = fadeElapsed / DISSOLVE_MS;
       }
     }
     const cameraStarted = performance.now();

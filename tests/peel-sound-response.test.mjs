@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { peelSoundLoad } from "../lib/peel/PeelSoundResponse.ts";
+import { peelSoundLoad, releaseSoundGain } from "../lib/peel/PeelSoundResponse.ts";
 
 const held = { pulling: true, torn: false, detached: false, stress: 0.2, tearThreshold: 0.4 };
 
@@ -26,4 +26,11 @@ test("zero thresholds and invalid readings cannot produce invalid sound paramete
   assert.equal(peelSoundLoad({ ...held, stress: NaN }, 42, 84), 0.5);
   assert.equal(peelSoundLoad(held, Infinity, 84), 0.5);
   assert.equal(peelSoundLoad({ ...held, stress: -1 }, -10, 84), 0);
+});
+
+test("release volume response grows with the adhesive freed in a single step and caps peaks", () => {
+  assert.equal(releaseSoundGain(NaN), releaseSoundGain(0));
+  assert.ok(releaseSoundGain(0) < releaseSoundGain(0.005));
+  assert.ok(releaseSoundGain(0.005) < releaseSoundGain(0.035));
+  assert.equal(releaseSoundGain(0.04), releaseSoundGain(1));
 });

@@ -746,3 +746,46 @@ test("the release mark follows a flap through re-grab and tear until reset", () 
   assert.ok(!history.some(Boolean));
   assert.equal(simulation.releasedGrips.size, 0);
 });
+
+test("the leading rim clicks on the step it clears even while the rest of the sticker is attached", () => {
+  const width = 96;
+  const height = 80;
+  const mask = rectangleMask(width, height, 8, 55, 18, 60);
+  for (let y = 41; y <= 60; y++) mask.fill(1, y * width + 56, y * width + 86);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 1);
+  const start = { x: 8 / (width - 1), y: 29 / (height - 1) };
+  const rim = [27, 28, 29, 30, 31].map(y => y * width + 55);
+  const total = mask.reduce((sum, value) => sum + value, 0);
+  let clicks = 0;
+  simulation.begin(start, 100);
+  for (let tick = 1; tick <= 240; tick++) {
+    const before = simulation.state.slice();
+    const feedback = simulation.drag({ ...start, x: start.x + tick * 0.008 }, 100 + tick * 40);
+    const freed = simulation.state.reduce((sum, cell, index) =>
+      sum + (cell === Cell.lifted && before[index] === Cell.adhered ? 1 : 0), 0);
+    assert.equal(feedback?.releasedFraction ?? 0, freed / total);
+    if (feedback?.edgeReleased) {
+      clicks++;
+      assert.ok(rim.some(index => before[index] === Cell.adhered));
+      assert.ok(rim.every(index => simulation.state[index] === Cell.lifted));
+      assert.equal(simulation.state[50 * width + 85], Cell.adhered);
+      assert.equal(simulation.snapshot().detached, false);
+    }
+    if (simulation.snapshot().detached) break;
+  }
+  assert.equal(clicks, 1);
+  assert.equal(simulation.snapshot().detached, true);
+});
+
+test("a straight sweep that clears the whole rim in one step emits a completion click", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 34, 8, 20);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 1);
+  simulation.begin({ x: 3 / (width - 1), y: 14 / (height - 1) }, 100);
+  assert.equal(simulation.drag({ x: 0.01, y: 14 / (height - 1) }, 150)?.edgeReleased ?? false, false);
+  const completed = simulation.drag({ x: 1.8, y: 14 / (height - 1) }, 510);
+  assert.equal(simulation.snapshot().detached, true);
+  assert.equal(completed?.edgeReleased, true);
+  assert.equal(simulation.drag({ x: 1.9, y: 14 / (height - 1) }, 525), undefined);
+});

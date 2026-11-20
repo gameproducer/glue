@@ -21,6 +21,10 @@ export function saveSoundResponse(response: PeelSoundResponse) {
 
 export const clampSoundLoad = (value: number) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
 
+export function releaseSoundGain(releasedFraction: number) {
+  return 0.48 + 0.9 * Math.sqrt(clampSoundLoad(releasedFraction / 0.04));
+}
+
 /** Each contribution is a fraction of its actual tear threshold, not raw units. */
 export function peelSoundLoad(
   snapshot: Pick<PeelSnapshot, "pulling" | "torn" | "detached" | "stress" | "tearThreshold">,

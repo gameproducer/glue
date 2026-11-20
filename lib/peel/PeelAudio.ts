@@ -1,5 +1,5 @@
 import { isReferencePeelSound, REFERENCE_GRAIN_GAP, REFERENCE_PEEL_SOUNDS, REFERENCE_PREVIEW_PATTERN, synthesizeReferenceGrain, type ReferencePeelSound } from "./ReferencePeelSound.ts";
-import { clampSoundLoad, DEFAULT_SOUND_RESPONSE, type PeelSoundResponse } from "./PeelSoundResponse.ts";
+import { clampSoundLoad, DEFAULT_SOUND_RESPONSE, releaseSoundGain, type PeelSoundResponse } from "./PeelSoundResponse.ts";
 
 export const PEEL_SOUNDS = [
   { id: "off", label: "Off" },
@@ -53,6 +53,7 @@ export function savePeelVolume(volume: number) {
 export class PeelAudio {
   private context: AudioContext | null = null;
   private noise: AudioBuffer | null = null;
+  private clickBuffer: AudioBuffer | null = null;
   private output: GainNode | null = null;
   private volume = DEFAULT_PEEL_VOLUME;
   private muted = false;
@@ -60,6 +61,9 @@ export class PeelAudio {
   private nextGrain = 0;
   private previewingUntil = 0;
   private voices = new Set<AudioScheduledSourceNode>();
+  private cues = new Set<AudioScheduledSourceNode>();
+  private releaseDynamics = false;
+  private peakRelease = 0;
   private response: PeelSoundResponse = DEFAULT_SOUND_RESPONSE;
   private soundLoad = 0;
   private lastLoadTime: number | null = null;
@@ -105,6 +109,11 @@ export class PeelAudio {
     this.response = response;
   }
 
+  setReleaseDynamics(enabled: boolean) {
+    this.releaseDynamics = enabled;
+    this.peakRelease = 0;
+  }
+
   private updateVolume() {
     if (this.context && this.output) {
       this.output.gain.setTargetAtTime(this.muted ? 0 : this.volume * MAX_OUTPUT_GAIN, this.context.currentTime, 0.016);
@@ -116,23 +125,54 @@ export class PeelAudio {
   }
 
   stop() {
-    for (const voice of this.voices) {
+    this.stopPeeling();
+    this.stopVoices(this.cues);
+  }
+
+  private stopVoices(voices: Set<AudioScheduledSourceNode>) {
+    for (const voice of voices) {
       try { voice.stop(); } catch { /* An ended voice may await its callback. */ }
     }
-    this.voices.clear();
+    voices.clear();
+  }
+
+  stopPeeling() {
+    this.stopVoices(this.voices);
     this.accumulated = 0;
+    this.peakRelease = 0;
     this.nextGrain = 0;
     this.previewingUntil = 0;
     this.soundLoad = 0;
     this.lastLoadTime = null;
   }
 
-  private track(voice: AudioScheduledSourceNode, cleanup: () => void) {
-    this.voices.add(voice);
-    voice.onended = () => { this.voices.delete(voice); cleanup(); };
+  private track(voice: AudioScheduledSourceNode, cleanup: () => void, voices = this.voices) {
+    voices.add(voice);
+    voice.onended = () => { voices.delete(voice); cleanup(); };
   }
 
-  playProgress(sound: PeelSound, progress: number, tearLoad = 0) {
+  playEdgeClick() {
+    const { context, output } = this;
+    if (!context || !output || this.muted || this.volume === 0) return;
+    if (!this.clickBuffer) {
+      const duration = 0.036;
+      this.clickBuffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+      const data = this.clickBuffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / context.sampleRate;
+        const envelope = Math.min(1, t / 0.0012) * Math.exp(-t / 0.006) * (1 - t / duration);
+        data[i] = 0.22 * envelope * (0.7 * Math.sin(2 * Math.PI * (1170 * t - 5200 * t * t))
+          + 0.3 * Math.sin(2 * Math.PI * 2330 * t));
+      }
+    }
+    const source = context.createBufferSource();
+    source.buffer = this.clickBuffer;
+    source.connect(output);
+    this.track(source, () => source.disconnect(), this.cues);
+    source.start(context.currentTime);
+  }
+
+  playProgress(sound: PeelSound, progress: number, tearLoad = 0, releasedThisTick = 0) {
     if (!this.context || this.context.state !== "running" || sound === "off" || !Number.isFinite(progress) || progress < 0) return;
     const now = this.context.currentTime;
     const target = this.response === "tension" ? clampSoundLoad(tearLoad) : 0;
@@ -140,12 +180,15 @@ export class PeelAudio {
     this.soundLoad += (target - this.soundLoad) * blend;
     this.lastLoadTime = now;
     this.accumulated += progress;
+    if (this.releaseDynamics) this.peakRelease = Math.max(this.peakRelease, clampSoundLoad(releasedThisTick));
     if ((this.accumulated < 0.002 && target < 0.08) || now < this.nextGrain) return;
-    const strength = this.accumulated >= 0.002 ? Math.min(1, 0.34 + Math.sqrt(this.accumulated) * 3.1) : 0.2 + this.soundLoad * 0.45;
+    const baseStrength = this.accumulated >= 0.002 ? Math.min(1, 0.34 + Math.sqrt(this.accumulated) * 3.1) : 0.2 + this.soundLoad * 0.45;
+    const strength = this.releaseDynamics ? Math.min(1, baseStrength * releaseSoundGain(this.peakRelease)) : baseStrength;
     this.grain(sound, now, strength, undefined, this.soundLoad);
     const gap = isReferencePeelSound(sound) ? REFERENCE_GRAIN_GAP : sound === "bass" || sound === "psychedelic" ? BASS_GRAIN_GAP : GRAIN_GAP;
     this.nextGrain = now + gap / (1 + this.soundLoad * 0.4);
     this.accumulated = 0;
+    this.peakRelease = 0;
   }
 
   preview(sound: PeelSound) {
@@ -159,7 +202,10 @@ export class PeelAudio {
       : [0, 0.07, 0.13, 0.17, 0.205, 0.255, 0.32, 0.41, 0.52];
     for (const [index, offset] of pattern.entries()) {
       const load = this.response === "tension" ? index / (pattern.length - 1) : 0;
-      this.grain(sound, now + offset + 0.025, Math.sin((index + 2) / (pattern.length + 3) * Math.PI) * 0.7 + 0.2, index + 137, load);
+      const baseStrength = Math.sin((index + 2) / (pattern.length + 3) * Math.PI) * 0.7 + 0.2;
+      const released = 0.04 * index / (pattern.length - 1);
+      const strength = this.releaseDynamics ? Math.min(1, baseStrength * releaseSoundGain(released)) : baseStrength;
+      this.grain(sound, now + offset + 0.025, strength, index + 137, load);
     }
     this.previewingUntil = now + (isReferencePeelSound(sound) ? 1.55 : 0.7);
   }
@@ -264,6 +310,7 @@ export class PeelAudio {
     const context = this.context;
     this.context = null;
     this.noise = null;
+    this.clickBuffer = null;
     this.output = null;
     this.previewingUntil = 0;
     if (context) void context.close().catch(() => {});

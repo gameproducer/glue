@@ -20,9 +20,9 @@ test("whole settings round-trip by level and keep intentional zero values", () =
     const first = {
       profile: "cone", tearThreshold: 0, releaseJumpThreshold: 0.46,
       tearFactors: { outward: 0, bottleneck: 0.82 }, liftedTransparency: 0.88,
-      appearance: { face: 23, sticker: 3, back: 7, optics: 4, filmFilter: 2, released: 4, gripCurl: 1, background: 7, glassDepth: 1 },
+      appearance: { face: 23, sticker: 3, back: 7, optics: 4, filmFilter: 2, released: 5, ridge: 1, gripCurl: 1, background: 7, glassDepth: 1 },
       camera: { pan: false, edgeClearance: 76 }, zoom: 115,
-      peelSound: "silk", peelVolume: 0, soundResponse: "peel",
+      peelSound: "silk", peelVolume: 0, soundResponse: "peel", edgeClick: false, releaseDynamics: true,
     };
     const second = { ...DEFAULT_LEVEL_SETTINGS, zoom: 75, releaseJumpThreshold: 0 };
     saveLevelSettings("bread", first);
@@ -30,6 +30,19 @@ test("whole settings round-trip by level and keep intentional zero values", () =
     assert.deepEqual(readLevelSettings("bread"), first);
     assert.deepEqual(readLevelSettings("ruler"), second);
     assert.deepEqual(readLevelSettings("unvisited"), DEFAULT_LEVEL_SETTINGS);
+  });
+});
+
+test("the old ridge preset keeps its relief after becoming an independent toggle", () => {
+  withStorage([["peel.level.bread.settings", '{"appearance":{"released":4}}']], () => {
+    const settings = readLevelSettings("bread");
+    assert.equal(settings.appearance.released, 5);
+    assert.equal(settings.appearance.ridge, 1);
+    assert.equal(settings.edgeClick, true);
+    assert.equal(settings.releaseDynamics, false);
+    settings.appearance.ridge = 0;
+    saveLevelSettings("bread", settings);
+    assert.equal(readLevelSettings("bread").appearance.ridge, 0);
   });
 });
 

@@ -158,6 +158,7 @@ export class PeelSimulation {
   private frontDepth = 0;
   private stress = 0;
   private areaJump = 0;
+  private edgeCueSent = false;
   private frontTravelRemainder = 0;
   private physicsSample = 0;
   private lastDiagnosticStep = emptyDiagnosticStep();
@@ -257,6 +258,7 @@ export class PeelSimulation {
     this.tracking = true;
     this.pulling = false;
     this.outwardPulling = false;
+    this.edgeCueSent = false;
     this.heldReach = 0;
     this.heldStress = 0;
     this.outwardSeconds = 0;
@@ -393,7 +395,7 @@ export class PeelSimulation {
     const waveTravel = frameDistance * (this.height - 1) * FRONT_PROPAGATION_RATIO + this.frontTravelRemainder;
     const waves = Math.floor(waveTravel);
     this.frontTravelRemainder = waveTravel - waves;
-    const { frontCells, averageAdhesion, queuedCells } = this.rebuildLifted(waves);
+    const { frontCells, averageAdhesion, queuedCells, newlyReleased } = this.rebuildLifted(waves);
     const frontRebuildMs = performance.now() - frontStarted;
 
     // Detect sudden growth independently of how much was lifted before this update.
@@ -475,6 +477,10 @@ export class PeelSimulation {
     } else if (stressTear) {
       this.triggerTear({ kind: "tension", value: this.stress, threshold: this.tearThreshold });
     }
+    if (this.torn) return;
+    const edgeReleased = !this.edgeCueSent && (this.detached || (newlyReleased > 0 && this.reachedLeadingEdge()));
+    if (edgeReleased) this.edgeCueSent = true;
+    return { edgeReleased, releasedFraction: newlyReleased / this.totalCells };
   }
 
   end(commit = true) {
@@ -854,6 +860,7 @@ export class PeelSimulation {
     this.pendingNewCells = 0;
     this.liftedCells = 0;
     let adhesionSum = 0;
+    let newlyReleased = 0;
     let frontCells = 0;
     let head = 0;
     let tail = 0;
@@ -896,6 +903,7 @@ export class PeelSimulation {
       if (base === Cell.adhered) {
         this.pendingNewCells++;
         adhesionSum += this.adhesion[index];
+        if (!this.tearCandidate[index]) newlyReleased++;
       }
 
       let touchesFront = false;
@@ -928,7 +936,51 @@ export class PeelSimulation {
       if (touchesFront) frontCells++;
     }
 
-    return { frontCells, averageAdhesion: adhesionSum / Math.max(1, this.pendingNewCells), queuedCells: tail };
+    return { frontCells, averageAdhesion: adhesionSum / Math.max(1, this.pendingNewCells), queuedCells: tail, newlyReleased };
+  }
+
+  private reachedLeadingEdge() {
+    const { width, height, direction, grabbedComponent } = this;
+    const cellAt = (x: number, y: number) =>
+      x >= 0 && x < width && y >= 0 && y < height && grabbedComponent[y * width + x] ? y * width + x : -1;
+    const gx = this.grabIndex % width;
+    const gy = Math.floor(this.grabIndex / width);
+    const stepX = direction.x * (width - 1) / (2 * this.aspect * (height - 1));
+    const stepY = direction.y / 2;
+    const maxSteps = Math.ceil(this.frontDepth * 2 * (height - 1)) + 4;
+    let lastInside = 0;
+    let tip = this.grabIndex;
+    let foundEdge = false;
+    // Trace slightly past the front. Two half-cell steps of open space keep
+    // a single diagonal raster gap from counting as the edge.
+    for (let step = 1; step <= maxSteps; step++) {
+      const cell = cellAt(Math.round(gx + stepX * step), Math.round(gy + stepY * step));
+      if (cell >= 0) {
+        lastInside = step;
+        tip = cell;
+      } else if (step - lastInside >= 2) {
+        foundEdge = true;
+        break;
+      }
+    }
+    if (!foundEdge || lastInside < 6 || this.state[tip] === Cell.adhered) return false;
+
+    const tx = tip % width;
+    const ty = Math.floor(tip / width);
+    const facingX = Math.abs(direction.x) >= 0.35 ? Math.sign(direction.x) : 0;
+    const facingY = Math.abs(direction.y) >= 0.35 ? Math.sign(direction.y) : 0;
+    let fresh = false;
+    // Wait for the nearby forward-facing rim, including neighbors with
+    // different adhesion delays, to be free before announcing it.
+    for (let y = ty - 2; y <= ty + 2; y++) {
+      for (let x = tx - 2; x <= tx + 2; x++) {
+        const neighbor = cellAt(x, y);
+        if (neighbor < 0 || (cellAt(x + facingX, y) >= 0 && cellAt(x, y + facingY) >= 0)) continue;
+        if (this.state[neighbor] === Cell.adhered) return false;
+        if (this.gestureBase[neighbor] === Cell.adhered && !this.tearCandidate[neighbor]) fresh = true;
+      }
+    }
+    return fresh;
   }
 
   private traceAccessibleCell(start: Vec2, end: Vec2) {

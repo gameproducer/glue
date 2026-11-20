@@ -21,7 +21,8 @@ export const FILM_FILTERS = [
 ] as const;
 export const PUFFY_FINISH = 19;
 export const FIRST_REFRACTIVE_FINISH = 20;
-export const RIDGE_FINISH = 4;
+export const LEGACY_RIDGE_FINISH = 4;
+const KEEP_ARTWORK_FINISH = 5;
 
 export const BACKGROUNDS = [
   { name: "Graphite", color: "#25222b" },
@@ -55,6 +56,7 @@ export const APPEARANCE_OPTIONS = {
   optics: FILM_OPTICS,
   filmFilter: FILM_FILTERS.map(({ name }) => name),
   released: RELEASE_FINISHES,
+  ridge: ["Off", "On"],
   gripCurl: ["Off", "On"],
   background: BACKGROUNDS.map(({ name }) => name),
   glassDepth: ["Off", "On"],
@@ -62,7 +64,7 @@ export const APPEARANCE_OPTIONS = {
 export type PeelAppearance = Record<keyof typeof APPEARANCE_OPTIONS, number>;
 export const DEFAULT_APPEARANCE: PeelAppearance = {
   face: 0, sticker: 0, back: 0, optics: 0, filmFilter: 0, released: 0,
-  gripCurl: 0, background: 0, glassDepth: 0,
+  ridge: 0, gripCurl: 0, background: 0, glassDepth: 0,
 };
 
 export const APPEARANCE_STORAGE_KEY = "peel.appearance";
@@ -75,6 +77,10 @@ export function normalizeAppearance(saved: unknown, defaults = DEFAULT_APPEARANC
     if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < APPEARANCE_OPTIONS[key].length) {
       appearance[key] = value;
     }
+  }
+  if (appearance.released === LEGACY_RIDGE_FINISH) {
+    appearance.released = KEEP_ARTWORK_FINISH;
+    appearance.ridge = 1;
   }
   return appearance;
 }

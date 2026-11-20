@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { releaseSettleDuration, writeReleaseSurface } from "../lib/render/ReleaseSurface.ts";
+import { detachedAlignmentDuration, detachedAnimation, releaseSettleDuration, writeReleaseSurface } from "../lib/render/ReleaseSurface.ts";
 import { nearestStateSources } from "../lib/render/StateTexture.ts";
 
 test("released relief bevels into the adhesive and curls locally around old grips", () => {
@@ -30,4 +30,15 @@ test("small releases settle in about half a second and larger pieces take up to 
   assert.equal(releaseSettleDuration(1, 100), 550);
   assert.equal(releaseSettleDuration(25, 100), 750);
   assert.equal(releaseSettleDuration(100, 100), 1000);
+});
+
+test("detached material aligns 75% faster while held and fades once released and aligned", () => {
+  const detachedAt = 1000;
+  const duration = detachedAlignmentDuration(25, 100);
+  assert.equal(duration * 1.75, releaseSettleDuration(25, 100));
+  assert.deepEqual(detachedAnimation(detachedAt, detachedAt, null, duration), { alignment: 0, fadeStart: null });
+  assert.ok(Math.abs(detachedAnimation(detachedAt + duration / 2, detachedAt, null, duration).alignment - 0.5) < 1e-8);
+  assert.deepEqual(detachedAnimation(2400, detachedAt, null, duration), { alignment: 1, fadeStart: null });
+  assert.equal(detachedAnimation(2400, detachedAt, 2300, duration).fadeStart, 2300);
+  assert.equal(detachedAnimation(1300, detachedAt, 1200, duration).fadeStart, detachedAt + duration);
 });

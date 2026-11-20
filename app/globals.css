@@ -592,6 +592,17 @@ button { font: inherit; }
 .peel-sound-setting button:disabled { opacity: .45; cursor: default; }
 .peel-sound-setting button:focus-visible { outline: 2px solid #9cf3e9; outline-offset: 2px; }
 
+.sound-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.sound-toggle input { width: 17px; height: 17px; margin: 0; accent-color: #ed6cab; }
+
 .bottom-panel-toggle { display: none; }
 
 @media (max-width: 650px), (max-width: 950px) and (pointer: coarse) {
