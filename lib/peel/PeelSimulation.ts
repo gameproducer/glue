@@ -119,6 +119,8 @@ export class PeelSimulation {
   private readonly gestureBase: Uint8Array;
   private readonly tearCandidate: Uint8Array;
   private readonly grabbedComponent: Uint8Array;
+  private readonly componentExterior: Uint8Array;
+  private exteriorReady = false;
   private readonly sectionWidths: Uint32Array;
   private readonly minimumTearPiece: number;
   private componentAdheredCells = 0;
@@ -189,6 +191,7 @@ export class PeelSimulation {
     this.gestureBase = new Uint8Array(count);
     this.tearCandidate = new Uint8Array(count);
     this.grabbedComponent = new Uint8Array(count);
+    this.componentExterior = new Uint8Array(count);
     this.sectionWidths = new Uint32Array(2 * Math.ceil(Math.hypot(width, height)) + 1);
     this.visited = new Uint8Array(count);
     this.queue = new Int32Array(count);
@@ -478,7 +481,7 @@ export class PeelSimulation {
       this.triggerTear({ kind: "tension", value: this.stress, threshold: this.tearThreshold });
     }
     if (this.torn) return;
-    const edgeReleased = !this.edgeCueSent && (this.detached || (newlyReleased > 0 && this.reachedLeadingEdge()));
+    const edgeReleased = !this.edgeCueSent && newlyReleased > 0 && this.reachedLeadingEdge();
     if (edgeReleased) this.edgeCueSent = true;
     return { edgeReleased, releasedFraction: newlyReleased / this.totalCells };
   }
@@ -663,6 +666,7 @@ export class PeelSimulation {
     this.pullOrigin = { ...origin };
     this.gestureBase.set(this.state);
     this.grabbedComponent.fill(0);
+    this.exteriorReady = false;
     this.componentAdheredCells = 0;
     const bounds = this.componentBounds;
     bounds.left = bounds.right = bounds.bottom = bounds.top = 0;
@@ -947,23 +951,23 @@ export class PeelSimulation {
     const gy = Math.floor(this.grabIndex / width);
     const stepX = direction.x * (width - 1) / (2 * this.aspect * (height - 1));
     const stepY = direction.y / 2;
-    const maxSteps = Math.ceil(this.frontDepth * 2 * (height - 1)) + 4;
-    let lastInside = 0;
-    let tip = this.grabIndex;
-    let foundEdge = false;
-    // Trace slightly past the front. Two half-cell steps of open space keep
-    // a single diagonal raster gap from counting as the edge.
-    for (let step = 1; step <= maxSteps; step++) {
-      const cell = cellAt(Math.round(gx + stepX * step), Math.round(gy + stepY * step));
-      if (cell >= 0) {
-        lastInside = step;
-        tip = cell;
-      } else if (step - lastInside >= 2) {
-        foundEdge = true;
-        break;
-      }
+    const { left, right, bottom, top } = this.componentBounds;
+    const reachX = direction.x === 0 ? Infinity : (direction.x > 0 ? right : left) / direction.x;
+    const reachY = direction.y === 0 ? Infinity : (direction.y > 0 ? top : bottom) / direction.y;
+    const maxSteps = Math.ceil(Math.min(reachX, reachY) * 2 * (height - 1)) + 2;
+    const minSteps = this.detached ? 1 : 6;
+    let tip = -1;
+    // Trace back from beyond the sheet. An earlier exit through a hole or
+    // concavity is not the edge this sweep is approaching.
+    for (let step = maxSteps; step >= minSteps; step--) {
+      tip = cellAt(Math.round(gx + stepX * step), Math.round(gy + stepY * step));
+      if (tip >= 0) break;
     }
-    if (!foundEdge || lastInside < 6 || this.state[tip] === Cell.adhered) return false;
+    if (tip < 0 || tip === this.grabIndex || this.state[tip] === Cell.adhered) return false;
+
+    if (!this.exteriorReady) this.markComponentExterior();
+    const outside = (x: number, y: number) =>
+      x < 0 || x >= width || y < 0 || y >= height || this.componentExterior[y * width + x] !== 0;
 
     const tx = tip % width;
     const ty = Math.floor(tip / width);
@@ -975,12 +979,40 @@ export class PeelSimulation {
     for (let y = ty - 2; y <= ty + 2; y++) {
       for (let x = tx - 2; x <= tx + 2; x++) {
         const neighbor = cellAt(x, y);
-        if (neighbor < 0 || (cellAt(x + facingX, y) >= 0 && cellAt(x, y + facingY) >= 0)) continue;
+        if (neighbor < 0 || (!outside(x + facingX, y) && !outside(x, y + facingY))) continue;
         if (this.state[neighbor] === Cell.adhered) return false;
         if (this.gestureBase[neighbor] === Cell.adhered && !this.tearCandidate[neighbor]) fresh = true;
       }
     }
     return fresh;
+  }
+
+  private markComponentExterior() {
+    const { width, height, componentExterior, grabbedComponent, queue } = this;
+    componentExterior.fill(0);
+    let tail = 0;
+    const visit = (index: number) => {
+      if (grabbedComponent[index] || componentExterior[index]) return;
+      componentExterior[index] = 1;
+      queue[tail++] = index;
+    };
+    for (let x = 0; x < width; x++) {
+      visit(x);
+      visit((height - 1) * width + x);
+    }
+    for (let y = 0; y < height; y++) {
+      visit(y * width);
+      visit(y * width + width - 1);
+    }
+    for (let head = 0; head < tail; head++) {
+      const index = queue[head];
+      const x = index % width;
+      if (x > 0) visit(index - 1);
+      if (x < width - 1) visit(index + 1);
+      if (index >= width) visit(index - width);
+      if (index < componentExterior.length - width) visit(index + width);
+    }
+    this.exteriorReady = true;
   }
 
   private traceAccessibleCell(start: Vec2, end: Vec2) {

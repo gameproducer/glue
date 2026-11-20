@@ -222,7 +222,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const zoomIndex = ZOOM_STEPS.indexOf(zoom);
   const [menu, setMenu] = useState<"physics" | "visuals" | "camera-sound" | null>(null);
   const soundDescription = REFERENCE_PEEL_SOUNDS.find(({ id }) => id === peelSound)?.description;
-  const pendingSound = useRef({ progress: 0, peak: 0, edge: false });
+  const pendingSound = useRef({ progress: 0, peak: 0 });
   const [ready, setReady] = useState(false);
   const [miss, setMiss] = useState(false);
   const [webglError, setWebglError] = useState(false);
@@ -279,7 +279,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     });
   }, [recordDiagnostic]);
 
-  const refresh = useCallback((updateTexture = true, checkGrip = false) => {
+  const refresh = useCallback((updateTexture = true, checkGrip = false, edgeReleased = false) => {
     const simulation = simulationRef.current;
     const renderer = rendererRef.current;
     if (!simulation) return;
@@ -302,13 +302,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       }
     }
     if (checkGrip) {
-      const { progress, peak, edge } = pendingSound.current;
+      const { progress, peak } = pendingSound.current;
       if (next.torn || next.detached) audio.stopPeeling();
       else if (activePointer.current !== null && next.pulling) {
         audio.playProgress(settingsRef.current.peelSound, progress, peelSoundLoad(next, gripDistance, GRIP_GAP_LIMIT_PX), peak);
       }
-      if (edge && !next.torn && settingsRef.current.edgeClick) audio.playEdgeClick();
-      pendingSound.current = { progress: 0, peak: 0, edge: false };
+      if (edgeReleased && !next.torn) audio.playEdgeClick();
+      pendingSound.current = { progress: 0, peak: 0 };
     }
     const poseStarted = performance.now();
     renderer?.setPeel(
@@ -387,7 +387,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           if (!point || !accepted) return;
           if (settingsRef.current.peelSound !== "off" || settingsRef.current.edgeClick) audio.unlock();
           audio.beginGesture();
-          pendingSound.current = { progress: 0, peak: 0, edge: false };
+          pendingSound.current = { progress: 0, peak: 0 };
           event.preventDefault();
           activePointer.current = event.pointerId;
           canvas.setPointerCapture(event.pointerId);
@@ -417,9 +417,14 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             const pending = pendingSound.current;
             pending.progress += Math.max(0, next.progress - before.progress);
             pending.peak = Math.max(pending.peak, feedback.releasedFraction);
-            pending.edge ||= feedback.edgeReleased;
           }
-          scheduleTextureRefresh();
+          if (feedback?.edgeReleased && settingsRef.current.edgeClick) {
+            if (textureFrame.current) cancelAnimationFrame(textureFrame.current);
+            textureFrame.current = 0;
+            refresh(true, true, true);
+          } else {
+            scheduleTextureRefresh();
+          }
           if (!before.torn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
         };
 
@@ -434,7 +439,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           }
           if (releasedByPlayer && settingsRef.current.peelSound !== "off") audio.unlock();
           activePointer.current = null;
-          pendingSound.current = { progress: 0, peak: 0, edge: false };
+          pendingSound.current = { progress: 0, peak: 0 };
           audio.stopPeeling();
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
           const beforeRelease = simulation.snapshot();
@@ -479,7 +484,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
         teardown = () => {
           audio.stop();
-          pendingSound.current = { progress: 0, peak: 0, edge: false };
+          pendingSound.current = { progress: 0, peak: 0 };
           canvas.removeEventListener("pointerdown", onPointerDown);
           canvas.removeEventListener("pointermove", onPointerMove);
           canvas.removeEventListener("pointerup", finishPointer);
@@ -565,7 +570,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
   const reset = () => {
     audio.stop();
-    pendingSound.current = { progress: 0, peak: 0, edge: false };
+    pendingSound.current = { progress: 0, peak: 0 };
     const renderer = rendererRef.current;
     const pointerId = activePointer.current;
     activePointer.current = null;

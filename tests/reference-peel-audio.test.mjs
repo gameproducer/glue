@@ -99,7 +99,11 @@ test("reference previews and gameplay use the output chain, throttle progress, a
     audio.playEdgeClick();
     const click = context.sources.pop();
     assert.ok(click && click.target === context.output);
-    assert.ok(rms(click.buffer.getChannelData(0)) > 0);
+    const paper = click.buffer.getChannelData(0);
+    assert.equal(paper[0], 0);
+    assert.ok(paper.length / context.sampleRate <= 0.025);
+    assert.ok(rms(paper) > 0 && Math.max(...paper.map(Math.abs)) < 0.12);
+    assert.ok(rms(paper.slice(-100)) < rms(paper.slice(0, 100)) * 0.03);
     audio.stopPeeling();
     assert.ok(!click.stopped, "stopping the peel at detachment or pointer-up lets the click finish");
     audio.setVolume(0);

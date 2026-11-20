@@ -155,14 +155,23 @@ export class PeelAudio {
     const { context, output } = this;
     if (!context || !output || this.muted || this.volume === 0) return;
     if (!this.clickBuffer) {
-      const duration = 0.036;
+      const duration = 0.024;
       this.clickBuffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
       const data = this.clickBuffer.getChannelData(0);
+      const upper = 1 - Math.exp(-2 * Math.PI * 3200 / context.sampleRate);
+      const lower = 1 - Math.exp(-2 * Math.PI * 290 / context.sampleRate);
+      let seed = 0x5045454c;
+      let fast = 0;
+      let slow = 0;
       for (let i = 0; i < data.length; i++) {
         const t = i / context.sampleRate;
-        const envelope = Math.min(1, t / 0.0012) * Math.exp(-t / 0.006) * (1 - t / duration);
-        data[i] = 0.22 * envelope * (0.7 * Math.sin(2 * Math.PI * (1170 * t - 5200 * t * t))
-          + 0.3 * Math.sin(2 * Math.PI * 2330 * t));
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        const noise = seed / 0x80000000 - 1;
+        fast += (noise - fast) * upper;
+        slow += (noise - slow) * lower;
+        const attack = Math.min(1, t / 0.00075);
+        const decay = Math.exp(-t / 0.0034) * (1 - t / duration);
+        data[i] = (fast - slow) * attack * decay * 0.16;
       }
     }
     const source = context.createBufferSource();

@@ -789,3 +789,55 @@ test("a straight sweep that clears the whole rim in one step emits a completion 
   assert.equal(completed?.edgeReleased, true);
   assert.equal(simulation.drag({ x: 1.9, y: 14 / (height - 1) }, 525), undefined);
 });
+
+test("a cutout stays silent until the sweep frees a new outer rim", () => {
+  const width = 68;
+  const height = 42;
+  const mask = rectangleMask(width, height, 4, 61, 8, 33);
+  for (let y = 16; y <= 25; y++) mask.fill(0, y * width + 23, y * width + 39);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 1);
+  const y = 20 / (height - 1);
+  const start = 4 / (width - 1);
+  const innerRim = 20 * width + 22;
+  const outerRim = [18, 19, 20, 21, 22].map(row => row * width + 61);
+  let crossedCutout = false;
+  let clicks = 0;
+  simulation.begin({ x: start, y }, 100);
+  for (let tick = 1; tick <= 220; tick++) {
+    const wasAttached = outerRim.some(cell => simulation.state[cell] === Cell.adhered);
+    const feedback = simulation.drag({ x: start + tick * 0.008, y }, 100 + tick * 40);
+    const outerFree = outerRim.every(cell => simulation.state[cell] === Cell.lifted);
+    if (!outerFree && simulation.state[innerRim] === Cell.lifted) {
+      crossedCutout = true;
+      assert.equal(feedback?.edgeReleased, false);
+    }
+    if (feedback?.edgeReleased) {
+      clicks++;
+      assert.ok(crossedCutout && wasAttached && outerFree);
+    }
+    if (simulation.snapshot().detached) break;
+  }
+  assert.equal(clicks, 1);
+});
+
+test("detaching toward a previously released rim does not click", () => {
+  const width = 68;
+  const height = 42;
+  const mask = rectangleMask(width, height, 4, 61, 8, 33);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 1);
+  const y = 20 / (height - 1);
+  const right = 61 / (width - 1);
+  simulation.begin({ x: right, y }, 100);
+  for (let tick = 1; tick <= 40; tick++) {
+    assert.equal(simulation.drag({ x: right - tick * 0.008, y }, 100 + tick * 40)?.edgeReleased, false);
+  }
+  assert.equal(simulation.end(), true);
+  assert.equal(simulation.state[20 * width + 61], Cell.released);
+
+  const left = 4 / (width - 1);
+  simulation.begin({ x: left, y }, 2000);
+  for (let tick = 1; tick <= 220 && !simulation.snapshot().detached; tick++) {
+    assert.equal(simulation.drag({ x: left + tick * 0.008, y }, 2000 + tick * 40)?.edgeReleased, false);
+  }
+  assert.equal(simulation.snapshot().detached, true);
+});
