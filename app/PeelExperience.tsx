@@ -204,7 +204,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const [miss, setMiss] = useState(false);
   const [webglError, setWebglError] = useState(false);
   const [snapshot, setSnapshot] = useState<PeelSnapshot>(emptySnapshot);
-  const [releasedWhileReversing, setReleasedWhileReversing] = useState(false);
   const [moveLimitToast, setMoveLimitToast] = useState(false);
   const [logStatus, setLogStatus] = useState("Recording locally");
 
@@ -383,7 +382,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           if (!point || !accepted) return;
           if (peelSoundRef.current !== "off") audio.unlock();
           audio.beginGesture();
-          setReleasedWhileReversing(false);
           event.preventDefault();
           activePointer.current = event.pointerId;
           canvas.setPointerCapture(event.pointerId);
@@ -435,9 +433,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           const solverMs = performance.now() - solverStarted;
           renderer.frameTimings.recordInput(solverMs);
           const finished = simulation.snapshot();
-          if (!accepted && beforeRelease.outwardPulling && !finished.failed) {
-            setReleasedWhileReversing(true);
-          }
           if (accepted && finished.moves === finished.maxMoves + 1) {
             setMoveLimitToast(true);
             moveToastTimer.current = window.setTimeout(() => setMoveLimitToast(false), 2800);
@@ -593,7 +588,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     renderer?.clearDissolves();
     if (moveToastTimer.current !== null) window.clearTimeout(moveToastTimer.current);
     setMoveLimitToast(false);
-    setReleasedWhileReversing(false);
     startDiagnosticRecording("level_reset");
     setMiss(false);
     refresh(true);
@@ -698,11 +692,10 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       : snapshot.tracking && !snapshot.pulling
         ? "Cross an exposed edge to pick it up."
         : snapshot.pulling
-          ? snapshot.outwardPulling ? "Pulling back loads the lifted edge. Sweep forward to continue."
+          ? snapshot.outwardPulling ? "Pulling back loads the lifted edge toward a tear."
             : snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
             : snapshot.stress > tearThreshold * 0.86 ? "The material is necking — change direction."
             : snapshot.canCommit ? "Let go to keep this peel, or keep sweeping." : "Keep sweeping the peel front."
-          : releasedWhileReversing ? "Peel progress reverted after pulling back. Let go while sweeping forward to keep it."
           : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
   return (

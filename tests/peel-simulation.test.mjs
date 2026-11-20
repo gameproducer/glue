@@ -383,7 +383,7 @@ test("exceeding the move target still allows further peeling", () => {
   assert.equal(simulation.begin({ x: 0.38, y: 0.5 }, 1300), true);
 });
 
-test("letting go after reversing preserves the previous release marks", () => {
+test("letting go while pulling outward saves the intact flap and its release marks", () => {
   const width = 52;
   const height = 30;
   const mask = rectangleMask(width, height, 3, 48, 5, 24);
@@ -402,10 +402,18 @@ test("letting go after reversing preserves the previous release marks", () => {
   assert.ok(simulation.snapshot().progress > progress);
   simulation.drag({ x: 0.46, y: 0.5 }, 1030);
   assert.equal(simulation.snapshot().outwardPulling, true);
-  assert.equal(simulation.end(true), false);
-  assert.equal(simulation.snapshot().progress, progress);
+  assert.equal(simulation.snapshot().canCommit, true);
+  const heldProgress = simulation.snapshot().progress;
+  const held = simulation.state.map(value => value === Cell.lifted ? 1 : 0);
+  assert.equal(simulation.end(true), true);
+  assert.equal(simulation.snapshot().progress, heldProgress);
+  assert.ok(heldProgress > progress);
+  assert.equal(simulation.snapshot().moves, 2);
+  assert.equal(simulation.snapshot().torn, false);
   simulation.writeReleaseHistory(history);
-  assert.deepEqual(history, firstRelease);
+  assert.ok(held.every((value, index) => !value || simulation.state[index] === Cell.released && history[index] === 255));
+  assert.ok(firstRelease.every((value, index) => !value || history[index] === 255));
+  assert.ok(history.some((value, index) => value && !firstRelease[index]));
 });
 
 test("pulling back softly stalls, while a strong reversal tears only the held flap", () => {
@@ -517,6 +525,57 @@ test("a thin neck adds width-dependent tension independently of area jump", () =
   assert.equal(wide.simulation.snapshot().torn, false);
   assert.equal(disabled.peak, 0);
   assert.ok(disabled.frame > thin.frame);
+});
+
+test("tiny reversals keep measuring and loading a thin neck", () => {
+  const width = 128;
+  const height = 70;
+  const mask = Uint8Array.from({ length: width * height }, (_, index) => {
+    const x = index % width;
+    const y = Math.floor(index / width);
+    return Math.hypot(x - 26, y - 35) <= 20 || Math.hypot(x - 100, y - 35) <= 20
+      || (x >= 26 && x <= 100 && Math.abs(y - 35) <= 1) ? 1 : 0;
+  });
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 1, 1);
+  simulation.setTearFactors({ outward: 0.8, bottleneck: 0.85 });
+  const origin = { x: 6 / (width - 1), y: 35 / (height - 1) };
+  simulation.begin(origin, 100);
+  for (let frame = 1; frame <= 46; frame++) {
+    simulation.drag({ x: origin.x + frame / 100, y: origin.y }, 100 + frame * 60);
+  }
+  assert.ok(simulation.diagnostics().lastStep.bottleneckLoad > 0.6);
+  const stress = simulation.snapshot().stress;
+
+  simulation.drag({ x: origin.x + 0.46 - 0.0001, y: origin.y }, 2876);
+  assert.equal(simulation.snapshot().outwardPulling, false);
+  assert.ok(simulation.diagnostics().lastStep.bottleneckLoad > 0.6);
+  assert.ok(simulation.snapshot().stress > stress);
+
+  simulation.setTearThreshold(simulation.snapshot().stress + 0.001);
+  simulation.drag({ x: origin.x + 0.46 - 0.0002, y: origin.y }, 2892);
+  assert.equal(simulation.snapshot().tearFailure?.kind, "tension");
+  assert.ok(simulation.state.includes(Cell.adhered));
+});
+
+test("small reversal steps accumulate into an outward pull", () => {
+  const width = 52;
+  const height = 30;
+  const mask = rectangleMask(width, height, 3, 48, 5, 24);
+  const simulation = new PeelSimulation(width, height, 9, 4, mask, 0.9, 1);
+  simulation.setTearFactors({ outward: 0.8, bottleneck: 0.85 });
+  simulation.begin({ x: 0.02, y: 0.5 }, 100);
+  simulation.drag({ x: 0.28, y: 0.5 }, 400);
+  simulation.drag({ x: 0.275, y: 0.5 }, 416);
+  assert.equal(simulation.snapshot().outwardPulling, false);
+  assert.ok(simulation.diagnostics().lastStep.frontCells > 0);
+
+  simulation.drag({ x: 0.270, y: 0.5 }, 432);
+  simulation.drag({ x: 0.265, y: 0.5 }, 448);
+  assert.equal(simulation.snapshot().outwardPulling, true);
+  assert.equal(simulation.snapshot().torn, false);
+  simulation.drag({ x: 0.28, y: 0.5 }, 464);
+  assert.equal(simulation.snapshot().outwardPulling, false);
+  assert.ok(simulation.diagnostics().lastStep.frontCells > 0);
 });
 
 test("continuing a pull once the flap starts stretching quickly tears the flap", () => {

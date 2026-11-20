@@ -315,7 +315,7 @@ export class PeelSimulation {
     const minimumAnchor = Math.max(1, Math.min(Math.max(8, Math.round(this.totalCells * 0.002)),
       Math.ceil(this.componentAdheredCells * 0.015)));
     const reverseTravel = this.heldReach - inwardTravel;
-    const canLoadOutward = this.tearFactors.outward > 0 && reverseTravel > 1e-6
+    const canLoadOutward = this.tearFactors.outward > 0 && reverseTravel > OUTWARD_DEAD_ZONE
       && this.componentAdheredCells - this.pendingNewCells >= minimumAnchor;
     if (canLoadOutward && !this.liftedCells && inwardTravel < -OUTWARD_DEAD_ZONE
       && this.gestureBase[this.grabIndex] === Cell.released) {
@@ -424,7 +424,9 @@ export class PeelSimulation {
     this.strainTravel = wasNearTear && stillNearTear && inwardTravel >= this.heldReach
       ? this.strainTravel + inwardTravel - this.heldReach : 0;
     this.stress = clamp(this.heldStress + this.tearThreshold * 0.1 * clamp(this.strainTravel / 0.045));
-    this.heldReach = inwardTravel;
+    // Keep the furthest reach so small reversal steps can cross the dead zone
+    // without skipping normal peel and neck updates while still inside it.
+    this.heldReach = Math.max(this.heldReach, inwardTravel);
     this.lastPointer = { ...point };
     this.lastTime = time;
 
@@ -537,7 +539,7 @@ export class PeelSimulation {
 
   private get canCommitPartial() {
     const minimumCells = Math.max(10, Math.round(this.totalCells * 0.0015));
-    return this.tracking && this.pulling && !this.torn && !this.outwardPulling
+    return this.tracking && this.pulling && !this.torn
       && this.frontDepth > 0.012 && this.pendingNewCells >= minimumCells;
   }
 
