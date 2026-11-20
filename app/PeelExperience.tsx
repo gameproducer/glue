@@ -14,6 +14,9 @@ import { DEFAULT_PEEL_VOLUME, PEEL_SOUNDS, PeelAudio, readPeelSound, readPeelVol
 import { REFERENCE_PEEL_SOUNDS } from "@/lib/peel/ReferencePeelSound";
 import { DEFAULT_SOUND_RESPONSE, PEEL_SOUND_RESPONSES, peelSoundLoad, readSoundResponse, saveSoundResponse, type PeelSoundResponse } from "@/lib/peel/PeelSoundResponse";
 import { APPEARANCE_CONTROLS, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, readAppearance, type PeelAppearance } from "@/lib/render/PeelAppearance";
+import {
+  DEFAULT_CAMERA_SETTINGS, MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, readCameraSettings, saveCameraSettings, type CameraSettings,
+} from "@/lib/render/PeelFraming";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import stickerLevels from "@/lib/peel/levels.json";
 
@@ -27,7 +30,7 @@ const DEFAULT_LEVEL = {
   releaseJumpThreshold: 0.15,
   liftedTransparency: 0.5,
 } as const;
-const ZOOM_STEPS = [60, 75, 90, 100, 115, 135, 160];
+const ZOOM_STEPS = [60, 75, 90, 100, 108, 115];
 const TENSION_CONTROL_MAX = 0.66;
 const RELEASE_JUMP_CONTROL_MAX = 0.66;
 // A screen-space cap tuned to roughly 1.5 cm on an iPhone at normal page scale.
@@ -205,6 +208,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   const [liftedTransparency, setLiftedTransparency] = useState<number>(DEFAULT_LEVEL.liftedTransparency);
   const [tearFactors, setTearFactors] = useState(DEFAULT_TEAR_FACTORS);
   const [zoomIndex, setZoomIndex] = useState(ZOOM_STEPS.indexOf(100));
+  const [cameraSettings, setCameraSettings] = useState(DEFAULT_CAMERA_SETTINGS);
   const [fps, setFps] = useState(60);
   const [ready, setReady] = useState(false);
   const [miss, setMiss] = useState(false);
@@ -294,7 +298,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         const tore = simulation.applyGripGap(gapPx, GRIP_GAP_LIMIT_PX,
           gapPx >= GRIP_GAP_LIMIT_PX ? renderer.tornGripContact() : null);
         if (tore) {
-          renderer.updateDragReach();
           renderer.updateState();
           if (navigator.vibrate) navigator.vibrate([22, 34, 28]);
         }
@@ -366,7 +369,10 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           savedJumpThreshold,
         );
         simulation.setTearFactors(savedTearFactors);
-        const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect, level.artwork.startsWith("/stickers/"));
+        const savedCameraSettings = readCameraSettings();
+        const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect,
+          level.artwork.startsWith("/stickers/"), savedCameraSettings);
+        setCameraSettings(savedCameraSettings);
         renderer.setLiftedTransparency(savedTransparency);
         const savedAppearance = readAppearance();
         renderer.setAppearance(savedAppearance);
@@ -420,7 +426,6 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           const simulationTime = performance.now();
           simulation.drag(point, simulationTime);
           const solverMs = performance.now() - simulationTime;
-          renderer.updateDragReach();
           renderer.frameTimings.recordInput(solverMs);
           recordDiagnostic("pointer_move", point, {
             simulationTime,
@@ -437,12 +442,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
         const finishPointer = (event: PointerEvent) => {
           if (activePointer.current !== event.pointerId) return;
+          const releasedByPlayer = event.type === "pointerup";
+          if (releasedByPlayer) onPointerMove(event);
           if (textureFrame.current) {
             cancelAnimationFrame(textureFrame.current);
             textureFrame.current = 0;
             refresh(true, true);
           }
-          const releasedByPlayer = event.type === "pointerup";
           if (releasedByPlayer && peelSoundRef.current !== "off") audio.unlock();
           activePointer.current = null;
           pendingSoundProgress.current = 0;
@@ -461,8 +467,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             setMoveLimitToast(true);
             moveToastTimer.current = window.setTimeout(() => setMoveLimitToast(false), 2800);
           }
-          const point = releasedByPlayer ? renderer.dragToSticker(event.clientX, event.clientY) : beforeRelease.pointer;
-          recordDiagnostic(releasedByPlayer ? "pointer_up" : "pointer_cancel", point, {
+          recordDiagnostic(releasedByPlayer ? "pointer_up" : "pointer_cancel", beforeRelease.pointer, {
             accepted,
             commit: true,
             hadGrab,
@@ -601,6 +606,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     setZoomIndex(index);
   };
 
+  const changeCameraSettings = (next: CameraSettings) => {
+    setCameraSettings(next);
+    rendererRef.current?.setCameraSettings(next);
+    saveCameraSettings(next);
+    recordDiagnostic("camera_settings", null, next);
+  };
+
   const reset = () => {
     audio.stop();
     pendingSoundProgress.current = 0;
@@ -647,6 +659,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         tearFactors,
         liftedTransparency,
         appearance,
+        camera: { ...cameraSettings, zoom: ZOOM_STEPS[zoomIndex] },
         peelSound,
       },
       environment: {
@@ -852,6 +865,21 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
 
         {menu === "visuals" && (
           <aside ref={menuRef} className="physics-settings visual-settings" aria-label="Visual settings">
+            <label className="setting-control">
+              <span>Peel camera</span>
+              <select value={cameraSettings.pan ? "pan" : "centered"}
+                onChange={event => changeCameraSettings({ ...cameraSettings, pan: event.currentTarget.value === "pan" })}>
+                <option value="pan">Pan and zoom</option>
+                <option value="centered">Centered zoom</option>
+              </select>
+            </label>
+            <label className="setting-control">
+              <div><span>Edge clearance</span><output>{cameraSettings.edgeClearance} px</output></div>
+              <input type="range" aria-label="Edge clearance" min={MIN_EDGE_CLEARANCE} max={MAX_EDGE_CLEARANCE}
+                step="4" value={cameraSettings.edgeClearance}
+                onChange={event => changeCameraSettings({ ...cameraSettings, edgeClearance: Number(event.currentTarget.value) })} />
+              <small>Target space between your pointer and the screen edge when the sticker comes free.</small>
+            </label>
             <div className="peel-sound-setting">
               <label className="setting-control">
                 <span>Peel sound</span>

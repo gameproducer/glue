@@ -131,13 +131,17 @@ export class GlassDepthScene {
     const halfHeight = (camera.position.z - this.mesh.position.z) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     const halfWidth = halfHeight * camera.aspect;
     // Cover the viewport without drawing a front-pane edge.
+    this.mesh.position.setX(camera.position.x).setY(camera.position.y);
     this.mesh.scale.set(halfWidth * 1.01, halfHeight * 1.01, 1);
     const uniforms = this.mesh.material.uniforms;
     uniforms.uEye.value.copy(camera.position);
     uniforms.uViewScale.value.set(halfWidth * 1.12, halfHeight * 1.12);
     uniforms.uDepth.value = Math.max(3.2, Math.min(halfWidth, halfHeight) * 1.5);
     const extent = uniforms.uShadowExtent.value as THREE.Vector2;
-    extent.set(Math.max(6, halfWidth * 1.4), Math.max(6, halfHeight * 1.4));
+    extent.set(
+      Math.max(6, Math.abs(camera.position.x) + halfWidth * 1.4),
+      Math.max(6, Math.abs(camera.position.y) + halfHeight * 1.4),
+    );
     this.shadowCamera.left = -extent.x;
     this.shadowCamera.right = extent.x;
     this.shadowCamera.top = extent.y;

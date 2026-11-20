@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import { BACKGROUNDS, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
-import { approachesScreenEdge, dragScaleForReach, fitDistance, includeCurl, MAX_TENSION_STRETCH, stepCameraDistance, type PeelBounds, type PeelRegion } from "./PeelFraming";
+import {
+  curlBounds, DEFAULT_CAMERA_SETTINGS, dragScaleForReach, fitFrustum, MAX_TENSION_STRETCH,
+  regionBounds, stepCamera, translateBounds, unionBounds,
+  type CameraMotion, type CameraSettings, type PeelBounds, type PeelRegion,
+} from "./PeelFraming";
 import { AttachedCurl } from "./AttachedCurl";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
@@ -24,6 +28,15 @@ type DissolvingShape = {
   origin: Vec2;
   offset: Vec2;
   bounds: PeelBounds | null;
+};
+
+type DragInput = {
+  screen: Vec2;
+  start: Vec2;
+  point: Vec2;
+  cameraStart: THREE.Vector3;
+  unitsPerPixel: number;
+  assist: { direction: Vec2; gain: number } | null;
 };
 
 type PeelUniforms = {
@@ -538,6 +551,7 @@ export class PeelRenderer {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(31, 1, 0.1, 40);
+  private readonly tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
   private readonly raycaster = new THREE.Raycaster();
   private readonly hitPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private readonly stateData: Uint8Array;
@@ -565,13 +579,15 @@ export class PeelRenderer {
   private readonly surface: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
   private glassDepth: GlassDepthScene | null = null;
   private zoom = 1;
+  private cameraSettings: CameraSettings;
+  private cameraMotion: CameraMotion | null = null;
+  private lastCameraTime = performance.now();
   private viewportWidth = 1;
   private viewportHeight = 1;
-  private dragInput: { x: number; y: number; point: Vec2; heading: Vec2; towardEdge: boolean } | null = null;
-  private dragReach: { direction: Vec2; scale: number } | null = null;
+  private dragInput: DragInput | null = null;
+  private readonly stickerBounds: PeelBounds;
   private movingRegion: PeelRegion | null = null;
   private movingBounds: PeelBounds | null = null;
-  private cameraReady = false;
   private readonly stickerWidth = STICKER_WIDTH;
   private readonly stickerHeight: number;
   private frame = 0;
@@ -590,9 +606,12 @@ export class PeelRenderer {
     private readonly artwork: HTMLImageElement,
     artworkAspect: number,
     whiteArtwork = false,
+    cameraSettings = DEFAULT_CAMERA_SETTINGS,
   ) {
     this.originalWhiteArtwork = whiteArtwork;
     this.stickerHeight = this.stickerWidth / artworkAspect;
+    this.stickerBounds = regionBounds({ x: 0, y: 0, width: this.stickerWidth, height: this.stickerHeight }, 0.022);
+    this.cameraSettings = cameraSettings;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -828,16 +847,10 @@ export class PeelRenderer {
     this.movingBounds = null;
     const region = this.movingRegion;
     if (torn && region) {
-      this.movingBounds = {
-        x: Math.abs(region.x + offsetX) + region.width / 2,
-        y: Math.abs(region.y + offsetY) + region.height / 2,
-        z: TORN_LAYER_Z,
-      };
+      this.movingBounds = translateBounds(regionBounds(region, TORN_LAYER_Z), { x: offsetX, y: offsetY });
     } else if (region && worldDepth > 0) {
       if (!detachedPointer) this.prepareAttachedCurl(worldGrab, worldDirection, worldDepth, profile);
-      this.movingBounds = { x: 0, y: 0, z: 0 };
-      includeCurl(this.movingBounds, region.width, region.height, worldGrab, worldDirection,
-        worldDepth, radius, profile === "cone", stretch, region);
+      this.movingBounds = curlBounds(region, worldGrab, worldDirection, worldDepth, radius, profile === "cone", stretch);
     }
     for (const material of this.materials) {
       const uniforms = material.uniforms as unknown as PeelUniforms;
@@ -885,7 +898,7 @@ export class PeelRenderer {
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
       texture.needsUpdate = true;
-      const bounds = this.movingBounds;
+      let bounds = this.movingBounds;
       const material = back.material.clone();
       const uniforms = material.uniforms as unknown as PeelUniforms;
       material.defines = { ...material.defines, PEEL_DETACHED: 1 };
@@ -914,9 +927,12 @@ export class PeelRenderer {
         const along = (x - grab.x) * direction.x + (y - grab.y) * direction.y;
         const diagonal = Math.abs(1 - 2 * direction.x ** 2);
         const cross = Math.abs(2 * direction.x * direction.y);
-        bounds.x = Math.max(bounds.x, Math.abs(x - 2 * along * direction.x + flatOffset.x) + (diagonal * width + cross * height) / 2);
-        bounds.y = Math.max(bounds.y, Math.abs(y - 2 * along * direction.y + flatOffset.y) + (cross * width + diagonal * height) / 2);
-        bounds.z = Math.max(bounds.z, 0.15);
+        bounds = unionBounds(bounds, regionBounds({
+          x: x - 2 * along * direction.x + flatOffset.x,
+          y: y - 2 * along * direction.y + flatOffset.y,
+          width: diagonal * width + cross * height,
+          height: cross * width + diagonal * height,
+        }, 0.15));
       }
       this.heldDissolve = { texture, mesh, started: performance.now(), origin: { ...pointer },
         offset: { x: 0, y: 0 }, bounds };
@@ -1026,82 +1042,81 @@ export class PeelRenderer {
     const theta = Math.min(length / radius, Math.PI);
     const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
     const rise = 0.018 + radius * (1 - Math.cos(theta));
-    const grip = new THREE.Vector3(
-      grab.x + snapshot.direction.x * shift,
-      grab.y + snapshot.direction.y * shift,
-      0.004 + rise,
-    ).project(this.camera);
-    const rect = this.domElement.getBoundingClientRect();
-    const gripX = rect.left + (1 + grip.x) * rect.width / 2;
-    const gripY = rect.top + (1 - grip.y) * rect.height / 2;
-    return Math.hypot(input.x - gripX, input.y - gripY);
+    // Measure contact in the gesture's original projection so a moving camera
+    // cannot create tension. Convert assisted travel back to physical pixels.
+    const { cameraStart, unitsPerPixel, assist } = input;
+    const perspective = cameraStart.z / (cameraStart.z - 0.004 - rise);
+    const contact = this.uvToWorld(input.point);
+    let dx = cameraStart.x + (grab.x + snapshot.direction.x * shift - cameraStart.x) * perspective - contact.x;
+    let dy = cameraStart.y + (grab.y + snapshot.direction.y * shift - cameraStart.y) * perspective - contact.y;
+    if (assist) {
+      const { direction, gain } = assist;
+      const along = (dx * direction.x + dy * direction.y) * (1 - 1 / gain);
+      dx -= along * direction.x;
+      dy -= along * direction.y;
+    }
+    return Math.hypot(dx, dy) / unitsPerPixel;
   }
 
   tornGripContact() {
     const input = this.dragInput;
-    return input && this.screenToSticker(input.x, input.y, TORN_LAYER_Z);
+    return input && this.screenToSticker(input.screen.x, input.screen.y, TORN_LAYER_Z);
   }
 
   setZoom(zoom: number) {
     this.zoom = zoom;
   }
 
-  beginDrag(clientX: number, clientY: number, point: Vec2) {
-    this.dragInput = { x: clientX, y: clientY, point, heading: { x: 0, y: 0 }, towardEdge: false };
+  setCameraSettings(settings: CameraSettings) {
+    this.cameraSettings = settings;
   }
 
-  updateDragReach() {
-    const input = this.dragInput;
-    this.dragReach = null;
-    if (!input?.towardEdge) return;
-    const bounds = { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight };
-    const reach = this.simulation.remainingPeelTravel();
-    if (!reach) return;
-    const direction = { x: reach.direction.x, y: -reach.direction.y };
-    const scale = dragScaleForReach(input, direction, bounds, reach.distance * this.stickerHeight);
-    if (scale > 0) this.dragReach = { direction, scale };
+  beginDrag(clientX: number, clientY: number, point: Vec2) {
+    const start = { x: clientX, y: clientY };
+    this.dragInput = {
+      screen: start, start, point, cameraStart: this.camera.position.clone(), assist: null,
+      unitsPerPixel: 2 * this.camera.position.z * this.tangent / this.viewportHeight,
+    };
   }
 
   dragToSticker(clientX: number, clientY: number) {
     const input = this.dragInput;
     if (!input) return null;
-    const rect = this.domElement.getBoundingClientRect();
     // Pointer capture lets the player keep peeling across the whole window, including over the HUD.
-    const x = THREE.MathUtils.clamp(clientX, 0, window.innerWidth);
-    const y = THREE.MathUtils.clamp(clientY, 0, window.innerHeight);
-    // Use only physical pointer movement. Reprojecting the same pixel after
-    // zooming would move the simulated grip and create tension on its own.
-    const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const unitsPerPixel = 2 * this.camera.position.z * tangent / Math.max(1, rect.height);
-    const dx = x - input.x;
-    const dy = y - input.y;
-    if (dx || dy) {
-      input.heading.x = input.heading.x * 0.65 + dx * 0.35;
-      input.heading.y = input.heading.y * 0.65 + dy * 0.35;
-      input.towardEdge = approachesScreenEdge({ x, y }, { x: dx, y: dy }, input.heading,
-        { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight });
-    }
+    const bounds = { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight };
+    const x = THREE.MathUtils.clamp(clientX, bounds.left, bounds.right);
+    const y = THREE.MathUtils.clamp(clientY, bounds.top, bounds.bottom);
+    const dx = x - input.screen.x;
+    const dy = input.screen.y - y;
+    if (!dx && !dy) return null;
+    const { unitsPerPixel } = input;
     let worldX = dx * unitsPerPixel;
     let worldY = dy * unitsPerPixel;
-    if (input.towardEdge && this.dragReach && this.dragReach.scale > unitsPerPixel) {
-      // Give the last pixels of real movement extra reach without moving the camera.
-      const { direction, scale } = this.dragReach;
-      const extra = Math.max(0, dx * direction.x + dy * direction.y) * (scale - unitsPerPixel);
-      worldX += extra * direction.x;
-      worldY += extra * direction.y;
+    const reach = this.simulation.remainingPeelTravel();
+    if (reach) {
+      const { direction, distance } = reach;
+      const forward = dx * direction.x + dy * direction.y;
+      if (forward > 0) {
+        const heading = { x: direction.x, y: -direction.y };
+        const travel = (input.screen.x - input.start.x) * heading.x + (input.screen.y - input.start.y) * heading.y;
+        const scale = dragScaleForReach(input.screen, heading, bounds, distance * this.stickerHeight,
+          unitsPerPixel, travel, this.cameraSettings.edgeClearance);
+        const extra = forward * (scale - unitsPerPixel);
+        worldX += extra * direction.x;
+        worldY += extra * direction.y;
+        input.assist = { direction, gain: scale / unitsPerPixel };
+      }
     }
     input.point = {
       x: input.point.x + worldX / this.stickerWidth,
-      y: input.point.y - worldY / this.stickerHeight,
+      y: input.point.y + worldY / this.stickerHeight,
     };
-    input.x = x;
-    input.y = y;
+    input.screen = { x, y };
     return input.point;
   }
 
   endDrag() {
     this.dragInput = null;
-    this.dragReach = null;
   }
 
   dispose() {
@@ -1140,31 +1155,38 @@ export class PeelRenderer {
     this.viewportWidth = width;
     this.viewportHeight = height;
     this.camera.updateProjectionMatrix();
-    this.frameCamera();
+    if (!this.cameraMotion) this.frameCamera(performance.now());
   }
 
-  private frameCamera() {
+  private frameCamera(now: number) {
     const width = this.viewportWidth;
     const height = this.viewportHeight;
-    const tangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const inset = Math.min(28, Math.min(width, height) * 0.09);
-    const rest = fitDistance({ x: this.stickerWidth / 2, y: this.stickerHeight / 2, z: 0.022 }, tangent, width, height, inset);
-    const fit = (margin: number) => Math.max(
-      this.movingBounds ? fitDistance(this.movingBounds, tangent, width, height, margin) : 0,
-      ...this.dissolves.map(shape => shape.bounds ? fitDistance({
-        x: shape.bounds.x + Math.abs(shape.offset.x),
-        y: shape.bounds.y + Math.abs(shape.offset.y),
-        z: shape.bounds.z,
-      }, tangent, width, height, margin) : 0),
-    );
-    const base = rest * 1.04 / this.zoom;
-    const towardEdge = this.dragInput?.towardEdge;
-    const target = towardEdge ? Math.max(fit(inset), base) : base;
-    const guard = towardEdge ? fit(Math.min(inset, 8)) : 0;
-    const distance = this.cameraReady ? stepCameraDistance(this.camera.position.z, target, guard) : target;
-    this.cameraReady = true;
-    this.camera.position.z = distance;
-    const far = Math.max(40, distance * 2 + 2);
+    const shortSide = Math.min(width, height);
+    const fill = Math.min(0.945, 0.82 * this.zoom);
+    const bounds = [this.stickerBounds];
+    const { pan } = this.cameraSettings;
+    if (this.movingBounds) bounds.push(this.movingBounds);
+    for (const shape of this.dissolves) {
+      const foreground = this.dragInput ? shape === this.heldDissolve : now - shape.started < RELAX_MS + DISSOLVE_MS * 0.65;
+      if (shape.bounds && foreground) bounds.push(translateBounds(shape.bounds, shape.offset));
+    }
+    const flatDistance = Math.max(this.stickerWidth * height / width, this.stickerHeight) / (2 * this.tangent);
+    const base = this.stickerBounds.z + flatDistance / fill;
+    const comfort = Math.min(34, shortSide * (1 - fill) / 2);
+    const fit = fitFrustum(bounds, this.tangent, width, height, comfort, pan);
+    const guard = fitFrustum(bounds, this.tangent, width, height, Math.min(9, shortSide * 0.024), pan);
+    const dt = THREE.MathUtils.clamp((now - this.lastCameraTime) / 1000, 0, 0.05);
+    this.cameraMotion = stepCamera(this.cameraMotion, fit, guard, base, dt, pan);
+    this.lastCameraTime = now;
+    const { x, y, z } = this.cameraMotion.pose;
+    this.camera.position.set(x, y, z);
+    const halfHeight = (z - this.surface.position.z) * this.tangent;
+    const scaleX = Math.max(1, (Math.abs(x) + halfHeight * this.camera.aspect) / 11 * 1.01);
+    const scaleY = Math.max(1, (Math.abs(y) + halfHeight) / 9 * 1.01);
+    this.surface.scale.set(scaleX, scaleY, 1);
+    this.surfaceMaterial.map?.repeat.set(1.6 * scaleX, 1.6 * scaleY);
+    this.surfaceMaterial.map?.offset.set(0.8 * (1 - scaleX), 0.8 * (1 - scaleY));
+    const far = Math.max(40, z * 2 + 2);
     if (this.camera.far !== far) {
       this.camera.far = far;
       this.camera.updateProjectionMatrix();
@@ -1191,7 +1213,7 @@ export class PeelRenderer {
       }
     }
     const cameraStarted = performance.now();
-    this.frameCamera();
+    this.frameCamera(now);
     const renderStarted = performance.now();
     if (this.glassDepth?.mesh.visible) {
       this.glassDepth.update(this.renderer, this.camera, [
