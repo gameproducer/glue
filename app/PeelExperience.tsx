@@ -20,6 +20,10 @@ import {
   readLevelSettings, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity, type LevelSettings,
 } from "@/lib/peel/LevelSettings";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
+import {
+  DEFAULT_TOUCH_CAMERA, DEFAULT_TOUCH_VIEW, MAX_MANUAL_ZOOM, readTouchCamera, saveTouchCamera,
+  TOUCH_CAMERA_MODES, TOUCH_CAMERA_QUERY, TOUCH_GESTURE_SLOP, type TouchCameraMode, type TouchCameraPreference,
+} from "@/lib/render/TouchCamera";
 import stickerLevels from "@/lib/peel/levels.json";
 
 const DEFAULT_LEVEL = {
@@ -194,7 +198,17 @@ export default function PeelExperience() {
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
   const [audio] = useState(() => new PeelAudio());
+  const [touchCamera, setTouchCamera] = useState(DEFAULT_TOUCH_CAMERA);
+  const [touchScreen, setTouchScreen] = useState(false);
   useEffect(() => () => audio.dispose(), [audio]);
+  useEffect(() => {
+    const query = window.matchMedia(TOUCH_CAMERA_QUERY);
+    const sync = () => setTouchScreen(query.matches);
+    sync();
+    setTouchCamera(readTouchCamera());
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
   useEffect(() => {
     try {
       const saved = localStorage.getItem("peel.selectedLevel");
@@ -207,21 +221,34 @@ export default function PeelExperience() {
     try { localStorage.setItem("peel.selectedLevel", next.id); } catch { /* Storage is optional. */ }
   };
   return <PeelGame key={level.id} level={level} onLevelChange={selectLevel}
-    bottomPanelOpen={bottomPanelOpen} onBottomPanelChange={setBottomPanelOpen} audio={audio} />;
+    bottomPanelOpen={bottomPanelOpen} onBottomPanelChange={setBottomPanelOpen} audio={audio}
+    touchCamera={touchCamera} touchMode={touchScreen ? touchCamera.mode : null}
+    onTouchCameraChange={preference => {
+      setTouchCamera(preference);
+      saveTouchCamera(preference);
+    }} />;
 }
 
-function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, audio }: {
+function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, audio, touchCamera, touchMode, onTouchCameraChange }: {
   level: Level;
   onLevelChange: (level: Level) => void;
   bottomPanelOpen: boolean;
   onBottomPanelChange: (open: boolean) => void;
   audio: PeelAudio;
+  touchCamera: TouchCameraPreference;
+  touchMode: TouchCameraMode | null;
+  onTouchCameraChange: (preference: TouchCameraPreference) => void;
 }) {
   const levelIndex = LEVELS.findIndex(item => item.id === level.id);
   const hostRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<PeelSimulation | null>(null);
   const rendererRef = useRef<PeelRenderer | null>(null);
   const activePointer = useRef<number | null>(null);
+  const clearTouchGesture = useRef(() => {});
+  const touchModeRef = useRef(touchMode);
+  const miniMapRef = useRef<HTMLCanvasElement>(null);
+  const miniMapOutlineRef = useRef<HTMLSpanElement>(null);
+  const [touchView, setTouchView] = useState(DEFAULT_TOUCH_VIEW);
   const textureFrame = useRef(0);
   const moveToastTimer = useRef<number | null>(null);
   const diagnosticEvents = useRef<DiagnosticEvent[]>([]);
@@ -256,6 +283,17 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   useEffect(() => {
     rendererRef.current?.setSettingsOpen(menu !== null);
   }, [menu, ready]);
+
+  useEffect(() => {
+    touchModeRef.current = touchMode;
+    if (activePointer.current === null) clearTouchGesture.current();
+    rendererRef.current?.setTouchCameraMode(touchMode);
+  }, [touchMode]);
+
+  const showMiniMap = ready && touchMode === "manual" && touchCamera.miniMap;
+  useEffect(() => {
+    rendererRef.current?.setMiniMap(miniMapRef.current, miniMapOutlineRef.current);
+  }, [showMiniMap, ready]);
 
   const recordDiagnostic = useCallback((
     type: string,
@@ -371,11 +409,12 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         );
         simulation.setTearFactors(current.tearFactors);
         const renderer = new PeelRenderer(hostRef.current, simulation, asset.image, asset.aspect,
-          level.artwork.startsWith("/stickers/"), current.camera, current.zoom / 100);
+          level.artwork.startsWith("/stickers/"), current.camera, current.zoom / 100, touchModeRef.current, setTouchView);
         renderer.setLiftedTransparency(current.liftedTransparency);
         renderer.setAppearance(current.appearance);
         simulationRef.current = simulation;
         rendererRef.current = renderer;
+        setTouchView(renderer.touchView);
         startDiagnosticRecording("level_load");
         const canvas = renderer.domElement;
         canvas.setAttribute("aria-label", `Interactive ${level.name} sticker. Sweep from an exposed edge through the sticker to peel it.`);
@@ -388,12 +427,10 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           });
         };
 
-        const onPointerDown = (event: PointerEvent) => {
-          if (activePointer.current !== null) return;
-          const point = renderer.screenToSticker(event.clientX, event.clientY);
-          const simulationTime = performance.now();
+        const startPeel = (event: PointerEvent, start: Vec2, point: Vec2 | null, simulationTime: number) => {
+          const solverStarted = performance.now();
           const accepted = point ? simulation.begin(point, simulationTime) : false;
-          const solverMs = performance.now() - simulationTime;
+          const solverMs = performance.now() - solverStarted;
           renderer.frameTimings.recordInput(solverMs);
           recordDiagnostic("pointer_down", point, {
             accepted,
@@ -408,12 +445,12 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           pendingSound.current = { progress: 0, peak: 0 };
           event.preventDefault();
           activePointer.current = event.pointerId;
-          canvas.setPointerCapture(event.pointerId);
-          renderer.beginDrag(event.clientX, event.clientY, point);
+          if (event.type === "pointerdown") canvas.setPointerCapture(event.pointerId);
+          renderer.beginDrag(start.x, start.y, point);
           refresh(false);
         };
 
-        const onPointerMove = (event: PointerEvent) => {
+        const movePeel = (event: PointerEvent) => {
           if (activePointer.current !== event.pointerId) return;
           const point = renderer.dragToSticker(event.clientX, event.clientY);
           if (!point) return;
@@ -446,10 +483,10 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           if (!before.torn && next.torn && navigator.vibrate) navigator.vibrate([22, 34, 28]);
         };
 
-        const finishPointer = (event: PointerEvent) => {
+        const finishPeel = (event: PointerEvent) => {
           if (activePointer.current !== event.pointerId) return;
           const releasedByPlayer = event.type === "pointerup";
-          if (releasedByPlayer) onPointerMove(event);
+          if (releasedByPlayer) movePeel(event);
           if (textureFrame.current) {
             cancelAnimationFrame(textureFrame.current);
             textureFrame.current = 0;
@@ -486,12 +523,98 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           });
           if (lift) renderer.settleLift(lift.liftedCells, lift.totalCells);
           renderer.endDrag();
+          if (accepted || beforeRelease.torn) renderer.refreshMiniMap();
           refresh(true);
           if (!accepted && !hadGrab) {
             setMiss(true);
             window.setTimeout(() => setMiss(false), 420);
           }
           if (navigator.vibrate && accepted) navigator.vibrate(12);
+        };
+
+        const touches = new Map<number, Vec2>();
+        let pending: { id: number; start: Vec2; point: Vec2 | null; time: number } | null = null;
+        let navigating = false;
+        const position = (event: PointerEvent) => ({ x: event.clientX, y: event.clientY });
+        const distance = (a: Vec2, b: Vec2) => Math.hypot(b.x - a.x, b.y - a.y);
+        const midpoint = (a: Vec2, b: Vec2) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+        clearTouchGesture.current = () => {
+          const pointers = [...touches.keys()];
+          touches.clear();
+          pending = null;
+          navigating = false;
+          renderer.setTouchPointPending(false);
+          for (const id of pointers) {
+            if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+          }
+        };
+
+        const onPointerDown = (event: PointerEvent) => {
+          if (activePointer.current !== null) return;
+          const mode = renderer.touchMode;
+          const start = position(event);
+          const time = performance.now();
+          if (event.pointerType !== "touch" || (mode !== "focus" && mode !== "manual")) {
+            if (touches.size === 0) startPeel(event, start, renderer.screenToSticker(start.x, start.y), time);
+            return;
+          }
+          if (touches.size > 0 && mode === "focus") return;
+          event.preventDefault();
+          canvas.setPointerCapture(event.pointerId);
+          touches.set(event.pointerId, start);
+          if (touches.size >= 2) {
+            pending = null;
+            navigating = true;
+            renderer.setTouchPointPending(false);
+          } else if (!navigating) {
+            pending = { id: event.pointerId, start, point: renderer.screenToSticker(start.x, start.y), time };
+            renderer.setTouchPointPending(true);
+            // Unlock while the browser still considers the touch a user gesture.
+            if (settingsRef.current.peelSound !== "off" || settingsRef.current.edgeClick) audio.unlock();
+          }
+        };
+
+        const startPendingPeel = (event: PointerEvent) => {
+          if (pending?.id !== event.pointerId || distance(pending.start, position(event)) < TOUCH_GESTURE_SLOP) return;
+          const { start, point, time } = pending;
+          pending = null;
+          renderer.setTouchPointPending(false);
+          startPeel(event, start, point, time);
+        };
+
+        const onPointerMove = (event: PointerEvent) => {
+          const previous = touches.get(event.pointerId);
+          if (previous && navigating) {
+            const next = position(event);
+            touches.set(event.pointerId, next);
+            const [first, second] = touches.keys();
+            const other = event.pointerId === first ? touches.get(second)
+              : event.pointerId === second ? touches.get(first) : undefined;
+            if (other) {
+              const factor = Math.max(1, distance(next, other)) / Math.max(1, distance(previous, other));
+              renderer.adjustManualView(factor, midpoint(previous, other), midpoint(next, other));
+            }
+            return;
+          }
+          startPendingPeel(event);
+          movePeel(event);
+        };
+
+        const finishPointer = (event: PointerEvent) => {
+          const released = event.type === "pointerup";
+          if (released) startPendingPeel(event);
+          touches.delete(event.pointerId);
+          if (touches.size === 0) navigating = false;
+          if (pending?.id === event.pointerId) {
+            const { point } = pending;
+            pending = null;
+            renderer.setTouchPointPending(false);
+            const state = simulation.snapshot();
+            if (released && point && !state.complete && !state.failed && !state.torn && renderer.focusAt(point)) {
+              recordDiagnostic("camera_focus", point);
+            }
+          }
+          finishPeel(event);
         };
 
         canvas.addEventListener("pointerdown", onPointerDown);
@@ -501,6 +624,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         canvas.addEventListener("lostpointercapture", finishPointer);
 
         teardown = () => {
+          clearTouchGesture.current();
+          clearTouchGesture.current = () => {};
           audio.stop();
           pendingSound.current = { progress: 0, peak: 0 };
           canvas.removeEventListener("pointerdown", onPointerDown);
@@ -586,12 +711,25 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     recordDiagnostic("camera_settings", null, camera);
   };
 
+  const showWholeSticker = () => {
+    if (activePointer.current !== null) return;
+    clearTouchGesture.current();
+    rendererRef.current?.resetTouchView();
+  };
+
+  const stepTouchZoom = (factor: number) => {
+    if (activePointer.current !== null) return;
+    clearTouchGesture.current();
+    rendererRef.current?.adjustManualView(factor);
+  };
+
   const reset = () => {
     audio.stop();
     pendingSound.current = { progress: 0, peak: 0 };
     const renderer = rendererRef.current;
     const pointerId = activePointer.current;
     activePointer.current = null;
+    clearTouchGesture.current();
     if (pointerId !== null && renderer?.domElement.hasPointerCapture(pointerId)) {
       renderer.domElement.releasePointerCapture(pointerId);
     }
@@ -600,6 +738,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     simulationRef.current?.reset();
     renderer?.endDrag();
     renderer?.clearReleaseAnimations();
+    renderer?.resetTouchView();
+    renderer?.refreshMiniMap();
     if (moveToastTimer.current !== null) window.clearTimeout(moveToastTimer.current);
     setMoveLimitToast(false);
     startDiagnosticRecording("level_reset");
@@ -767,6 +907,35 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
         </div>
         <div className="surface-glow" aria-hidden="true" />
         <div ref={hostRef} className="renderer-host" />
+        {ready && touchMode === "focus" && !snapshot.complete && !snapshot.failed && (
+          <div className="touch-camera-controls">
+            {touchView.focused ? (
+              <button type="button" disabled={snapshot.tracking} onClick={showWholeSticker}>Whole sticker</button>
+            ) : touchView.canFocus && !snapshot.tracking && (
+              <p className="touch-camera-hint">Tap a small piece to zoom</p>
+            )}
+          </div>
+        )}
+        {ready && touchMode === "manual" && (
+          <div className="touch-camera-controls" role="group" aria-label="Manual camera">
+            <div className="touch-zoom-controls">
+              <button type="button" onClick={() => stepTouchZoom(1 / 1.4)}
+                disabled={snapshot.tracking || touchView.zoom <= 1} aria-label="Zoom out">−</button>
+              <button type="button" onClick={showWholeSticker} disabled={snapshot.tracking || touchView.zoom <= 1}>Whole sticker</button>
+              <button type="button" onClick={() => stepTouchZoom(1.4)}
+                disabled={snapshot.tracking || touchView.zoom >= MAX_MANUAL_ZOOM} aria-label="Zoom in">+</button>
+            </div>
+            {showMiniMap && (
+              <button type="button" className="sticker-minimap" aria-label="Mini-map, show whole sticker"
+                hidden={snapshot.tracking || touchView.zoom <= 1} onClick={showWholeSticker}>
+                <span>
+                  <canvas aria-hidden="true" ref={miniMapRef} />
+                  <span className="minimap-viewport" aria-hidden="true" ref={miniMapOutlineRef} />
+                </span>
+              </button>
+            )}
+          </div>
+        )}
         {!ready && !webglError && <p className="loading-art">Preparing sticker…</p>}
         {webglError && (
           <div className="webgl-fallback" role="alert">
@@ -887,7 +1056,27 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             <section className="settings-group" aria-label="Camera">
               <h3>Camera</h3>
               <label className="setting-control">
-                <span>Peel camera</span>
+                <span>Touch camera</span>
+                <select value={touchCamera.mode} onChange={event => {
+                  const mode = event.currentTarget.value as TouchCameraMode;
+                  onTouchCameraChange({ ...touchCamera, mode });
+                  recordDiagnostic("touch_camera", null, { mode });
+                }}>
+                  {Object.entries(TOUCH_CAMERA_MODES).map(([value, { label }]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+                <small>{TOUCH_CAMERA_MODES[touchCamera.mode].hint} This setting applies across levels.</small>
+              </label>
+              {touchCamera.mode === "manual" && (
+                <label className="setting-toggle">
+                  <input type="checkbox" checked={touchCamera.miniMap}
+                    onChange={event => onTouchCameraChange({ ...touchCamera, miniMap: event.currentTarget.checked })} />
+                  <span>Show mini-map when zoomed</span>
+                </label>
+              )}
+              <label className="setting-control">
+                <span>Desktop peel camera</span>
                 <select value={cameraSettings.pan ? "pan" : "centered"}
                   onChange={event => changeCameraSettings({ ...cameraSettings, pan: event.currentTarget.value === "pan" })}>
                   <option value="pan">Pan and zoom</option>
@@ -971,11 +1160,11 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       </section>
 
       <footer id="peel-controls" className="control-bar" aria-label="Prototype settings">
-        <div className="zoom-controls" role="group" aria-label="Level zoom">
+        {touchMode !== "manual" && <div className="zoom-controls" role="group" aria-label="Level zoom">
           <button type="button" onClick={() => changeZoom(-1)} disabled={!ready || zoomIndex === 0} aria-label="Zoom out">−</button>
           <output aria-label="Manual zoom">{zoom}%</output>
           <button type="button" onClick={() => changeZoom(1)} disabled={!ready || zoomIndex === ZOOM_STEPS.length - 1} aria-label="Zoom in">+</button>
-        </div>
+        </div>}
         <button type="button" aria-haspopup="dialog" onClick={() => setMenu("physics")}>Physics</button>
         <button type="button" onClick={reset}>
           <span>Level</span>Reset

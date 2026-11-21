@@ -14,6 +14,8 @@ import { FilmOptics } from "./FilmOptics";
 import { CREASE_START_RISK, GESTURE_START_RISK, TearWarningOverlay } from "./TearWarningOverlay";
 import { detachedAlignmentDuration, detachedAnimation, releaseSettleDuration, writeReleaseSurface } from "./ReleaseSurface";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
+import { stickerLayout, type StickerArea, type StickerPiece } from "../peel/StickerLayout";
+import { moveManualView, type ManualView, type TouchCameraMode, type TouchCameraView } from "./TouchCamera";
 
 const STICKER_WIDTH = 4.8;
 const DISSOLVE_MS = 1800;
@@ -756,6 +758,13 @@ export class PeelRenderer {
   private viewportHeight = 1;
   private dragInput: DragInput | null = null;
   private readonly stickerBounds: PeelBounds;
+  private readonly stickerLayout: ReturnType<typeof stickerLayout>;
+  private readonly touchBounds: PeelBounds;
+  private touchCameraMode: TouchCameraMode | null;
+  private touchPointPending = false;
+  private focusedPiece: StickerPiece | null = null;
+  private manualView: ManualView;
+  private miniMap: { canvas: HTMLCanvasElement; outline: HTMLElement } | null = null;
   private movingRegion: PeelRegion | null = null;
   private movingBounds: PeelBounds | null = null;
   private readonly stickerWidth = STICKER_WIDTH;
@@ -775,10 +784,16 @@ export class PeelRenderer {
     whiteArtwork = false,
     cameraSettings = DEFAULT_CAMERA_SETTINGS,
     zoom = 1,
+    touchCameraMode: TouchCameraMode | null = null,
+    private readonly onTouchViewChange?: (view: TouchCameraView) => void,
   ) {
     this.originalWhiteArtwork = whiteArtwork;
     this.stickerHeight = this.stickerWidth / artworkAspect;
     this.stickerBounds = regionBounds({ x: 0, y: 0, width: this.stickerWidth, height: this.stickerHeight }, 0.022);
+    this.stickerLayout = stickerLayout(simulation.state, simulation.width, simulation.height);
+    this.touchBounds = this.worldBounds(this.stickerLayout.area);
+    this.touchCameraMode = touchCameraMode;
+    this.manualView = { center: this.boundsCenter(this.touchBounds), zoom: 1 };
     this.cameraSettings = cameraSettings;
     this.zoom = zoom;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -1353,6 +1368,92 @@ export class PeelRenderer {
     this.cameraSettings = settings;
   }
 
+  get touchMode() { return this.touchCameraMode; }
+
+  setTouchCameraMode(mode: TouchCameraMode | null) {
+    if (this.touchCameraMode === mode) return;
+    this.touchCameraMode = mode;
+    this.resetTouchView();
+  }
+
+  setTouchPointPending(pending: boolean) {
+    this.touchPointPending = pending;
+  }
+
+  get touchView(): TouchCameraView {
+    const overview = this.touchCameraMode === "focus" ? this.overviewDistance() : 0;
+    return {
+      focused: this.focusedPiece !== null,
+      canFocus: overview > 0 && this.stickerLayout.pieces.length > 1 && this.stickerLayout.pieces.some(piece =>
+        this.simulation.state[piece.sample] !== Cell.outside
+        && this.focusDistance(this.worldBounds(piece.area), overview) < overview * 0.87),
+      zoom: this.manualView.zoom,
+    };
+  }
+
+  resetTouchView() {
+    this.focusedPiece = null;
+    this.manualView = { center: this.boundsCenter(this.touchBounds), zoom: 1 };
+    this.onTouchViewChange?.(this.touchView);
+  }
+
+  focusAt(point: Vec2) {
+    if (this.touchCameraMode !== "focus" || this.stickerLayout.pieces.length < 2) return false;
+    const units = 2 * this.camera.position.z * this.tangent / this.viewportHeight;
+    const piece = this.stickerLayout.hit(point, { x: 10 * units / this.stickerWidth, y: 10 * units / this.stickerHeight },
+      this.simulation.state);
+    if (!piece) return false;
+    const overview = this.overviewDistance();
+    if (this.focusDistance(this.worldBounds(piece.area), overview) >= overview * 0.87) return false;
+    this.focusedPiece = piece;
+    this.onTouchViewChange?.(this.touchView);
+    return true;
+  }
+
+  adjustManualView(factor: number, previous?: Vec2, next?: Vec2) {
+    if (this.touchCameraMode !== "manual" || this.dragInput) return;
+    const rect = this.domElement.getBoundingClientRect();
+    const offset = (p?: Vec2) => p
+      ? { x: p.x - rect.left - rect.width / 2, y: rect.top + rect.height / 2 - p.y }
+      : { x: 0, y: 0 };
+    const units = 2 * (this.overviewDistance() - this.touchBounds.z) * this.tangent / this.viewportHeight;
+    const previousZoom = this.manualView.zoom;
+    this.manualView = moveManualView(this.manualView, offset(previous), offset(next), factor, units, this.touchBounds);
+    if (next && !this.settling && this.dissolves.length === 0) {
+      this.cameraMotion = null;
+      this.frameCamera(performance.now());
+    }
+    if (this.manualView.zoom !== previousZoom) this.onTouchViewChange?.(this.touchView);
+  }
+
+  setMiniMap(canvas: HTMLCanvasElement | null, outline: HTMLElement | null) {
+    this.miniMap = canvas && outline ? { canvas, outline } : null;
+    this.refreshMiniMap();
+  }
+
+  refreshMiniMap() {
+    if (!this.miniMap) return;
+    const { canvas } = this.miniMap;
+    const { width, height, state } = this.simulation;
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const image = context.createImageData(width, height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const cell = state[y * width + x];
+        if (cell === Cell.outside || cell === Cell.torn) continue;
+        const offset = ((height - 1 - y) * width + x) * 4;
+        image.data[offset] = 190;
+        image.data[offset + 1] = 228;
+        image.data[offset + 2] = 218;
+        image.data[offset + 3] = cell === Cell.released ? 132 : 255;
+      }
+    }
+    context.putImageData(image, 0, 0);
+  }
+
   setSettingsOpen(open: boolean) {
     this.settingsOpen = open;
   }
@@ -1364,6 +1465,7 @@ export class PeelRenderer {
       screen: start, start, point, cameraStart: this.camera.position.clone(), assist: null,
       unitsPerPixel: 2 * this.camera.position.z * this.tangent / this.viewportHeight,
     };
+    if (this.touchCameraMode && this.cameraMotion) this.cameraMotion.velocity = { x: 0, y: 0, z: 0 };
   }
 
   dragToSticker(clientX: number, clientY: number) {
@@ -1441,6 +1543,7 @@ export class PeelRenderer {
   }
 
   private resize() {
+    const couldFocus = this.touchView.canFocus;
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(width, height, false);
@@ -1450,16 +1553,67 @@ export class PeelRenderer {
     this.camera.updateProjectionMatrix();
     this.settingsPreviewDirty = true;
     if (!this.cameraMotion) this.frameCamera(performance.now());
+    const view = this.touchView;
+    if (view.canFocus !== couldFocus) this.onTouchViewChange?.(view);
+  }
+
+  private worldBounds(area: StickerArea): PeelBounds {
+    return {
+      left: (area.left - 0.5) * this.stickerWidth, right: (area.right - 0.5) * this.stickerWidth,
+      bottom: (area.bottom - 0.5) * this.stickerHeight, top: (area.top - 0.5) * this.stickerHeight,
+      z: this.stickerBounds.z,
+    };
+  }
+
+  private boundsCenter(bounds: PeelBounds): Vec2 {
+    return { x: (bounds.left + bounds.right) / 2, y: (bounds.bottom + bounds.top) / 2 };
+  }
+
+  private touchFitDistance(bounds: PeelBounds, fill: number) {
+    const span = Math.max((bounds.right - bounds.left) * this.viewportHeight / this.viewportWidth,
+      bounds.top - bounds.bottom);
+    return bounds.z + span / (2 * this.tangent * fill);
+  }
+
+  private overviewDistance() {
+    const zoom = this.touchCameraMode === "manual" ? 1 : this.zoom;
+    return this.touchFitDistance(this.touchBounds, Math.min(0.945, 0.92 * zoom));
+  }
+
+  private focusDistance(bounds: PeelBounds, overview: number) {
+    return Math.max(this.touchFitDistance(bounds, 0.66), bounds.z + (overview - bounds.z) / 3);
+  }
+
+  private updateMiniMapOutline() {
+    if (!this.miniMap || this.manualView.zoom === 1) return;
+    const { x, y, z } = this.camera.position;
+    const halfHeight = (z - this.touchBounds.z) * this.tangent;
+    const halfWidth = halfHeight * this.camera.aspect;
+    const percent = (unit: number) => `${(THREE.MathUtils.clamp(unit, 0, 1) * 100).toFixed(2)}%`;
+    const { style } = this.miniMap.outline;
+    style.left = percent(0.5 + (x - halfWidth) / this.stickerWidth);
+    style.right = percent(0.5 - (x + halfWidth) / this.stickerWidth);
+    style.top = percent(0.5 - (y + halfHeight) / this.stickerHeight);
+    style.bottom = percent(0.5 + (y - halfHeight) / this.stickerHeight);
   }
 
   private frameCamera(now: number) {
+    if (this.touchPointPending && this.cameraMotion) {
+      this.lastCameraTime = now;
+      return;
+    }
     const width = this.viewportWidth;
     const height = this.viewportHeight;
     const shortSide = Math.min(width, height);
-    const fill = Math.min(0.945, 0.82 * this.zoom);
+    const touch = this.touchCameraMode !== null;
+    const manualCrop = this.touchCameraMode === "manual" && this.manualView.zoom > 1;
+    const focusBounds = this.focusedPiece ? this.worldBounds(this.focusedPiece.area) : null;
+    const wholeBounds = touch ? this.touchBounds : this.stickerBounds;
+    const restBounds = focusBounds ?? wholeBounds;
+    const fill = Math.min(0.945, (touch ? 0.92 : 0.82) * (this.touchCameraMode === "manual" ? 1 : this.zoom));
     const relief = this.simulation.releasedGrips.size > 0 ? this.reliefHeight : 0;
-    const bounds = [{ ...this.stickerBounds, z: this.stickerBounds.z + relief }];
-    const { pan } = this.cameraSettings;
+    const bounds = manualCrop ? [] : [{ ...restBounds, z: restBounds.z + relief }];
+    const pan = touch || this.cameraSettings.pan;
     if (this.movingBounds) bounds.push(this.movingBounds);
     if (this.settling) {
       const { from, to, progress } = this.settling;
@@ -1475,13 +1629,22 @@ export class PeelRenderer {
         : shape.fadeStart === null || now - shape.fadeStart < DISSOLVE_MS * 0.65;
       if (shape.bounds && foreground) bounds.push(translateBounds(shape.bounds, shape.offset));
     }
-    const flatDistance = Math.max(this.stickerWidth * height / width, this.stickerHeight) / (2 * this.tangent);
-    const base = this.stickerBounds.z + flatDistance / fill;
+    const overview = this.touchFitDistance(wholeBounds, fill);
+    const desired = manualCrop ? wholeBounds.z + (overview - wholeBounds.z) / this.manualView.zoom
+      : focusBounds ? this.focusDistance(focusBounds, overview) : overview;
+    const grabPose = touch ? this.dragInput?.cameraStart : null;
+    const base = Math.max(desired, grabPose?.z ?? 0);
+    const center = grabPose ?? (manualCrop ? this.manualView.center : this.boundsCenter(restBounds));
     const comfort = Math.min(34, shortSide * (1 - fill) / 2);
-    const fit = fitFrustum(bounds, this.tangent, width, height, comfort, pan);
-    const guard = fitFrustum(bounds, this.tangent, width, height, Math.min(9, shortSide * 0.024), pan);
+    const fit = bounds.length ? fitFrustum(bounds, this.tangent, width, height, comfort, pan) : null;
+    // During idle transitions, let the overview ease outward. The guard still
+    // protects the moving material once the player has picked up the sticker.
+    const protect = !touch || this.dragInput || this.settling || this.dissolves.length > 0;
+    const guard = protect && bounds.length ? fitFrustum(bounds, this.tangent, width, height, Math.min(9, shortSide * 0.024), pan) : null;
     const dt = THREE.MathUtils.clamp((now - this.lastCameraTime) / 1000, 0, 0.05);
-    this.cameraMotion = stepCamera(this.cameraMotion, fit, guard, base, dt, pan);
+    // Respect reduced motion for mobile camera commands; preserve the peel's reach guard.
+    const motion = touch && !protect && this.reducedMotion.matches ? null : this.cameraMotion;
+    this.cameraMotion = stepCamera(motion, fit, guard, base, dt, pan, center);
     this.lastCameraTime = now;
     const { x, y, z } = this.cameraMotion.pose;
     this.camera.position.set(x, y, z);
@@ -1497,6 +1660,7 @@ export class PeelRenderer {
       this.camera.updateProjectionMatrix();
     }
     this.camera.updateMatrixWorld();
+    this.updateMiniMapOutline();
   }
 
   private animate = () => {
@@ -1531,6 +1695,10 @@ export class PeelRenderer {
         shape.mesh.material.uniforms.uRelax.value = alignment;
         shape.mesh.material.uniforms.uDissolve.value = fadeElapsed / DISSOLVE_MS;
       }
+    }
+    if (this.focusedPiece && !this.dragInput && this.dissolves.length === 0
+        && this.simulation.state[this.focusedPiece.sample] === Cell.outside) {
+      this.resetTouchView();
     }
     const cameraStarted = performance.now();
     this.frameCamera(now);

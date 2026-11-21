@@ -592,6 +592,71 @@ button { font: inherit; }
 .zoom-controls button:disabled { opacity: .4; cursor: default; }
 .zoom-controls output { min-width: 4ch; text-align: center; }
 
+.touch-camera-controls {
+  position: absolute;
+  top: calc(clamp(22px, 4vw, 52px) + 6px);
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 3;
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.touch-zoom-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.touch-camera-controls button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: #211c2b;
+  color: #faf7ff;
+  font-size: 13px;
+  pointer-events: auto;
+}
+
+.touch-camera-controls button:disabled { opacity: .5; }
+.touch-camera-controls button:focus-visible { outline: 2px solid #9cf3e9; outline-offset: 2px; }
+.touch-zoom-controls button[aria-label] { font-size: 18px; }
+
+.touch-camera-hint {
+  margin: 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--panel);
+  color: #faf7ff;
+  font-size: 12px;
+}
+
+.touch-camera-controls .sticker-minimap {
+  padding: 6px 9px;
+}
+
+.sticker-minimap > span {
+  position: relative;
+  display: block;
+  overflow: hidden;
+}
+
+.sticker-minimap canvas {
+  display: block;
+  width: 68px;
+  height: auto;
+  max-height: 54px;
+}
+
+.minimap-viewport {
+  position: absolute;
+  border: 1px solid #e4fff8;
+  border-radius: 2px;
+  background: #e4fff820;
+}
+
 @media (max-width: 650px) {
   .zoom-controls { order: 1; justify-content: center; flex-basis: 100%; }
   .control-bar .zoom-controls button { min-width: 40px; min-height: 40px; }
