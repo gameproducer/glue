@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_LEVEL_SETTINGS, readLevelSettings, saveLevelSettings } from "../lib/peel/LevelSettings.ts";
+import {
+  DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX,
+  readLevelSettings, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity,
+} from "../lib/peel/LevelSettings.ts";
 
 function withStorage(entries, run) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -14,6 +17,20 @@ function withStorage(entries, run) {
     else delete globalThis.localStorage;
   }
 }
+
+test("each increase in tear sensitivity lowers the corresponding failure limit", () => {
+  for (const maxThreshold of [TENSION_CONTROL_MAX, RELEASE_JUMP_CONTROL_MAX]) {
+    assert.equal(sensitivityToThreshold(0, maxThreshold), maxThreshold);
+    assert.equal(sensitivityToThreshold(100, maxThreshold), 0);
+    let previous = maxThreshold;
+    for (let sensitivity = 1; sensitivity <= 100; sensitivity++) {
+      const threshold = sensitivityToThreshold(sensitivity, maxThreshold);
+      assert.ok(threshold < previous);
+      assert.equal(thresholdToSensitivity(threshold, maxThreshold), sensitivity);
+      previous = threshold;
+    }
+  }
+});
 
 test("whole settings round-trip by level and keep intentional zero values", () => {
   withStorage([], () => {

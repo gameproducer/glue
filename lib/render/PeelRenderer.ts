@@ -94,6 +94,7 @@ type PeelUniforms = {
   uFlatOffset: { value: THREE.Vector2 };
   uDissolve: { value: number };
   uTornOffset: { value: THREE.Vector2 };
+  uTearStrain: { value: THREE.Vector3 };
 };
 
 const vertexShader = /* glsl */ `
@@ -214,8 +215,12 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uFilmColor;
   uniform float uLiftedOpacity;
   uniform float uDissolve;
+  uniform sampler2D uAttachedCurl;
+  uniform vec2 uGrab;
   uniform vec2 uDirection;
+  uniform float uFrontDepth;
   uniform vec2 uStickerSize;
+  uniform vec3 uTearStrain;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
@@ -287,6 +292,27 @@ const fragmentShader = /* glsl */ `
     #ifdef PEEL_DETACHED
       if (normal.z < 0.0) normal = -normal;
     #endif
+
+    vec2 strainLight = vec2(0.0);
+    if (uTearStrain.z > 0.0 && uLayer > 1.5 && uLayer < 2.5) {
+      // Relight the attached material around the actual curl root. The existing
+      // layer mask and artwork alpha carry the fold around holes and cutouts.
+      vec2 sheet = (vUv - 0.5) * uStickerSize;
+      vec2 fromStrain = sheet - uTearStrain.xy;
+      vec2 side = vec2(-uDirection.y, uDirection.x);
+      float span = mix(0.20, 0.31, uTearStrain.z);
+      float taper = 1.0 - smoothstep(0.055, span, abs(dot(fromStrain, side)));
+      taper *= 1.0 - smoothstep(0.12, 0.33, abs(dot(fromStrain, uDirection)));
+      float nominal = uFrontDepth - dot(sheet - uGrab, uDirection);
+      float curlDepth = max(0.0, nominal - texture2D(uAttachedCurl, vUv).r);
+      float fold = curlDepth / mix(0.14, 0.090, uTearStrain.z);
+      strainLight = vec2(
+        smoothstep(0.04, 0.30, fold) * (1.0 - smoothstep(0.46, 0.84, fold)),
+        smoothstep(0.36, 0.72, fold) * (1.0 - smoothstep(0.88, 1.47, fold))
+      ) * taper * uTearStrain.z;
+      vec3 tangent = vec3(uDirection * normal.z, -dot(normal.xy, uDirection));
+      normal = normalize(normal + tangent * (strainLight.x - strainLight.y) * 0.24);
+    }
     vec3 lightDirection = normalize(vec3(-0.38, 0.55, 0.74));
     float diffuse = max(dot(normal, lightDirection), 0.0);
     float grazing = pow(1.0 - abs(normal.z), 2.0);
@@ -602,6 +628,9 @@ const fragmentShader = /* glsl */ `
       alpha = mix(alpha, releaseAlpha, released);
     }
     #endif
+    // A soft studio reflection and its falloff leave the material's finish visible.
+    color *= 1.0 + strainLight.x * 0.18 - strainLight.y * 0.26;
+    color += vec3(strainLight.x * (0.14 + specular * 0.18));
     if (uDissolve > 0.0) {
       float sweep = 0.5 + dot(vUv - 0.5, uDirection) * 0.6;
       float variation = softNoise(vUv * 7.0) * 0.8 + softNoise(vUv * 21.0) * 0.2;
@@ -686,8 +715,8 @@ export class PeelRenderer {
   private readonly curlQueue: Int32Array;
   private curlSeamCount = 0;
   private readonly warningOverlay: TearWarningOverlay;
-  private warningPose: { point: THREE.Vector3 | null; angle: number; risk: number; redirect: Vec2 | null } | null = null;
-  private readonly warningProjection = new THREE.Vector3();
+  private warningGesture: NonNullable<ReturnType<PeelSimulation["tearWarning"]>> | null = null;
+  private readonly tearStrain = new THREE.Vector3();
   private readonly attachedCurl: AttachedCurl;
   private readonly curlTexture: THREE.DataTexture;
   private curlPreparedFor: CurlProfile | null = null;
@@ -840,6 +869,7 @@ export class PeelRenderer {
         uFlatOffset: { value: new THREE.Vector2() },
         uDissolve: { value: 0 },
         uTornOffset: { value: new THREE.Vector2() },
+        uTearStrain: { value: this.tearStrain },
       };
       const material = new THREE.ShaderMaterial({
         uniforms,
@@ -1030,42 +1060,33 @@ export class PeelRenderer {
   }
 
   setTearWarning(snapshot: PeelSnapshot, warning: ReturnType<PeelSimulation["tearWarning"]>) {
-    if (!warning || warning.risk < CREASE_START_RISK) {
-      if (this.warningPose) this.warningOverlay.hide();
-      this.warningPose = null;
-      return;
-    }
+    this.tearStrain.z = 0;
+    this.warningGesture = warning && warning.risk >= GESTURE_START_RISK ? warning : null;
+    if (!this.warningGesture) this.warningOverlay.hide();
+    if (!warning || warning.risk <= CREASE_START_RISK || !this.curlSeamCount) return;
+
+    const strength = THREE.MathUtils.smoothstep(warning.risk, CREASE_START_RISK, 1);
     const { grab, direction, frontDepth } = snapshot;
     const { width, height } = this.simulation;
     const aim = this.uvToWorld(grab);
     aim.x += direction.x * frontDepth * this.stickerHeight;
     aim.y += direction.y * frontDepth * this.stickerHeight;
     let closest = Infinity;
-    let point: THREE.Vector3 | null = null;
     // The queue starts with the actual seam cells, including around holes and concave edges.
     for (let i = 0; i < this.curlSeamCount; i++) {
       const cell = this.curlQueue[i];
-      const x = (cell % width / (width - 1) - 0.5) * this.stickerWidth;
-      const y = (Math.floor(cell / width) / (height - 1) - 0.5) * this.stickerHeight;
+      const x = ((cell % width + 0.5) / width - 0.5) * this.stickerWidth;
+      const y = ((Math.floor(cell / width) + 0.5) / height - 0.5) * this.stickerHeight;
       const distance = (x - aim.x) ** 2 + (y - aim.y) ** 2;
       if (distance >= closest) continue;
       closest = distance;
-      (point ??= new THREE.Vector3()).set(x, y, 0.018);
+      this.tearStrain.set(x, y, strength);
     }
-    const angle = Math.atan2(-direction.x, -direction.y) * 180 / Math.PI;
-    this.warningPose = { point, angle, ...warning };
   }
 
   private drawTearWarning() {
-    if (!this.warningPose || !this.dragInput) return;
-    const { point, angle, risk, redirect } = this.warningPose;
-    const projected = point && this.warningProjection.copy(point).project(this.camera);
-    this.warningOverlay.drawCrease(projected && {
-      x: (projected.x + 1) * this.viewportWidth / 2,
-      y: (1 - projected.y) * this.viewportHeight / 2,
-    }, angle, risk);
-    const pointer = risk >= GESTURE_START_RISK ? this.dragInput.screen : null;
-    this.warningOverlay.drawGesture(pointer, pointer && this.domElement.getBoundingClientRect(), redirect);
+    if (!this.warningGesture || !this.dragInput) return;
+    this.warningOverlay.drawGesture(this.dragInput.screen, this.domElement.getBoundingClientRect(), this.warningGesture.redirect);
   }
 
   private moveDissolve(pointer: Vec2) {
@@ -1137,6 +1158,7 @@ export class PeelRenderer {
     uniforms.uAttachedCurl.value = this.curlTexture;
     uniforms.uRestState.value = this.stateTexture;
     uniforms.uSettlingMask.value = this.stateTexture;
+    uniforms.uTearStrain.value.set(0, 0, 0);
     return material;
   }
 
@@ -1372,7 +1394,8 @@ export class PeelRenderer {
 
   endDrag() {
     this.dragInput = null;
-    this.warningPose = null;
+    this.warningGesture = null;
+    this.tearStrain.z = 0;
     this.warningOverlay.hide();
     if (this.heldDissolve) this.heldDissolve.releasedAt ??= performance.now();
   }

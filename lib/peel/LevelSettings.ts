@@ -8,6 +8,14 @@ export const ZOOM_STEPS = [60, 75, 90, 100, 108, 115];
 export const TENSION_CONTROL_MAX = 0.66;
 export const RELEASE_JUMP_CONTROL_MAX = 0.66;
 
+export function thresholdToSensitivity(threshold: number, maxThreshold: number) {
+  return Math.round((1 - threshold / maxThreshold) * 100);
+}
+
+export function sensitivityToThreshold(sensitivity: number, maxThreshold: number) {
+  return maxThreshold * (1 - sensitivity / 100);
+}
+
 export type LevelSettings = {
   profile: CurlProfile;
   tearThreshold: number;

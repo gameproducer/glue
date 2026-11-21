@@ -17,7 +17,7 @@ import { APPEARANCE_OPTIONS, FIRST_REFRACTIVE_FINISH, LEGACY_RIDGE_FINISH, type 
 import { MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, type CameraSettings } from "@/lib/render/PeelFraming";
 import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX, ZOOM_STEPS,
-  readLevelSettings, saveLevelSettings, type LevelSettings,
+  readLevelSettings, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity, type LevelSettings,
 } from "@/lib/peel/LevelSettings";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import stickerLevels from "@/lib/peel/levels.json";
@@ -143,6 +143,21 @@ function RollingSignalChart({
 type Level = { id: string; name: string; pack: string; artwork: string; maxMoves: number };
 const LEVELS: Level[] = [DEFAULT_LEVEL, ...stickerLevels];
 const PACKS = [...new Set(LEVELS.map(level => level.pack))];
+
+function FragilitySlider({ label, value, hint, onChange }: {
+  label: string;
+  value: number;
+  hint?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="setting-control" title={hint}>
+      <div><span>{label}</span><output>{value}%</output></div>
+      <input type="range" min="0" max="100" step="1" aria-label={label} aria-valuetext={`${value}% sensitivity`}
+        value={value} onChange={event => onChange(event.currentTarget.valueAsNumber)} />
+    </label>
+  );
+}
 
 function SettingsDialog({ id, title, levelName, onDismiss, children }: {
   id: string;
@@ -807,43 +822,17 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
                   <option value="cone">Cone</option>
                 </select>
               </label>
-              <label className="setting-control">
-                <div><span>Tension tear</span><output>{Math.round(tearThreshold * 100)}%</output></div>
-                <input
-                  type="range"
-                  min="0"
-                  max={Math.round(TENSION_CONTROL_MAX * 100)}
-                  step="1"
-                  value={Math.round(tearThreshold * 100)}
-                  onChange={(event) => changeTearThreshold(Number(event.currentTarget.value) / 100)}
-                />
-              </label>
-              <label className="setting-control">
-                <div><span>Area jump</span><output>{Math.round(releaseJumpThreshold * 100)}%</output></div>
-                <input
-                  type="range"
-                  min="0"
-                  max={Math.round(RELEASE_JUMP_CONTROL_MAX * 100)}
-                  step="1"
-                  value={Math.round(releaseJumpThreshold * 100)}
-                  onChange={(event) => changeReleaseJumpThreshold(Number(event.currentTarget.value) / 100)}
-                />
-              </label>
-              {TEAR_FACTOR_CONTROLS.map(({ key, label, hint }) => (
-                <label key={key} className="setting-control" title={hint}>
-                  <div><span>{label}</span><output>{tearFactors[key] === 0 ? "Off" : `${Math.round(tearFactors[key] * 100)}%`}</output></div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    aria-label={label}
-                    aria-valuetext={tearFactors[key] === 0 ? "Off" : `${Math.round(tearFactors[key] * 100)} percent`}
-                    value={Math.round(tearFactors[key] * 100)}
-                    onChange={(event) => changeTearFactor(key, Number(event.currentTarget.value) / 100)}
-                  />
-                </label>
-              ))}
+              <fieldset className="fragility-settings">
+                <legend>Fragility</legend>
+                <FragilitySlider label="Tension" value={thresholdToSensitivity(tearThreshold, TENSION_CONTROL_MAX)}
+                  onChange={value => changeTearThreshold(sensitivityToThreshold(value, TENSION_CONTROL_MAX))} />
+                <FragilitySlider label="Area jump" value={thresholdToSensitivity(releaseJumpThreshold, RELEASE_JUMP_CONTROL_MAX)}
+                  onChange={value => changeReleaseJumpThreshold(sensitivityToThreshold(value, RELEASE_JUMP_CONTROL_MAX))} />
+                {TEAR_FACTOR_CONTROLS.map(({ key, label, hint }) => (
+                  <FragilitySlider key={key} label={label} hint={hint} value={Math.round(tearFactors[key] * 100)}
+                    onChange={value => changeTearFactor(key, value / 100)} />
+                ))}
+              </fieldset>
             </section>
             <section className="settings-group log-tools" aria-label="Diagnostic recording">
               <header><h3>Diagnostic log</h3><output>{diagnosticEvents.current.length} events</output></header>
