@@ -43,7 +43,7 @@ type SettlingFlap = {
   curl: THREE.DataTexture;
   from: PeelBounds;
   to: PeelBounds;
-  started: number;
+  started: number | null;
   duration: number;
   progress: number;
 };
@@ -294,22 +294,26 @@ const fragmentShader = /* glsl */ `
     #endif
 
     vec2 strainLight = vec2(0.0);
-    if (uTearStrain.z > 0.0 && uLayer > 1.5 && uLayer < 2.5) {
+    float strain = uTearStrain.z;
+    #ifdef PEEL_SETTLING
+      strain *= 1.0 - uRelax;
+    #endif
+    if (strain > 0.0 && uLayer > 1.5 && uLayer < 2.5) {
       // Relight the attached material around the actual curl root. The existing
       // layer mask and artwork alpha carry the fold around holes and cutouts.
       vec2 sheet = (vUv - 0.5) * uStickerSize;
       vec2 fromStrain = sheet - uTearStrain.xy;
       vec2 side = vec2(-uDirection.y, uDirection.x);
-      float span = mix(0.20, 0.31, uTearStrain.z);
+      float span = mix(0.20, 0.31, strain);
       float taper = 1.0 - smoothstep(0.055, span, abs(dot(fromStrain, side)));
       taper *= 1.0 - smoothstep(0.12, 0.33, abs(dot(fromStrain, uDirection)));
       float nominal = uFrontDepth - dot(sheet - uGrab, uDirection);
       float curlDepth = max(0.0, nominal - texture2D(uAttachedCurl, vUv).r);
-      float fold = curlDepth / mix(0.14, 0.090, uTearStrain.z);
+      float fold = curlDepth / mix(0.14, 0.090, strain);
       strainLight = vec2(
         smoothstep(0.04, 0.30, fold) * (1.0 - smoothstep(0.46, 0.84, fold)),
         smoothstep(0.36, 0.72, fold) * (1.0 - smoothstep(0.88, 1.47, fold))
-      ) * taper * uTearStrain.z;
+      ) * taper * strain;
       vec3 tangent = vec3(uDirection * normal.z, -dot(normal.xy, uDirection));
       normal = normalize(normal + tangent * (strainLight.x - strainLight.y) * 0.24);
     }
@@ -741,7 +745,8 @@ export class PeelRenderer {
   private settingsOpen = false;
   private settingsPreviewDirty = false;
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
-  private readonly surface: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
+  private readonly plainSurfaceMaterial = new THREE.MeshBasicMaterial({ toneMapped: false });
+  private readonly surface: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial | THREE.MeshBasicMaterial>;
   private glassDepth: GlassDepthScene | null = null;
   private zoom: number;
   private cameraSettings: CameraSettings;
@@ -1177,6 +1182,7 @@ export class PeelRenderer {
       material.defines = { ...material.defines, PEEL_SETTLING: 1 };
       material.uniforms.uState.value = state;
       material.uniforms.uAttachedCurl.value = curl;
+      material.uniforms.uTearStrain.value.copy(this.tearStrain);
       const mesh = new THREE.Mesh(source.geometry, material);
       mesh.position.copy(source.position);
       mesh.renderOrder = source.renderOrder;
@@ -1190,7 +1196,7 @@ export class PeelRenderer {
     }
     this.settling = {
       meshes, state, curl, from: this.movingBounds, to: regionBounds(this.movingRegion, 0.022 + this.reliefHeight),
-      started: performance.now(), duration: releaseSettleDuration(liftedCells, totalCells), progress: 0,
+      started: null, duration: releaseSettleDuration(liftedCells, totalCells, this.tearStrain.z > 0), progress: 0,
     };
   }
 
@@ -1247,10 +1253,14 @@ export class PeelRenderer {
       this.puffTexture.minFilter = this.puffTexture.magFilter = THREE.LinearFilter;
       this.puffTexture.needsUpdate = true;
     }
-    const background = BACKGROUNDS[appearance.background].color;
+    const backgroundPreset = BACKGROUNDS[appearance.background];
+    const background = backgroundPreset.color;
+    const plainBackground = "plain" in backgroundPreset;
+    this.surface.material = plainBackground ? this.plainSurfaceMaterial : this.surfaceMaterial;
+    this.plainSurfaceMaterial.color.set(background);
     this.surfaceMaterial.emissive.set(background);
     this.surfaceMaterial.emissiveIntensity = appearance.background === 0 ? 0 : 0.95;
-    this.scene.background = appearance.background === 0 ? null : new THREE.Color(background).multiplyScalar(0.62);
+    this.scene.background = appearance.background === 0 ? null : new THREE.Color(background).multiplyScalar(plainBackground ? 1 : 0.62);
     const glassEnabled = appearance.glassDepth === 1;
     if (glassEnabled && !this.glassDepth) {
       this.glassDepth = new GlassDepthScene();
@@ -1420,6 +1430,7 @@ export class PeelRenderer {
     this.surface.geometry.dispose();
     this.surfaceMaterial.map?.dispose();
     this.surfaceMaterial.dispose();
+    this.plainSurfaceMaterial.dispose();
     this.renderer.dispose();
     this.domElement.remove();
     this.warningOverlay.dispose();
@@ -1496,7 +1507,7 @@ export class PeelRenderer {
     this.settingsPreviewDirty = false;
     const now = performance.now();
     const phase = this.dissolves.length || this.settling ? "dissolve" : this.dragInput ? "drag" : "idle";
-    if (this.settling) {
+    if (this.settling && this.settling.started !== null) {
       const { started, duration, meshes } = this.settling;
       const elapsed = now - started;
       if (elapsed >= duration) {
@@ -1542,6 +1553,8 @@ export class PeelRenderer {
       }
     }
     this.renderer.render(this.scene, this.camera);
+    // The first draw can compile the settling shaders. Give the animation its full duration afterward.
+    if (this.settling?.started === null) this.settling.started = performance.now();
     this.drawTearWarning();
     this.frameTimings.recordFrame(now, {
       phase,

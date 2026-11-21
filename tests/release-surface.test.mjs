@@ -32,6 +32,12 @@ test("small releases settle in about half a second and larger pieces take up to 
   assert.equal(releaseSettleDuration(100, 100), 1000);
 });
 
+test("a strained fold settles in 500 to 700 ms", () => {
+  assert.equal(releaseSettleDuration(0, 100, true), 500);
+  assert.equal(releaseSettleDuration(25, 100, true), 600);
+  assert.equal(releaseSettleDuration(100, 100, true), 700);
+});
+
 test("detached material aligns 75% faster while held and fades once released and aligned", () => {
   const detachedAt = 1000;
   const duration = detachedAlignmentDuration(25, 100);

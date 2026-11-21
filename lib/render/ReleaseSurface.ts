@@ -8,8 +8,9 @@ const smooth = (value: number) => {
   return t * t * (3 - 2 * t);
 };
 
-export function releaseSettleDuration(liftedCells: number, totalCells: number) {
-  return 500 + 500 * Math.sqrt(Math.max(0, Math.min(1, liftedCells / Math.max(1, totalCells))));
+export function releaseSettleDuration(liftedCells: number, totalCells: number, strained = false) {
+  const liftedFraction = Math.max(0, Math.min(1, liftedCells / Math.max(1, totalCells)));
+  return 500 + (strained ? 200 : 500) * Math.sqrt(liftedFraction);
 }
 
 export function detachedAlignmentDuration(liftedCells: number, totalCells: number) {

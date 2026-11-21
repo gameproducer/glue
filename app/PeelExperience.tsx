@@ -13,7 +13,7 @@ import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { PEEL_SOUNDS, PeelAudio, type PeelSound } from "@/lib/peel/PeelAudio";
 import { REFERENCE_PEEL_SOUNDS } from "@/lib/peel/ReferencePeelSound";
 import { PEEL_SOUND_RESPONSES, peelSoundLoad, type PeelSoundResponse } from "@/lib/peel/PeelSoundResponse";
-import { APPEARANCE_OPTIONS, FIRST_REFRACTIVE_FINISH, LEGACY_RIDGE_FINISH, type PeelAppearance } from "@/lib/render/PeelAppearance";
+import { APPEARANCE_OPTIONS, BACKGROUNDS, FIRST_REFRACTIVE_FINISH, LEGACY_RIDGE_FINISH, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, type CameraSettings } from "@/lib/render/PeelFraming";
 import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX, ZOOM_STEPS,
@@ -234,6 +234,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     profile, appearance, peelSound, peelVolume, soundResponse, tearThreshold, releaseJumpThreshold,
     liftedTransparency, tearFactors, tearWarning, zoom, edgeClick, releaseDynamics, camera: cameraSettings,
   } = settings;
+  const lightBackground = "light" in BACKGROUNDS[appearance.background];
   const zoomIndex = ZOOM_STEPS.indexOf(zoom);
   const [menu, setMenu] = useState<"physics" | "visuals" | "camera-sound" | null>(null);
   const soundDescription = REFERENCE_PEEL_SOUNDS.find(({ id }) => id === peelSound)?.description;
@@ -483,8 +484,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             canCommit: beforeRelease.canCommit,
             solverMs,
           });
-          renderer.endDrag();
           if (lift) renderer.settleLift(lift.liftedCells, lift.totalCells);
+          renderer.endDrag();
           refresh(true);
           if (!accepted && !hadGrab) {
             setMiss(true);
@@ -736,7 +737,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
   };
 
   return (
-    <main className={`prototype-shell${miss ? " miss" : ""}${bottomPanelOpen ? "" : " mobile-panel-collapsed"}`}>
+    <main className={`prototype-shell${lightBackground ? " light-background" : ""}${miss ? " miss" : ""}${bottomPanelOpen ? "" : " mobile-panel-collapsed"}`}>
       <header className="prototype-header">
         <div className="header-settings" role="group" aria-label="Level settings">
           <button type="button" aria-haspopup="dialog" onClick={() => setMenu("visuals")}>Visuals</button>

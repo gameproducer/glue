@@ -33,6 +33,9 @@ export const BACKGROUNDS = [
   { name: "Glacier blue", color: "#538ec3" },
   { name: "Slate gray", color: "#717783" },
   { name: "Pearl white", color: "#e3e6ed" },
+  { name: "Black", color: "#000000", plain: true },
+  { name: "White", color: "#ffffff", plain: true, light: true },
+  { name: "Warm white", color: "#f4efe6", plain: true, light: true },
 ] as const;
 
 export const STICKER_COLORS = [
@@ -47,6 +50,7 @@ export const STICKER_COLORS = [
   { name: "Acid lime", color: "#c7f65a" },
   { name: "Ultraviolet", color: "#8767ff" },
   { name: "Smoky quartz", color: "#d2aea5" },
+  { name: "Black", color: "#000000" },
 ] as const;
 
 export const APPEARANCE_OPTIONS = {

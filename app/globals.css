@@ -92,6 +92,18 @@ button { font: inherit; }
   text-shadow: 0 1px 5px #17141b;
 }
 
+.light-background { --panel: rgba(12, 10, 18, .88); }
+
+.light-background :is(.readouts, .signal-chart, .zoom-controls output) {
+  color: rgba(255, 255, 255, .84);
+  background: var(--panel);
+}
+
+.light-background :is(.readouts, .zoom-controls output) {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
 .stage {
   position: relative;
   min-height: 0;
