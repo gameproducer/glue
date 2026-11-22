@@ -1049,7 +1049,7 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
                 <input type="range" aria-label="Lift transparency" min="5" max="90" step="1"
                   value={Math.round(liftedTransparency * 100)}
                   onChange={event => changeLiftedTransparency(Number(event.currentTarget.value) / 100)} />
-                <small>Clearer film shows more of the scene through the lens.</small>
+                <small>Higher values show more of the scene through the underside.</small>
               </label>
               {appearanceControl("optics", "Optical effect")}
               {appearance.optics !== 0 && appearanceControl("filmFilter", "Optical color filter")}

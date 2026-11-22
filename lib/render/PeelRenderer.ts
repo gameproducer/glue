@@ -282,14 +282,14 @@ const fragmentShader = /* glsl */ `
     return texture2D(uScene, clamp(ray, border, 1.0 - border)).rgb;
   }
 
-  vec3 sculptedTransmission(vec3 normal, vec3 light, vec4 coating, vec2 sheet) {
+  vec3 sculptedTransmission(vec3 normal, vec3 light, vec4 coating, vec2 sheet, vec2 screen, vec3 tint) {
     vec3 profile = normalize(coating.rgb * 2.0 - 1.0);
     vec3 curved = normalize(normal + vec3(profile.xy * 0.43, 0.0));
     float rim = 1.0 - abs(curved.z);
     float edge = 1.0 - smoothstep(0.24, 0.64, coating.a);
     float glint = pow(max(dot(reflect(-light, curved), vec3(0.0, 0.0, 1.0)), 0.0), 31.0);
     vec2 aspect = vec2(uViewport.y / uViewport.x, 1.0);
-    vec2 ray = gl_FragCoord.xy / uViewport - curved.xy * 0.036 * aspect;
+    vec2 ray = screen - curved.xy * 0.036 * aspect;
 
     if (uFaceFinish == ${BIREFRINGENT_CRYSTAL_FINISH}.0) {
       vec2 axis = normalize(vec2(0.89, 0.42) + curved.xy * 0.46);
@@ -301,7 +301,7 @@ const fragmentShader = /* glsl */ `
       float cleavage = 1.0 - smoothstep(0.020, 0.095 + fwidth(plane) * 3.0, planes);
       vec3 split = mix(ordinary * vec3(0.70, 0.96, 1.04), extraordinary * vec3(1.06, 0.78, 1.04), 0.52);
       vec3 flash = mix(vec3(0.40, 0.82, 1.0), vec3(0.94, 0.64, 1.0), smoothstep(-0.35, 0.4, curved.x + plane));
-      return split * 0.90 + flash * (0.045 + edge * 0.29 + cleavage * (0.13 + rim * 0.40) + glint * 0.25);
+      return split * tint * 0.90 + flash * (0.045 + edge * 0.29 + cleavage * (0.13 + rim * 0.40) + glint * 0.25);
     }
 
     if (uFaceFinish == ${AEROGEL_FINISH}.0) {
@@ -314,7 +314,7 @@ const fragmentShader = /* glsl */ `
       float dust = (grain(floor(vUv * 360.0)) - 0.5) * 0.025;
       float scattering = clamp(0.24 + mist * 0.29 + edge * 0.27 + rim * 0.18, 0.0, 0.88);
       vec3 blue = mix(vec3(0.15, 0.34, 0.59), vec3(0.45, 0.76, 0.97), mist * 0.72 + edge * 0.25);
-      return mix(soft * vec3(1.08, 0.95, 0.78), blue, scattering) + vec3(0.58, 0.77, 1.0) * (glint * 0.11 + edge * 0.14 + dust);
+      return mix(soft * tint * vec3(1.08, 0.95, 0.78), blue, scattering) + vec3(0.58, 0.77, 1.0) * (glint * 0.11 + edge * 0.14 + dust);
     }
 
     // A warped backdrop and offset spectral arcs suggest a tiny gravitational lens.
@@ -332,20 +332,18 @@ const fragmentShader = /* glsl */ `
     float arc = exp(-band * band) * (0.45 + 0.55 * pow(0.5 + 0.5 * sin(angle * 1.4 + 0.9), 2.0));
     vec3 spectrumArc = mix(vec3(0.36, 0.14, 1.0), vec3(0.21, 0.88, 1.0), 0.5 + 0.5 * cos(angle + 0.6));
     float core = mix(0.38, 0.99, smoothstep(0.045, 0.25, distanceToCenter));
-    return lensed * core + spectrumArc * (0.043 + arc * 0.70 + exp(-echo * echo) * 0.14 + edge * 0.18 + glint * 0.12);
+    return lensed * tint * core + spectrumArc * (0.043 + arc * 0.70 + exp(-echo * echo) * 0.14 + edge * 0.18 + glint * 0.12);
   }
 
-  vec3 translucentCoating(vec3 normal, vec3 light, bool caramel) {
+  vec3 translucentCoating(vec3 normal, vec3 light, bool caramel, vec2 screen, vec3 tint) {
     vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
     vec4 coating = texture2D(uPuff, vUv);
-    if (uFaceFinish >= ${BIREFRINGENT_CRYSTAL_FINISH}.0) return sculptedTransmission(normal, light, coating, sheet);
+    if (uFaceFinish >= ${BIREFRINGENT_CRYSTAL_FINISH}.0) return sculptedTransmission(normal, light, coating, sheet, screen, tint);
     vec3 profile = normalize(coating.rgb * 2.0 - 1.0);
     float bevel = caramel ? 0.80 : 0.16;
     vec3 curved = normalize(normal + vec3(profile.xy * bevel, 0.0));
-    vec2 screen = gl_FragCoord.xy / uViewport;
-    vec2 pixel = 0.5 / uViewport;
     vec2 shift = curved.xy * (caramel ? 0.062 : 0.018) * vec2(uViewport.y / uViewport.x, 1.0);
-    vec3 background = texture2D(uScene, clamp(screen - shift, pixel, 1.0 - pixel)).rgb;
+    vec3 background = sampleBackdrop(screen - shift) * tint;
     float grazing = 1.0 - abs(curved.z);
     float edge = caramel ? 1.0 - profile.z : 1.0 - smoothstep(0.27, 0.60, coating.a);
     vec3 reflection = reflect(vec3(0.0, 0.0, -1.0), curved);
@@ -477,16 +475,15 @@ const fragmentShader = /* glsl */ `
       float speckle = grain(floor(vUv * 430.0));
       filmColor = vec3(0.57, 0.72, 0.83) + vec3(speckle * 0.17 + grazing * 0.12);
     }
-    vec3 color = filmColor;
-    float alpha = silhouette * uLiftedOpacity;
-    if (uFilmOptics > 0.5 && !translucent) {
-      vec2 screen = gl_FragCoord.xy / uViewport;
+    vec2 screen = gl_FragCoord.xy / uViewport;
+    vec2 warped = screen;
+    vec2 dispersion = vec2(0.0);
+    bool filmLens = uFilmOptics > 0.5;
+    if (filmLens) {
       vec2 aspect = vec2(uViewport.x / uViewport.y, 1.0);
       vec2 delta = (screen - vLensCenter) * aspect;
       float radius = vLensRadius * aspect.x;
       float falloff = exp(-dot(delta, delta) / (radius * radius));
-      vec2 warped = screen;
-      vec2 dispersion = vec2(0.0);
       if (uFilmOptics > 3.5) {
         vec2 facet = fract(vUv * vec2(18.0, 16.0)) - 0.5;
         warped += facet * vec2(0.028, 0.018) + normal.xy * 0.025;
@@ -504,18 +501,21 @@ const fragmentShader = /* glsl */ `
         warped = vLensCenter + delta / (aspect * (1.0 + falloff * 1.25));
         warped += normal.xy * 0.018;
       }
-      // Clamp each dispersed ray separately at the drawing-buffer boundary.
-      vec2 edge = 0.5 / uViewport;
-      vec3 refracted = vec3(
-        texture2D(uScene, clamp(warped + dispersion, edge, 1.0 - edge)).r,
-        texture2D(uScene, clamp(warped, edge, 1.0 - edge)).g,
-        texture2D(uScene, clamp(warped - dispersion, edge, 1.0 - edge)).b
-      );
-      color = mix(refracted * uOpticsTint, filmColor, uLiftedOpacity) + specular * 0.08;
-      alpha = silhouette;
     }
     if (translucent) {
-      color = translucentCoating(normal, lightDirection, caramel);
+      // Keep the sticker's own transmission beneath the selected back finish.
+      vec3 base = translucentCoating(normal, lightDirection, caramel, warped, filmLens ? uOpticsTint : vec3(1.0));
+      filmColor = uBackFinish > 0.5 ? mix(base, filmColor, 0.78) : base;
+    }
+    vec3 color = filmColor;
+    float alpha = silhouette * uLiftedOpacity;
+    if (filmLens) {
+      vec3 refracted = vec3(
+        sampleBackdrop(warped + dispersion).r,
+        sampleBackdrop(warped).g,
+        sampleBackdrop(warped - dispersion).b
+      );
+      color = mix(refracted * uOpticsTint, filmColor, uLiftedOpacity) + specular * 0.08;
       alpha = silhouette;
     }
     #else
@@ -523,7 +523,7 @@ const fragmentShader = /* glsl */ `
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     if (translucent) {
-      printedColor = translucentCoating(normal, lightDirection, caramel);
+      printedColor = translucentCoating(normal, lightDirection, caramel, gl_FragCoord.xy / uViewport, vec3(1.0));
     } else if (uFaceFinish == ${SECURITY_HOLOGRAM_FINISH}.0) {
       vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
       float angle = dot(normal.xy, vec2(3.7, -2.15));
