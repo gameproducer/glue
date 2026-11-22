@@ -83,9 +83,9 @@ export const APPEARANCE_OPTIONS = {
   shadow: ["Automatic", "Off", "On"],
   keepCrease: ["Off", "On"],
 } as const;
-export type PeelAppearance = Record<keyof typeof APPEARANCE_OPTIONS, number>;
+export type PeelAppearance = Record<keyof typeof APPEARANCE_OPTIONS, number> & { colorIntensity: number };
 export const DEFAULT_APPEARANCE: PeelAppearance = {
-  face: 3, sticker: 0, back: 0, optics: 0, filmFilter: 0, released: 1,
+  face: 3, sticker: 0, colorIntensity: 65, back: 0, optics: 0, filmFilter: 0, released: 1,
   ridge: 0, gripCurl: 1, background: 11, space: SPACE.original, surfaceTexture: SURFACE_TEXTURE.original,
   shadow: 0, keepCrease: 0,
 };
@@ -99,10 +99,13 @@ export const APPEARANCE_STORAGE_KEY = "peel.appearance";
 export function normalizeAppearance(saved: unknown, defaults = DEFAULT_APPEARANCE): PeelAppearance {
   const appearance = { ...defaults };
   if (typeof saved !== "object" || saved === null) return appearance;
-  const { glassDepth } = saved as { glassDepth?: unknown };
+  const { glassDepth, colorIntensity } = saved as { glassDepth?: unknown; colorIntensity?: unknown };
   if (glassDepth === 1) appearance.space = SPACE.glass;
   else if (glassDepth === 0) appearance.space = SPACE.original;
-  for (const key of Object.keys(APPEARANCE_OPTIONS) as (keyof PeelAppearance)[]) {
+  if (typeof colorIntensity === "number" && Number.isInteger(colorIntensity) && colorIntensity >= 0 && colorIntensity <= 100) {
+    appearance.colorIntensity = colorIntensity;
+  }
+  for (const key of Object.keys(APPEARANCE_OPTIONS) as (keyof typeof APPEARANCE_OPTIONS)[]) {
     const value = (saved as Partial<PeelAppearance>)[key];
     if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < APPEARANCE_OPTIONS[key].length) {
       appearance[key] = value;

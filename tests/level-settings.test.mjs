@@ -39,7 +39,7 @@ test("whole settings round-trip by level and keep intentional zero values", () =
     const first = {
       profile: "cone", tearThreshold: 0, releaseJumpThreshold: 0.46, tearWarning: false,
       tearFactors: { outward: 0, bottleneck: 0.82 }, liftedTransparency: 0.88,
-      appearance: { face: 23, sticker: 3, back: 7, optics: 4, filmFilter: 2, released: 5, ridge: 1, gripCurl: 1,
+      appearance: { face: 23, sticker: 3, colorIntensity: 0, back: 7, optics: 4, filmFilter: 2, released: 5, ridge: 1, gripCurl: 1,
         background: 7, space: SPACE.lightbox, surfaceTexture: SURFACE_TEXTURE.paper, shadow: 2, keepCrease: 1 },
       camera: { pan: false, edgeClearance: 76 }, zoom: 115,
       peelSound: "silk", peelVolume: 0, soundResponse: "peel", edgeClick: false, releaseDynamics: true,
@@ -70,6 +70,7 @@ test("legacy glass depth migrates to Space and automatic shadow follows the spac
     const existing = readLevelSettings("bread").appearance;
     assert.equal(existing.face, 0);
     assert.equal(existing.background, 0);
+    assert.equal(existing.colorIntensity, 65);
     assert.equal(existing.space, SPACE.glass);
     assert.equal(shadowVisible(existing), true);
     assert.equal(shadowVisible({ ...existing, shadow: 1 }), false);

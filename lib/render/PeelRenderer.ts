@@ -82,6 +82,7 @@ type PeelUniforms = {
   uSpace: { value: number };
   uWhiteArtwork: { value: number };
   uStickerColor: { value: THREE.Color };
+  uColorIntensity: { value: number };
   uFaceFinish: { value: number };
   uBackFinish: { value: number };
   uReleaseFinish: { value: number };
@@ -113,7 +114,6 @@ type PeelUniforms = {
   uTearStrain: { value: THREE.Vector3 };
   uSavedCreases: { value: THREE.DataTexture };
   uKeepCrease: { value: number };
-  uCaramelTint: { value: THREE.Color };
 };
 
 const vertexShader = /* glsl */ `
@@ -222,6 +222,7 @@ const fragmentShader = /* glsl */ `
   uniform float uSpace;
   uniform float uWhiteArtwork;
   uniform vec3 uStickerColor;
+  uniform float uColorIntensity;
   uniform float uFaceFinish;
   uniform float uBackFinish;
   uniform float uReleaseFinish;
@@ -246,7 +247,6 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uTearStrain;
   uniform sampler2D uSavedCreases;
   uniform float uKeepCrease;
-  uniform vec3 uCaramelTint;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
@@ -280,6 +280,24 @@ const fragmentShader = /* glsl */ `
   vec3 sampleBackdrop(vec2 ray) {
     vec2 border = 0.5 / uViewport;
     return texture2D(uScene, clamp(ray, border, 1.0 - border)).rgb;
+  }
+
+  vec3 shadeTranslucency(vec3 color, float diffuse) {
+    const vec3 luminance = vec3(0.2126, 0.7152, 0.0722);
+    float surfaceLight = dot(sampleBackdrop(gl_FragCoord.xy / uViewport), luminance);
+    float materialLight = dot(clamp(color, 0.0, 1.0), luminance);
+    float glint = max(0.0, materialLight - surfaceLight);
+    vec3 pigment = sqrt(clamp(uStickerColor, 0.0, 1.0));
+    vec3 body = pigment * (0.73 + 0.22 * diffuse) + vec3(0.015 + glint * 0.12);
+    color = mix(color, body, uColorIntensity * 0.85);
+
+    // A softly lit inner rim defines the silhouette against the actual surface.
+    // Dark pigments stay dark in the body even when their edge needs light.
+    float edge = 1.0 - smoothstep(0.16, 0.56, texture2D(uPuff, vUv).a);
+    float lowContrast = 1.0 - smoothstep(0.05, 0.24, abs(dot(clamp(color, 0.0, 1.0), luminance) - surfaceLight));
+    vec3 rim = mix(vec3(0.79, 0.89, 1.0), vec3(0.065, 0.074, 0.091), smoothstep(0.36, 0.67, surfaceLight));
+    float separation = lowContrast * mix(0.17, 0.05, uColorIntensity) + edge * (0.14 + 0.31 * lowContrast);
+    return mix(color, rim, separation);
   }
 
   vec3 sculptedTransmission(vec3 normal, vec3 light, vec4 coating, vec2 sheet, vec2 screen, vec3 tint) {
@@ -351,8 +369,9 @@ const fragmentShader = /* glsl */ `
     float highlight = exp(-panel * panel) * (0.16 + grazing * 0.56 + edge * 0.5);
     float shine = pow(max(dot(reflect(-light, curved), vec3(0.0, 0.0, 1.0)), 0.0), caramel ? 21.0 : 48.0);
     if (caramel) {
-      vec3 candy = sqrt(uCaramelTint) * (0.36 + max(dot(curved, light), 0.0) * 0.48);
-      vec3 absorption = mix(vec3(0.42), clamp(uCaramelTint, 0.0, 1.0), 0.68);
+      const vec3 caramelColor = vec3(0.81485, 0.32778, 0.08022);
+      vec3 candy = sqrt(caramelColor) * (0.36 + max(dot(curved, light), 0.0) * 0.48);
+      vec3 absorption = mix(vec3(0.42), caramelColor, 0.68);
       vec3 body = background * mix(vec3(1.0), absorption, 0.66 + edge * 0.24);
       return mix(body, candy, 0.41 + edge * 0.25) + vec3(1.0, 0.91, 0.75) * (highlight * 0.7 + shine * 0.38);
     }
@@ -438,6 +457,7 @@ const fragmentShader = /* glsl */ `
     bool caramel = uFaceFinish == ${CARAMEL_FINISH}.0;
     bool translucent = uFaceFinish == ${CLEAR_TAPE_FINISH}.0
       || (uFaceFinish >= ${CARAMEL_FINISH}.0 && uFaceFinish <= ${EVENT_HORIZON_FINISH}.0);
+    bool refractive = uFaceFinish >= ${FIRST_REFRACTIVE_FINISH}.0 && uFaceFinish < ${CLEAR_TAPE_FINISH}.0;
     #ifdef PEEL_BACK_FACE
     vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
     filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
@@ -505,6 +525,7 @@ const fragmentShader = /* glsl */ `
     if (translucent) {
       // Keep the sticker's own transmission beneath the selected back finish.
       vec3 base = translucentCoating(normal, lightDirection, caramel, warped, filmLens ? uOpticsTint : vec3(1.0));
+      base = shadeTranslucency(base, diffuse);
       filmColor = uBackFinish > 0.5 ? mix(base, filmColor, 0.78) : base;
     }
     vec3 color = filmColor;
@@ -519,7 +540,7 @@ const fragmentShader = /* glsl */ `
       alpha = silhouette;
     }
     #else
-    vec3 artworkColor = mix(texture2D(uArt, vUv).rgb, uStickerColor, uWhiteArtwork);
+    vec3 artworkColor = mix(texture2D(uArt, vUv).rgb, refractive ? vec3(1.0) : uStickerColor, uWhiteArtwork);
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
     if (translucent) {
@@ -725,7 +746,7 @@ const fragmentShader = /* glsl */ `
       float satin = exp(-band * band);
       printedColor = printedColor * 0.85 + artworkColor * satin * 0.26;
     }
-    vec3 color = printedColor;
+    vec3 color = translucent || refractive ? shadeTranslucency(printedColor, diffuse) : printedColor;
     float alpha = silhouette;
 
     // The flat released layer already gets its coverage from state.g. Applying
@@ -780,7 +801,6 @@ const fragmentShader = /* glsl */ `
       #ifdef PEEL_BACK_FACE
         transmission *= mix(0.56, 0.12, uLiftedOpacity);
       #else
-        bool refractive = uFaceFinish >= ${FIRST_REFRACTIVE_FINISH}.0 && uFaceFinish < ${CLEAR_TAPE_FINISH}.0;
         transmission *= translucent || refractive ? 0.36 : 0.16 * (1.0 - silhouette);
       #endif
       color = mix(color, color * 0.65 + vec3(0.55, 0.72, 0.81), transmission);
@@ -1045,6 +1065,7 @@ export class PeelRenderer {
         uSpace: { value: SPACE.original },
         uWhiteArtwork: { value: whiteArtwork ? 1 : 0 },
         uStickerColor: { value: new THREE.Color(0xffffff) },
+        uColorIntensity: { value: 0 },
         uFaceFinish: { value: 0 },
         uBackFinish: { value: 0 },
         uReleaseFinish: { value: 0 },
@@ -1076,7 +1097,6 @@ export class PeelRenderer {
         uTearStrain: { value: this.tearStrain },
         uSavedCreases: { value: this.creaseTexture },
         uKeepCrease: { value: 0 },
-        uCaramelTint: { value: new THREE.Color("#e99b50") },
       };
       const material = new THREE.ShaderMaterial({
         uniforms,
@@ -1502,12 +1522,13 @@ export class PeelRenderer {
     this.shadow.visible = originalSpace && this.castShadow;
 
     const sticker = STICKER_COLORS[appearance.sticker].color;
+    const refractive = usesFrontRefraction(appearance.face);
     const moving = [...this.dissolves.map(shape => shape.mesh), ...(this.settling?.meshes ?? [])];
     for (const material of [...this.materials, ...moving.map(mesh => mesh.material)]) {
       const uniforms = material.uniforms as unknown as PeelUniforms;
-      uniforms.uWhiteArtwork.value = sticker || this.originalWhiteArtwork ? 1 : 0;
+      uniforms.uWhiteArtwork.value = this.originalWhiteArtwork || (sticker !== null && !refractive) ? 1 : 0;
       uniforms.uStickerColor.value.set(sticker ?? "#ffffff");
-      uniforms.uCaramelTint.value.set(sticker ?? "#e99b50");
+      uniforms.uColorIntensity.value = sticker === null ? 0 : appearance.colorIntensity / 100;
       uniforms.uKeepCrease.value = this.keepCrease ? 1 : 0;
       uniforms.uSpace.value = appearance.space;
       uniforms.uFaceFinish.value = appearance.face;

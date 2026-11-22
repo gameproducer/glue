@@ -871,7 +871,7 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
             : snapshot.canCommit ? "Let go to keep this peel, or keep sweeping." : "Keep sweeping the peel front."
           : snapshot.progress > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
-  const appearanceControl = (key: keyof PeelAppearance, label: string, hint?: string) => {
+  const appearanceControl = (key: keyof typeof APPEARANCE_OPTIONS, label: string, hint?: string) => {
     const options = APPEARANCE_OPTIONS[key];
     const option = (name: string, index: number) => <option key={name} value={index}>{name}</option>;
     return (
@@ -1039,6 +1039,14 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
               <h3>Sticker front</h3>
               {appearanceControl("face", "Front finish")}
               {appearanceControl("sticker", "Sticker color")}
+              {usesFrontRefraction(appearance.face) && appearance.sticker !== 0 && (
+                <label className="setting-control">
+                  <div><span>Color intensity</span><output>{appearance.colorIntensity}%</output></div>
+                  <input type="range" aria-label="Color intensity" min="0" max="100" step="1" value={appearance.colorIntensity}
+                    onChange={event => changeAppearance("colorIntensity", event.currentTarget.valueAsNumber)} />
+                  <small>0% uses the finish’s own color.</small>
+                </label>
+              )}
               {appearanceControl("keepCrease", "Keep tension creases", "Keeps crease marks on each piece until it comes free.")}
             </section>
             <section className="settings-group" aria-label="Lifted film">
