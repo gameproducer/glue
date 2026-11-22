@@ -136,13 +136,47 @@ button { font: inherit; }
   pointer-events: none;
 }
 
-.tear-warning-overlay:not([data-action]) .tear-warning-gesture,
-.tear-warning-overlay:not([data-action="release"]) .tear-warning-hand,
-.tear-warning-overlay:not([data-action="redirect"]) .tear-warning-arrow { display: none; }
+.tear-warning-gesture {
+  position: absolute;
+  top: 0;
+  left: 0;
+  translate: -50% -50%;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid #fff;
+  border-radius: 50%;
+  background: #111;
+  box-shadow: 0 0 0 2px #111;
+}
+
+.tear-warning-emoji {
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 23px;
+  line-height: 1;
+}
+
+.tear-warning-overlay[data-action="release"] .tear-warning-gesture { border-color: #f4c755; }
+.tear-warning-overlay:not([data-action="release"]) .tear-warning-emoji,
+.tear-warning-overlay:not([data-action="redirect"]) .tear-warning-redirect { display: none; }
+
+.tear-warning-hint {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  translate: -50% 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #111;
+  color: #fff;
+  font: 600 0.875rem/1.2 var(--font-geist-sans), Arial, sans-serif;
+  white-space: nowrap;
+}
 
 @media (prefers-reduced-motion: no-preference) {
-  .tear-warning-overlay[data-action="release"] .tear-warning-hand { animation: tear-warning-lift 180ms ease-out; }
-  @keyframes tear-warning-lift { from { translate: 0 3px; } to { translate: 0 0; } }
+  .tear-warning-overlay[data-action="release"] .tear-warning-emoji { animation: tear-warning-pulse 220ms ease-out; }
+  @keyframes tear-warning-pulse { 50% { scale: 1.16; } }
 }
 
 .surface-glow {
