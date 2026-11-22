@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import {
-  BACKGROUNDS, CARAMEL_FINISH, CLEAR_TAPE_FINISH, FILM_FILTERS, PUFFY_FINISH, SECURITY_HOLOGRAM_FINISH,
-  shadowVisible, STICKER_COLORS, usesFrontRefraction, usesTranslucentCoating, type PeelAppearance,
+  BACKGROUNDS, CARAMEL_FINISH, CLEAR_TAPE_FINISH, FILM_FILTERS, FIRST_REFRACTIVE_FINISH, PUFFY_FINISH,
+  SECURITY_HOLOGRAM_FINISH, shadowVisible, SPACE, STICKER_COLORS, usesFrontRefraction, usesTranslucentCoating,
+  type PeelAppearance,
 } from "./PeelAppearance";
 import {
   curlBounds, DEFAULT_CAMERA_SETTINGS, dragScaleForReach, fitFrustum, MAX_TENSION_STRETCH,
@@ -11,7 +12,8 @@ import {
 import { AttachedCurl } from "./AttachedCurl";
 import { nearestStateSources, extendStateTexture, writeCurlDistances } from "./StateTexture";
 import { FrameTimings } from "./FrameTimings";
-import { GlassDepthScene } from "./GlassDepthScene";
+import { PeelEnvironment } from "./PeelEnvironment";
+import { addSurfaceTexture } from "./SurfaceTexture";
 import { puffyNormals } from "./PuffyFinish";
 import { FilmOptics } from "./FilmOptics";
 import { CREASE_START_RISK, GESTURE_START_RISK, TearWarningOverlay } from "./TearWarningOverlay";
@@ -72,6 +74,7 @@ type PeelUniforms = {
   uFilmOptics: { value: number };
   uOpticsTint: { value: THREE.Color };
   uMaterialTime: { value: number };
+  uSpace: { value: number };
   uWhiteArtwork: { value: number };
   uStickerColor: { value: THREE.Color };
   uFaceFinish: { value: number };
@@ -129,6 +132,7 @@ const vertexShader = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
+  varying float vLift;
   varying vec2 vLensCenter;
   varying float vLensRadius;
 
@@ -183,6 +187,7 @@ const vertexShader = /* glsl */ `
       vCurl *= 1.0 - uRelax;
     #endif
     vNormalWorld = vec3(direction * sin(theta), cos(theta));
+    vLift = p.z;
     vec3 lens = vec3(uGrab + direction * uFrontDepth, 0.02 + uRadius);
     if (uLayer > 2.5) lens.xy += uTornOffset;
     #ifdef PEEL_SETTLING
@@ -208,6 +213,7 @@ const fragmentShader = /* glsl */ `
   uniform float uFilmOptics;
   uniform vec3 uOpticsTint;
   uniform float uMaterialTime;
+  uniform float uSpace;
   uniform float uWhiteArtwork;
   uniform vec3 uStickerColor;
   uniform float uFaceFinish;
@@ -237,6 +243,7 @@ const fragmentShader = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
+  varying float vLift;
   varying vec2 vLensCenter;
   varying float vLensRadius;
 
@@ -284,6 +291,10 @@ const fragmentShader = /* glsl */ `
       vec3 absorption = mix(vec3(0.42), clamp(uCaramelTint, 0.0, 1.0), 0.68);
       vec3 body = background * mix(vec3(1.0), absorption, 0.66 + edge * 0.24);
       return mix(body, candy, 0.41 + edge * 0.25) + vec3(1.0, 0.91, 0.75) * (highlight * 0.7 + shine * 0.38);
+    }
+    if (uSpace == ${SPACE.lightbox}.0) {
+      float sheen = clamp(0.025 + edge * 0.58 + grazing * 0.36 + highlight * 0.54 + shine * 0.16, 0.0, 0.88);
+      return mix(background * vec3(0.87, 0.91, 0.94), vec3(0.98, 0.99, 1.0), sheen);
     }
     return background * 0.98 + vec3(0.89, 0.95, 1.0) * (0.013 + edge * 0.46 + grazing * 0.22 + highlight + shine * 0.22);
   }
@@ -355,7 +366,8 @@ const fragmentShader = /* glsl */ `
       vec3 tangent = vec3(uDirection * normal.z, -dot(normal.xy, uDirection));
       normal = normalize(normal + tangent * (strainLight.x - strainLight.y) * 0.24);
     }
-    vec3 lightDirection = normalize(vec3(-0.38, 0.55, 0.74));
+    bool darkroom = uSpace == ${SPACE.darkroom}.0;
+    vec3 lightDirection = darkroom ? normalize(vec3(-0.75, 0.60, 0.36)) : normalize(vec3(-0.38, 0.55, 0.74));
     float diffuse = max(dot(normal, lightDirection), 0.0);
     float grazing = pow(1.0 - abs(normal.z), 2.0);
     float specular = pow(max(dot(reflect(-lightDirection, normal), vec3(0.0, 0.0, 1.0)), 0.0), 26.0);
@@ -689,6 +701,23 @@ const fragmentShader = /* glsl */ `
       alpha = mix(alpha, releaseAlpha, released);
     }
     #endif
+    if (darkroom) {
+      float lift = smoothstep(0.025, 0.25, vLift);
+      float rim = lift * pow(1.0 - abs(normal.z), 2.6);
+      float key = max(dot(normal.xy, normalize(lightDirection.xy)), 0.0);
+      color = color * (0.58 + 0.34 * diffuse + 0.16 * lift)
+        + vec3(1.0, 0.82, 0.63) * rim * (0.12 + 0.65 * key)
+        + vec3(0.35, 0.57, 0.88) * rim * 0.15;
+    } else if (uSpace == ${SPACE.lightbox}.0) {
+      float transmission = smoothstep(0.025, 0.24, vLift) * (0.23 + 0.77 * grazing);
+      #ifdef PEEL_BACK_FACE
+        transmission *= mix(0.56, 0.12, uLiftedOpacity);
+      #else
+        bool refractive = uFaceFinish >= ${FIRST_REFRACTIVE_FINISH}.0 && uFaceFinish < ${CLEAR_TAPE_FINISH}.0;
+        transmission *= translucent || refractive ? 0.36 : 0.16 * (1.0 - silhouette);
+      #endif
+      color = mix(color, color * 0.65 + vec3(0.55, 0.72, 0.81), transmission);
+    }
     if (uKeepCrease > 0.5) {
       strainLight = max(strainLight, texture2D(uSavedCreases, vUv).rg * 0.92);
     }
@@ -816,7 +845,8 @@ export class PeelRenderer {
   private readonly surfaceMaterial: THREE.MeshStandardMaterial;
   private readonly plainSurfaceMaterial = new THREE.MeshBasicMaterial({ toneMapped: false });
   private readonly surface: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial | THREE.MeshBasicMaterial>;
-  private glassDepth: GlassDepthScene | null = null;
+  private readonly surfaceTexture = { value: 0 };
+  private environment: PeelEnvironment | null = null;
   private castShadow = false;
   private zoom: number;
   private cameraSettings: CameraSettings;
@@ -878,6 +908,8 @@ export class PeelRenderer {
     this.warningOverlay = new TearWarningOverlay(host);
 
     this.surfaceMaterial = new THREE.MeshStandardMaterial({ map: makeSurfaceTexture(), roughness: 0.88, metalness: 0.04 });
+    addSurfaceTexture(this.surfaceMaterial, this.surfaceTexture);
+    addSurfaceTexture(this.plainSurfaceMaterial, this.surfaceTexture);
     this.surface = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), this.surfaceMaterial);
     this.surface.position.z = -0.095;
     this.scene.add(this.surface);
@@ -935,6 +967,7 @@ export class PeelRenderer {
         uFilmOptics: { value: 0 },
         uOpticsTint: { value: new THREE.Color(0xffffff) },
         uMaterialTime: { value: 0 },
+        uSpace: { value: SPACE.original },
         uWhiteArtwork: { value: whiteArtwork ? 1 : 0 },
         uStickerColor: { value: new THREE.Color(0xffffff) },
         uFaceFinish: { value: 0 },
@@ -1370,23 +1403,22 @@ export class PeelRenderer {
     const backgroundPreset = BACKGROUNDS[appearance.background];
     const background = backgroundPreset.color;
     const plainBackground = "plain" in backgroundPreset;
+    const originalSpace = appearance.space === SPACE.original;
     this.surface.material = plainBackground ? this.plainSurfaceMaterial : this.surfaceMaterial;
+    this.surfaceTexture.value = appearance.surfaceTexture;
     this.plainSurfaceMaterial.color.set(background);
     this.surfaceMaterial.emissive.set(background);
     this.surfaceMaterial.emissiveIntensity = appearance.background === 0 ? 0 : 0.95;
-    this.scene.background = appearance.background === 0 ? null : new THREE.Color(background).multiplyScalar(plainBackground ? 1 : 0.62);
-    const glassEnabled = appearance.glassDepth === 1;
-    if (glassEnabled && !this.glassDepth) {
-      this.glassDepth = new GlassDepthScene();
-      this.scene.add(this.glassDepth.mesh);
+    this.scene.background = originalSpace && appearance.background !== 0
+      ? new THREE.Color(background).multiplyScalar(plainBackground ? 1 : 0.62) : null;
+    if (!originalSpace && !this.environment) {
+      this.environment = new PeelEnvironment();
+      this.scene.add(this.environment.mesh);
     }
-    if (this.glassDepth) {
-      this.glassDepth.mesh.visible = glassEnabled;
-      this.glassDepth.setBackdrop(background);
-    }
-    this.surface.visible = !glassEnabled;
+    this.environment?.setSpace(appearance.space, background);
+    this.surface.visible = originalSpace;
     this.castShadow = shadowVisible(appearance);
-    this.shadow.visible = !glassEnabled && this.castShadow;
+    this.shadow.visible = originalSpace && this.castShadow;
 
     const sticker = STICKER_COLORS[appearance.sticker].color;
     const moving = [...this.dissolves.map(shape => shape.mesh), ...(this.settling?.meshes ?? [])];
@@ -1396,6 +1428,7 @@ export class PeelRenderer {
       uniforms.uStickerColor.value.set(sticker ?? "#ffffff");
       uniforms.uCaramelTint.value.set(sticker ?? "#e99b50");
       uniforms.uKeepCrease.value = this.keepCrease ? 1 : 0;
+      uniforms.uSpace.value = appearance.space;
       uniforms.uFaceFinish.value = appearance.face;
       if (this.puffTexture) uniforms.uPuff.value = this.puffTexture;
       uniforms.uBackFinish.value = appearance.back;
@@ -1674,7 +1707,7 @@ export class PeelRenderer {
     this.creaseTexture.dispose();
     this.puffTexture?.dispose();
     this.filmOptics?.dispose();
-    this.glassDepth?.dispose();
+    this.environment?.dispose();
     this.surface.geometry.dispose();
     this.surfaceMaterial.map?.dispose();
     this.surfaceMaterial.dispose();
@@ -1877,8 +1910,8 @@ export class PeelRenderer {
     const backs = (this.opticsMode > 0 || usesTranslucentCoating(this.frontFinish))
       && (this.movingRegion !== null || this.dissolves.length > 0 || this.settling !== null);
     const meshes = [...this.stickerMeshes, ...(this.settling?.meshes ?? []), ...this.dissolves.map(shape => shape.mesh)];
-    if (this.glassDepth?.mesh.visible) {
-      this.glassDepth.update(this.renderer, this.camera, meshes.filter(mesh => mesh.material.side !== THREE.BackSide),
+    if (this.environment?.mesh.visible) {
+      this.environment.update(this.renderer, this.camera, meshes.filter(mesh => mesh.material.side !== THREE.BackSide),
         now, this.dragInput !== null, this.castShadow);
     }
     if (fronts || backs) {

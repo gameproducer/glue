@@ -45,6 +45,9 @@ export const BACKGROUNDS = [
   { name: "Dark blue", color: "#101e39" },
 ] as const;
 
+export const SPACE = { original: 0, glass: 1, darkroom: 2, paper: 3, lightbox: 4 } as const;
+export const SURFACE_TEXTURE = { original: 0, grain: 1, paper: 2 } as const;
+
 export const STICKER_COLORS = [
   { name: "Original", color: null },
   { name: "White", color: "#ffffff" },
@@ -70,18 +73,20 @@ export const APPEARANCE_OPTIONS = {
   ridge: ["Off", "On"],
   gripCurl: ["Off", "On"],
   background: BACKGROUNDS.map(({ name }) => name),
-  glassDepth: ["Off", "On"],
+  space: ["Original", "Glass Depth", "Darkroom", "Paper Studio", "Lightbox"],
+  surfaceTexture: ["Original", "Fine grain", "Paper"],
   shadow: ["Automatic", "Off", "On"],
   keepCrease: ["Off", "On"],
 } as const;
 export type PeelAppearance = Record<keyof typeof APPEARANCE_OPTIONS, number>;
 export const DEFAULT_APPEARANCE: PeelAppearance = {
   face: 3, sticker: 0, back: 0, optics: 0, filmFilter: 0, released: 1,
-  ridge: 0, gripCurl: 1, background: 11, glassDepth: 0, shadow: 0, keepCrease: 0,
+  ridge: 0, gripCurl: 1, background: 11, space: SPACE.original, surfaceTexture: SURFACE_TEXTURE.original,
+  shadow: 0, keepCrease: 0,
 };
 
-export function shadowVisible({ shadow, glassDepth }: PeelAppearance) {
-  return shadow === 2 || (shadow === 0 && glassDepth === 1);
+export function shadowVisible({ shadow, space }: PeelAppearance) {
+  return shadow === 2 || (shadow === 0 && (space === SPACE.glass || space === SPACE.paper));
 }
 
 export const APPEARANCE_STORAGE_KEY = "peel.appearance";
@@ -89,6 +94,9 @@ export const APPEARANCE_STORAGE_KEY = "peel.appearance";
 export function normalizeAppearance(saved: unknown, defaults = DEFAULT_APPEARANCE): PeelAppearance {
   const appearance = { ...defaults };
   if (typeof saved !== "object" || saved === null) return appearance;
+  const { glassDepth } = saved as { glassDepth?: unknown };
+  if (glassDepth === 1) appearance.space = SPACE.glass;
+  else if (glassDepth === 0) appearance.space = SPACE.original;
   for (const key of Object.keys(APPEARANCE_OPTIONS) as (keyof PeelAppearance)[]) {
     const value = (saved as Partial<PeelAppearance>)[key];
     if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < APPEARANCE_OPTIONS[key].length) {

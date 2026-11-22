@@ -13,7 +13,7 @@ import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { PEEL_SOUNDS, PeelAudio, type PeelSound } from "@/lib/peel/PeelAudio";
 import { REFERENCE_PEEL_SOUNDS } from "@/lib/peel/ReferencePeelSound";
 import { PEEL_SOUND_RESPONSES, peelSoundLoad, type PeelSoundResponse } from "@/lib/peel/PeelSoundResponse";
-import { APPEARANCE_OPTIONS, BACKGROUNDS, LEGACY_RIDGE_FINISH, shadowVisible, usesFrontRefraction, type PeelAppearance } from "@/lib/render/PeelAppearance";
+import { APPEARANCE_OPTIONS, BACKGROUNDS, LEGACY_RIDGE_FINISH, SPACE, shadowVisible, usesFrontRefraction, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, type CameraSettings } from "@/lib/render/PeelFraming";
 import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX, ZOOM_STEPS,
@@ -261,7 +261,10 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
     profile, appearance, peelSound, peelVolume, soundResponse, tearThreshold, releaseJumpThreshold,
     liftedTransparency, tearFactors, tearWarning, zoom, edgeClick, releaseDynamics, camera: cameraSettings,
   } = settings;
-  const lightBackground = "light" in BACKGROUNDS[appearance.background];
+  const originalSpace = appearance.space === SPACE.original;
+  const usesBackgroundColor = originalSpace || appearance.space === SPACE.glass;
+  const lightBackground = appearance.space === SPACE.paper || appearance.space === SPACE.lightbox
+    || (usesBackgroundColor && "light" in BACKGROUNDS[appearance.background]);
   const zoomIndex = ZOOM_STEPS.indexOf(zoom);
   const [menu, setMenu] = useState<"physics" | "visuals" | "camera-sound" | null>(null);
   const soundDescription = REFERENCE_PEEL_SOUNDS.find(({ id }) => id === peelSound)?.description;
@@ -1059,9 +1062,11 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
             </section>
             <section className="settings-group" aria-label="Surface">
               <h3>Surface</h3>
-              {appearanceControl("background", "Background color")}
-              {appearanceControl("glassDepth", "Glass depth", "The pane uses the selected background color.")}
-              {appearanceControl("shadow", "Shadow", `Automatic follows Glass depth. Shadow is ${shadowVisible(appearance) ? "on" : "off"} now.`)}
+              {appearanceControl("space", "Space")}
+              {usesBackgroundColor && appearanceControl("background", "Background color")}
+              {originalSpace && appearanceControl("surfaceTexture", "Background texture")}
+              {appearanceControl("shadow", "Shadow", appearance.shadow === 0
+                ? `Automatic is ${shadowVisible(appearance) ? "on" : "off"} in this space.` : undefined)}
             </section>
           </SettingsDialog>
         )}

@@ -4,7 +4,7 @@ import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX,
   readLevelSelection, readLevelSettings, saveLevelSelection, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity,
 } from "../lib/peel/LevelSettings.ts";
-import { BACKGROUNDS, FACE_FINISHES, RELEASE_FINISHES, shadowVisible, usesFrontRefraction } from "../lib/render/PeelAppearance.ts";
+import { BACKGROUNDS, FACE_FINISHES, RELEASE_FINISHES, shadowVisible, SPACE, SURFACE_TEXTURE, usesFrontRefraction } from "../lib/render/PeelAppearance.ts";
 import { readTouchCamera, saveTouchCamera } from "../lib/render/TouchCamera.ts";
 
 function withStorage(entries, run) {
@@ -40,7 +40,7 @@ test("whole settings round-trip by level and keep intentional zero values", () =
       profile: "cone", tearThreshold: 0, releaseJumpThreshold: 0.46, tearWarning: false,
       tearFactors: { outward: 0, bottleneck: 0.82 }, liftedTransparency: 0.88,
       appearance: { face: 23, sticker: 3, back: 7, optics: 4, filmFilter: 2, released: 5, ridge: 1, gripCurl: 1,
-        background: 7, glassDepth: 1, shadow: 2, keepCrease: 1 },
+        background: 7, space: SPACE.lightbox, surfaceTexture: SURFACE_TEXTURE.paper, shadow: 2, keepCrease: 1 },
       camera: { pan: false, edgeClearance: 76 }, zoom: 115,
       peelSound: "silk", peelVolume: 0, soundResponse: "peel", edgeClick: false, releaseDynamics: true,
     };
@@ -53,18 +53,24 @@ test("whole settings round-trip by level and keep intentional zero values", () =
   });
 });
 
-test("new appearance defaults preserve saved presets and automatic shadow follows glass depth", () => {
+test("legacy glass depth migrates to Space and automatic shadow follows the space", () => {
   withStorage([["peel.level.bread.settings", '{"appearance":{"face":0,"background":0,"glassDepth":1}}']], () => {
     const fresh = readLevelSettings("fresh").appearance;
     assert.equal(FACE_FINISHES[fresh.face], "Brushed foil");
     assert.equal(RELEASE_FINISHES[fresh.released], "Transparent");
     assert.equal(BACKGROUNDS[fresh.background].name, "Dark blue");
     assert.equal(fresh.gripCurl, 1);
+    assert.equal(fresh.space, SPACE.original);
+    assert.equal(fresh.surfaceTexture, SURFACE_TEXTURE.original);
     assert.equal(shadowVisible(fresh), false);
     assert.equal(shadowVisible({ ...fresh, shadow: 2 }), true);
+    assert.equal(shadowVisible({ ...fresh, space: SPACE.paper }), true);
+    assert.equal(shadowVisible({ ...fresh, space: SPACE.darkroom }), false);
+    assert.equal(shadowVisible({ ...fresh, space: SPACE.lightbox }), false);
     const existing = readLevelSettings("bread").appearance;
     assert.equal(existing.face, 0);
     assert.equal(existing.background, 0);
+    assert.equal(existing.space, SPACE.glass);
     assert.equal(shadowVisible(existing), true);
     assert.equal(shadowVisible({ ...existing, shadow: 1 }), false);
     assert.equal(usesFrontRefraction(FACE_FINISHES.indexOf("Clear tape")), true);
