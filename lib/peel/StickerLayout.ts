@@ -67,5 +67,24 @@ export function stickerLayout(mask: Uint8Array, width: number, height: number) {
     return nearby ? pieces[nearby - 1] : null;
   }
 
-  return { area: pieces.length ? area : { left: 0, right: 1, bottom: 0, top: 1 }, pieces, hit };
+  const pieceAtCell = (cell: number) => pieces[labels[cell] - 1] ?? null;
+
+  function areaInState(piece: StickerPiece, state: Uint8Array, value: number): StickerArea | null {
+    const label = labels[piece.sample];
+    const { left, right, bottom, top } = piece.area;
+    let minX = width, maxX = 0, minY = height, maxY = 0;
+    for (let y = Math.round(bottom * height); y < Math.round(top * height); y++) {
+      for (let x = Math.round(left * width); x < Math.round(right * width); x++) {
+        const cell = y * width + x;
+        if (labels[cell] !== label || state[cell] !== value) continue;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x + 1);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y + 1);
+      }
+    }
+    return maxX > minX ? { left: minX / width, right: maxX / width, bottom: minY / height, top: maxY / height } : null;
+  }
+
+  return { area: pieces.length ? area : { left: 0, right: 1, bottom: 0, top: 1 }, pieces, hit, pieceAtCell, areaInState };
 }

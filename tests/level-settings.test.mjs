@@ -4,6 +4,7 @@ import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX,
   readLevelSettings, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity,
 } from "../lib/peel/LevelSettings.ts";
+import { BACKGROUNDS, FACE_FINISHES, RELEASE_FINISHES, shadowVisible, usesFrontRefraction } from "../lib/render/PeelAppearance.ts";
 
 function withStorage(entries, run) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -37,7 +38,8 @@ test("whole settings round-trip by level and keep intentional zero values", () =
     const first = {
       profile: "cone", tearThreshold: 0, releaseJumpThreshold: 0.46, tearWarning: false,
       tearFactors: { outward: 0, bottleneck: 0.82 }, liftedTransparency: 0.88,
-      appearance: { face: 23, sticker: 3, back: 7, optics: 4, filmFilter: 2, released: 5, ridge: 1, gripCurl: 1, background: 7, glassDepth: 1 },
+      appearance: { face: 23, sticker: 3, back: 7, optics: 4, filmFilter: 2, released: 5, ridge: 1, gripCurl: 1,
+        background: 7, glassDepth: 1, shadow: 2, keepCrease: 1 },
       camera: { pan: false, edgeClearance: 76 }, zoom: 115,
       peelSound: "silk", peelVolume: 0, soundResponse: "peel", edgeClick: false, releaseDynamics: true,
     };
@@ -47,6 +49,26 @@ test("whole settings round-trip by level and keep intentional zero values", () =
     assert.deepEqual(readLevelSettings("bread"), first);
     assert.deepEqual(readLevelSettings("ruler"), second);
     assert.deepEqual(readLevelSettings("unvisited"), DEFAULT_LEVEL_SETTINGS);
+  });
+});
+
+test("new appearance defaults preserve saved presets and automatic shadow follows glass depth", () => {
+  withStorage([["peel.level.bread.settings", '{"appearance":{"face":0,"background":0,"glassDepth":1}}']], () => {
+    const fresh = readLevelSettings("fresh").appearance;
+    assert.equal(FACE_FINISHES[fresh.face], "Brushed foil");
+    assert.equal(RELEASE_FINISHES[fresh.released], "Transparent");
+    assert.equal(BACKGROUNDS[fresh.background].name, "Dark blue");
+    assert.equal(fresh.gripCurl, 1);
+    assert.equal(shadowVisible(fresh), false);
+    assert.equal(shadowVisible({ ...fresh, shadow: 2 }), true);
+    const existing = readLevelSettings("bread").appearance;
+    assert.equal(existing.face, 0);
+    assert.equal(existing.background, 0);
+    assert.equal(shadowVisible(existing), true);
+    assert.equal(shadowVisible({ ...existing, shadow: 1 }), false);
+    assert.equal(usesFrontRefraction(FACE_FINISHES.indexOf("Clear tape")), true);
+    assert.equal(usesFrontRefraction(FACE_FINISHES.indexOf("Security hologram")), false);
+    assert.equal(usesFrontRefraction(FACE_FINISHES.indexOf("Caramel")), true);
   });
 });
 

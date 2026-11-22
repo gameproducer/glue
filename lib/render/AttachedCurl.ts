@@ -1,5 +1,6 @@
 import { DataUtils } from "three";
 import type { Vec2 } from "../peel/PeelSimulation";
+import type { PeelBounds } from "./PeelFraming";
 
 const SEAM_CURL_SCALE = 1.25;
 const MAX_PLANAR_LENGTH_RATIO = 1.16;
@@ -42,6 +43,7 @@ export class AttachedCurl {
   private readonly radii: Float32Array;
   private readonly shifts: Float32Array;
   private readonly cells: Int32Array;
+  private liftedCount = 0;
   private readonly width: number;
   private readonly height: number;
   private readonly stepX: number;
@@ -95,6 +97,7 @@ export class AttachedCurl {
       radii[i] = localRadius;
       shifts[i] = curlShift(q, localRadius);
     }
+    this.liftedCount = count;
 
     // The component across the drag stays fixed. Solve for how much additional
     // travel along the drag each neighboring edge can absorb without stretching.
@@ -144,6 +147,30 @@ export class AttachedCurl {
       if (source < 0 || source === i) continue;
       pixels[i] = pixels[source];
     }
+  }
+
+  projectedBounds(direction: Vec2, stretch: number): PeelBounds | null {
+    const { cells, liftedCount, nominalDepths, pixels, radii, width, height, stepX, stepY } = this;
+    if (!liftedCount) return null;
+    let left = Infinity, right = -Infinity, bottom = Infinity, top = -Infinity, z = 0;
+    for (let n = 0; n < liftedCount; n++) {
+      const cell = cells[n];
+      const depth = Math.max(0, nominalDepths[cell] - DataUtils.fromHalfFloat(pixels[cell]));
+      const radius = radii[cell];
+      const length = depth * (1 + stretch);
+      const angle = Math.min(Math.PI, length / radius);
+      const shift = depth + Math.max(0, length - Math.PI * radius) - radius * Math.sin(angle);
+      const x = (cell % width + 0.5 - width / 2) * stepX + direction.x * shift;
+      const y = (Math.floor(cell / width) + 0.5 - height / 2) * stepY + direction.y * shift;
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+      bottom = Math.min(bottom, y);
+      top = Math.max(top, y);
+      z = Math.max(z, 0.022 + radius * (1 - Math.cos(angle)));
+    }
+    // Leave room for the artwork fringe and interpolation between vertices.
+    return { left: left - stepX * 2.5, right: right + stepX * 2.5,
+      bottom: bottom - stepY * 2.5, top: top + stepY * 2.5, z };
   }
 
   private relax(count: number, stencil: Array<{ dx: number; offset: number; diagonal: boolean; allowance: number }>, step: 1 | -1) {

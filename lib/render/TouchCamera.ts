@@ -7,14 +7,14 @@ export const MAX_MANUAL_ZOOM = 3.25;
 const KEY = "peel.touchCamera";
 
 export const TOUCH_CAMERA_MODES = {
-  focus: { label: "Tap to focus", hint: "Tap a small piece to zoom before you peel. You can also start peeling from the whole view." },
+  focus: { label: "Tap to focus", hint: "Tap or start peeling a small piece to zoom. Tap empty space to zoom out." },
   fit: { label: "Tighter fit", hint: "Fill more of the screen while keeping the whole sticker in view." },
   manual: { label: "Manual zoom", hint: "Pinch or use + and − to zoom. Pan with two fingers between peels." },
 } as const;
 
 export type TouchCameraMode = keyof typeof TOUCH_CAMERA_MODES;
-export type TouchCameraPreference = { mode: TouchCameraMode; miniMap: boolean };
-export const DEFAULT_TOUCH_CAMERA: TouchCameraPreference = { mode: "focus", miniMap: false };
+export type TouchCameraPreference = { mode: TouchCameraMode; miniMap: boolean; followCurl: boolean };
+export const DEFAULT_TOUCH_CAMERA: TouchCameraPreference = { mode: "focus", miniMap: false, followCurl: false };
 export type TouchCameraView = { focused: boolean; canFocus: boolean; zoom: number };
 export const DEFAULT_TOUCH_VIEW: TouchCameraView = { focused: false, canFocus: false, zoom: 1 };
 
@@ -24,6 +24,7 @@ export function readTouchCamera(): TouchCameraPreference {
     return {
       mode: Object.hasOwn(TOUCH_CAMERA_MODES, saved?.mode) ? saved.mode : DEFAULT_TOUCH_CAMERA.mode,
       miniMap: saved?.miniMap === true,
+      followCurl: saved?.followCurl === true,
     };
   } catch { return DEFAULT_TOUCH_CAMERA; }
 }

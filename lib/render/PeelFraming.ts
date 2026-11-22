@@ -132,7 +132,7 @@ function advance(value: number, velocity: number, target: number, seconds: numbe
 
 export function stepCamera(
   current: CameraMotion | null, fit: FrustumFit | null, guard: FrustumFit | null, base: number, seconds: number,
-  pan: boolean, origin: Vec2 = { x: 0, y: 0 },
+  pan: boolean, origin: Vec2 = { x: 0, y: 0 }, synchronized = false,
 ): CameraMotion {
   const targetZ = Math.max(base, fit?.distance ?? 0);
   const target = pan && fit ? fitCenter(fit, targetZ, origin) : origin;
@@ -140,7 +140,7 @@ export function stepCamera(
   const { pose, velocity } = current;
   const x = advance(pose.x, velocity.x, target.x, seconds, 14);
   const y = advance(pose.y, velocity.y, target.y, seconds, 14);
-  const z = advance(pose.z, velocity.z, targetZ, seconds, targetZ > pose.z ? 15 : 9);
+  const z = advance(pose.z, velocity.z, targetZ, seconds, synchronized ? 14 : targetZ > pose.z ? 15 : 9);
   // The larger target inset gives the spring room to move. The tighter guard
   // only intervenes when the current framing would already lose the sheet.
   const distance = Math.max(z.value, guard?.distance ?? 0);

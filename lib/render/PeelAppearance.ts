@@ -3,7 +3,7 @@ export const FACE_FINISHES = [
   "Topographic ink", "Marbled ink", "Halftone print", "Holographic foil", "Speckled enamel",
   "Hammered gold", "Engine-turned silver", "Oil-slick foil", "Cracked ice foil", "Lenticular checker foil",
   "Gloss laminate", "Soft-touch matte", "Linen laminate", "Spot UV varnish", "Dichroic laminate", "Puffy gloss",
-  "Jelly", "Glass", "Liquid glass", "Water",
+  "Jelly", "Glass", "Liquid glass", "Water", "Clear tape", "Security hologram", "Caramel",
 ] as const;
 export const BACK_FINISHES = [
   "Clear", "Frosted", "Prismatic", "Fine mesh",
@@ -21,6 +21,12 @@ export const FILM_FILTERS = [
 ] as const;
 export const PUFFY_FINISH = 19;
 export const FIRST_REFRACTIVE_FINISH = 20;
+export const CLEAR_TAPE_FINISH = 24;
+export const SECURITY_HOLOGRAM_FINISH = 25;
+export const CARAMEL_FINISH = 26;
+export const usesTranslucentCoating = (finish: number) => finish === CLEAR_TAPE_FINISH || finish === CARAMEL_FINISH;
+export const usesFrontRefraction = (finish: number) =>
+  (finish >= FIRST_REFRACTIVE_FINISH && finish < CLEAR_TAPE_FINISH) || usesTranslucentCoating(finish);
 export const LEGACY_RIDGE_FINISH = 4;
 const KEEP_ARTWORK_FINISH = 5;
 
@@ -36,6 +42,7 @@ export const BACKGROUNDS = [
   { name: "Black", color: "#000000", plain: true },
   { name: "White", color: "#ffffff", plain: true, light: true },
   { name: "Warm white", color: "#f4efe6", plain: true, light: true },
+  { name: "Dark blue", color: "#101e39" },
 ] as const;
 
 export const STICKER_COLORS = [
@@ -64,12 +71,18 @@ export const APPEARANCE_OPTIONS = {
   gripCurl: ["Off", "On"],
   background: BACKGROUNDS.map(({ name }) => name),
   glassDepth: ["Off", "On"],
+  shadow: ["Automatic", "Off", "On"],
+  keepCrease: ["Off", "On"],
 } as const;
 export type PeelAppearance = Record<keyof typeof APPEARANCE_OPTIONS, number>;
 export const DEFAULT_APPEARANCE: PeelAppearance = {
-  face: 0, sticker: 0, back: 0, optics: 0, filmFilter: 0, released: 0,
-  ridge: 0, gripCurl: 0, background: 0, glassDepth: 0,
+  face: 3, sticker: 0, back: 0, optics: 0, filmFilter: 0, released: 1,
+  ridge: 0, gripCurl: 1, background: 11, glassDepth: 0, shadow: 0, keepCrease: 0,
 };
+
+export function shadowVisible({ shadow, glassDepth }: PeelAppearance) {
+  return shadow === 2 || (shadow === 0 && glassDepth === 1);
+}
 
 export const APPEARANCE_STORAGE_KEY = "peel.appearance";
 

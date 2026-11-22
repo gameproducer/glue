@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { stickerLayout } from "../lib/peel/StickerLayout.ts";
 import { fitFrustum, stepCamera } from "../lib/render/PeelFraming.ts";
 import { MAX_MANUAL_ZOOM, moveManualView } from "../lib/render/TouchCamera.ts";
+import { stampCrease } from "../lib/render/SavedCreases.ts";
+import { AttachedCurl } from "../lib/render/AttachedCurl.ts";
 
 test("focus picks filled cells and ignores ambiguous gaps and released pieces", () => {
   const width = 12;
@@ -38,6 +40,58 @@ test("pinch keeps the same world point under the midpoint as it pans and zooms",
   const capped = moveManualView(view, previous, { x: -10_000, y: 10_000 }, 10, units, bounds);
   assert.deepEqual(capped, { center: { x: bounds.right, y: bounds.bottom }, zoom: MAX_MANUAL_ZOOM });
   assert.deepEqual(moveManualView(capped, next, next, 0.25, units, bounds), start);
+});
+
+test("working area follows adhered cells of the selected piece and ignores the vacated footprint", () => {
+  const mask = Uint8Array.from([1, 1, 1, 1, 0, 1, 1]);
+  const layout = stickerLayout(mask, mask.length, 1);
+  const state = Uint8Array.from([2, 3, 1, 1, 0, 1, 1]);
+  assert.deepEqual(layout.areaInState(layout.pieceAtCell(1), state, 1),
+    { left: 2 / 7, right: 4 / 7, bottom: 0, top: 1 });
+  assert.equal(layout.pieceAtCell(4), null);
+  state[2] = state[3] = 3;
+  assert.equal(layout.areaInState(layout.pieces[0], state, 1), null);
+});
+
+test("a lifted strip is framed at its transformed location instead of its old footprint", () => {
+  const width = 64, height = 16;
+  const sources = Int32Array.from({ length: width * height }, (_, cell) => cell);
+  const curl = new AttachedCurl(width, height, 4.8, 1.2, sources);
+  const seam = new Uint8Array(width * height).fill(100);
+  const sheet = new Uint8Array(width * height * 4);
+  for (let y = 4; y < 12; y++) {
+    for (let x = 2; x < 18; x++) sheet[(y * width + x) * 4 + 2] = 255;
+  }
+  const direction = { x: 1, y: 0 };
+  curl.update(sheet, seam, { x: -2.25, y: 0 }, direction, 2.2, 0.32, false);
+  const bounds = curl.projectedBounds(direction, 0);
+  assert.ok(bounds.left > -1.6);
+  assert.ok(bounds.z > 0.5);
+  assert.ok(bounds.bottom < -0.3 && bounds.top > 0.3);
+});
+
+test("a focus return progresses pan and zoom together in one move", () => {
+  let camera = stepCamera(null, null, null, 3, 0, true, { x: 2, y: -1 }, true);
+  for (let frame = 0; frame < 30; frame++) {
+    camera = stepCamera(camera, null, null, 9, 1 / 60, true, { x: 0, y: 0 }, true);
+    const progress = (camera.pose.z - 3) / 6;
+    assert.ok(Math.abs(camera.pose.x / 2 + progress - 1) < 1e-9);
+    assert.ok(Math.abs(-camera.pose.y + progress - 1) < 1e-9);
+  }
+});
+
+test("saved creases are confined to their piece and survive weaker passes", () => {
+  const size = 100;
+  const pixels = new Uint8Array(size * size * 2);
+  const stroke = strength => stampCrease(pixels, size, size, { x: 4, y: 4 }, { x: 0, y: 0 },
+    { x: 1, y: 0 }, strength, cell => cell % size < size / 2);
+  assert.equal(stroke(0.8), true);
+  const saved = pixels.slice();
+  assert.ok(saved.some((value, index) => index % 2 === 0 && value > 0));
+  assert.ok(saved.some((value, index) => index % 2 === 1 && value > 0));
+  assert.ok(saved.every((value, index) => Math.floor(index / 2) % size < size / 2 || value === 0));
+  assert.equal(stroke(0.3), false);
+  assert.deepEqual(pixels, saved);
 });
 
 test("an idle manual crop can center anywhere, while the peel guard fits a lifted flap", () => {

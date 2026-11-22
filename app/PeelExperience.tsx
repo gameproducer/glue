@@ -13,7 +13,7 @@ import { loadStickerAsset } from "@/lib/peel/StickerAsset";
 import { PEEL_SOUNDS, PeelAudio, type PeelSound } from "@/lib/peel/PeelAudio";
 import { REFERENCE_PEEL_SOUNDS } from "@/lib/peel/ReferencePeelSound";
 import { PEEL_SOUND_RESPONSES, peelSoundLoad, type PeelSoundResponse } from "@/lib/peel/PeelSoundResponse";
-import { APPEARANCE_OPTIONS, BACKGROUNDS, FIRST_REFRACTIVE_FINISH, LEGACY_RIDGE_FINISH, type PeelAppearance } from "@/lib/render/PeelAppearance";
+import { APPEARANCE_OPTIONS, BACKGROUNDS, LEGACY_RIDGE_FINISH, shadowVisible, usesFrontRefraction, type PeelAppearance } from "@/lib/render/PeelAppearance";
 import { MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, type CameraSettings } from "@/lib/render/PeelFraming";
 import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX, ZOOM_STEPS,
@@ -290,6 +290,10 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     rendererRef.current?.setTouchCameraMode(touchMode);
   }, [touchMode]);
 
+  useEffect(() => {
+    rendererRef.current?.setFollowCurl(touchCamera.followCurl);
+  }, [touchCamera.followCurl, ready]);
+
   const showMiniMap = ready && touchMode === "manual" && touchCamera.miniMap;
   useEffect(() => {
     rendererRef.current?.setMiniMap(miniMapRef.current, miniMapOutlineRef.current);
@@ -376,8 +380,10 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       next.torn,
       next.detached ? next.pointer : undefined,
     );
-    renderer?.setTearWarning(next, settingsRef.current.tearWarning
-      ? simulation.tearWarning(gripDistance, GRIP_GAP_LIMIT_PX) : null);
+    const { tearWarning, appearance } = settingsRef.current;
+    renderer?.setTearWarning(next, tearWarning || appearance.keepCrease
+      ? simulation.tearWarning(gripDistance, GRIP_GAP_LIMIT_PX) : null, tearWarning);
+    renderer?.updateTouchPeel(next);
     renderer?.frameTimings.recordState(poseStarted - textureStarted, performance.now() - poseStarted);
     setSnapshot(next);
   }, [audio, recordDiagnostic]);
@@ -610,8 +616,9 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
             pending = null;
             renderer.setTouchPointPending(false);
             const state = simulation.snapshot();
-            if (released && point && !state.complete && !state.failed && !state.torn && renderer.focusAt(point)) {
-              recordDiagnostic("camera_focus", point);
+            if (released && point && !state.complete && !state.failed && !state.torn) {
+              const view = renderer.focusAt(point);
+              if (view) recordDiagnostic(view === "focus" ? "camera_focus" : "camera_overview", point);
             }
           }
           finishPeel(event);
@@ -866,8 +873,8 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           {key === "face" ? (
             <>
               {option(options[0], 0)}
-              <optgroup label="Translucent">{options.slice(FIRST_REFRACTIVE_FINISH).map((name, index) => option(name, index + FIRST_REFRACTIVE_FINISH))}</optgroup>
-              <optgroup label="Coatings and print">{options.slice(1, FIRST_REFRACTIVE_FINISH).map((name, index) => option(name, index + 1))}</optgroup>
+              <optgroup label="Translucent">{options.map((name, index) => usesFrontRefraction(index) ? option(name, index) : null)}</optgroup>
+              <optgroup label="Coatings and print">{options.map((name, index) => index > 0 && !usesFrontRefraction(index) ? option(name, index) : null)}</optgroup>
             </>
           ) : options.map((name, index) => key === "released" && index === LEGACY_RIDGE_FINISH ? null : option(name, index))}
         </select>
@@ -1023,6 +1030,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
               <h3>Sticker front</h3>
               {appearanceControl("face", "Front finish")}
               {appearanceControl("sticker", "Sticker color")}
+              {appearanceControl("keepCrease", "Keep tension creases", "Keeps crease marks on each piece until it comes free.")}
             </section>
             <section className="settings-group" aria-label="Lifted film">
               <h3>Lifted film</h3>
@@ -1047,6 +1055,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
               <h3>Surface</h3>
               {appearanceControl("background", "Background color")}
               {appearanceControl("glassDepth", "Glass depth", "The pane uses the selected background color.")}
+              {appearanceControl("shadow", "Shadow", `Automatic follows Glass depth. Shadow is ${shadowVisible(appearance) ? "on" : "off"} now.`)}
             </section>
           </SettingsDialog>
         )}
@@ -1073,6 +1082,13 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
                   <input type="checkbox" checked={touchCamera.miniMap}
                     onChange={event => onTouchCameraChange({ ...touchCamera, miniMap: event.currentTarget.checked })} />
                   <span>Show mini-map when zoomed</span>
+                </label>
+              )}
+              {touchCamera.mode === "focus" && (
+                <label className="setting-toggle">
+                  <input type="checkbox" checked={touchCamera.followCurl}
+                    onChange={event => onTouchCameraChange({ ...touchCamera, followCurl: event.currentTarget.checked })} />
+                  <span>Follow the curl (experimental)</span>
                 </label>
               )}
               <label className="setting-control">

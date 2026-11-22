@@ -1,5 +1,8 @@
 import * as THREE from "three";
-import { BACKGROUNDS, FILM_FILTERS, FIRST_REFRACTIVE_FINISH, PUFFY_FINISH, STICKER_COLORS, type PeelAppearance } from "./PeelAppearance";
+import {
+  BACKGROUNDS, CARAMEL_FINISH, CLEAR_TAPE_FINISH, FILM_FILTERS, PUFFY_FINISH, SECURITY_HOLOGRAM_FINISH,
+  shadowVisible, STICKER_COLORS, usesFrontRefraction, usesTranslucentCoating, type PeelAppearance,
+} from "./PeelAppearance";
 import {
   curlBounds, DEFAULT_CAMERA_SETTINGS, dragScaleForReach, fitFrustum, MAX_TENSION_STRETCH,
   regionBounds, stepCamera, translateBounds, unionBounds,
@@ -16,6 +19,7 @@ import { detachedAlignmentDuration, detachedAnimation, releaseSettleDuration, wr
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 import { stickerLayout, type StickerArea, type StickerPiece } from "../peel/StickerLayout";
 import { moveManualView, type ManualView, type TouchCameraMode, type TouchCameraView } from "./TouchCamera";
+import { stampCrease } from "./SavedCreases";
 
 const STICKER_WIDTH = 4.8;
 const DISSOLVE_MS = 1800;
@@ -56,6 +60,7 @@ type DragInput = {
   point: Vec2;
   cameraStart: THREE.Vector3;
   unitsPerPixel: number;
+  working: boolean;
   assist: { direction: Vec2; gain: number } | null;
 };
 
@@ -97,6 +102,9 @@ type PeelUniforms = {
   uDissolve: { value: number };
   uTornOffset: { value: THREE.Vector2 };
   uTearStrain: { value: THREE.Vector3 };
+  uSavedCreases: { value: THREE.DataTexture };
+  uKeepCrease: { value: number };
+  uCaramelTint: { value: THREE.Color };
 };
 
 const vertexShader = /* glsl */ `
@@ -223,6 +231,9 @@ const fragmentShader = /* glsl */ `
   uniform float uFrontDepth;
   uniform vec2 uStickerSize;
   uniform vec3 uTearStrain;
+  uniform sampler2D uSavedCreases;
+  uniform float uKeepCrease;
+  uniform vec3 uCaramelTint;
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying float vCurl;
@@ -250,6 +261,31 @@ const fragmentShader = /* glsl */ `
     float pixelWidth = fwidth(phase);
     return (1.0 - smoothstep(width, width + max(0.005, pixelWidth), bandDistance))
       * (1.0 - smoothstep(0.25, 0.6, pixelWidth));
+  }
+
+  vec3 translucentCoating(vec3 normal, vec3 light, bool caramel) {
+    vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
+    vec4 coating = texture2D(uPuff, vUv);
+    vec3 profile = normalize(coating.rgb * 2.0 - 1.0);
+    float bevel = caramel ? 0.80 : 0.16;
+    vec3 curved = normalize(normal + vec3(profile.xy * bevel, 0.0));
+    vec2 screen = gl_FragCoord.xy / uViewport;
+    vec2 pixel = 0.5 / uViewport;
+    vec2 shift = curved.xy * (caramel ? 0.062 : 0.018) * vec2(uViewport.y / uViewport.x, 1.0);
+    vec3 background = texture2D(uScene, clamp(screen - shift, pixel, 1.0 - pixel)).rgb;
+    float grazing = 1.0 - abs(curved.z);
+    float edge = caramel ? 1.0 - profile.z : 1.0 - smoothstep(0.27, 0.60, coating.a);
+    vec3 reflection = reflect(vec3(0.0, 0.0, -1.0), curved);
+    float panel = (dot(sheet, vec2(0.55, 0.83)) + reflection.x * 0.45 - 0.13) / (caramel ? 0.14 : 0.095);
+    float highlight = exp(-panel * panel) * (0.16 + grazing * 0.56 + edge * 0.5);
+    float shine = pow(max(dot(reflect(-light, curved), vec3(0.0, 0.0, 1.0)), 0.0), caramel ? 21.0 : 48.0);
+    if (caramel) {
+      vec3 candy = sqrt(uCaramelTint) * (0.36 + max(dot(curved, light), 0.0) * 0.48);
+      vec3 absorption = mix(vec3(0.42), clamp(uCaramelTint, 0.0, 1.0), 0.68);
+      vec3 body = background * mix(vec3(1.0), absorption, 0.66 + edge * 0.24);
+      return mix(body, candy, 0.41 + edge * 0.25) + vec3(1.0, 0.91, 0.75) * (highlight * 0.7 + shine * 0.38);
+    }
+    return background * 0.98 + vec3(0.89, 0.95, 1.0) * (0.013 + edge * 0.46 + grazing * 0.22 + highlight + shine * 0.22);
   }
 
   void main() {
@@ -323,6 +359,8 @@ const fragmentShader = /* glsl */ `
     float diffuse = max(dot(normal, lightDirection), 0.0);
     float grazing = pow(1.0 - abs(normal.z), 2.0);
     float specular = pow(max(dot(reflect(-lightDirection, normal), vec3(0.0, 0.0, 1.0)), 0.0), 26.0);
+    bool caramel = uFaceFinish == ${CARAMEL_FINISH}.0;
+    bool translucent = uFaceFinish == ${CLEAR_TAPE_FINISH}.0 || caramel;
     #ifdef PEEL_BACK_FACE
     vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
     filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
@@ -397,11 +435,28 @@ const fragmentShader = /* glsl */ `
       color = mix(refracted * uOpticsTint, filmColor, uLiftedOpacity) + specular * 0.08;
       alpha = silhouette;
     }
+    if (translucent) {
+      color = translucentCoating(normal, lightDirection, caramel);
+      alpha = silhouette;
+    }
     #else
     vec3 artworkColor = mix(texture2D(uArt, vUv).rgb, uStickerColor, uWhiteArtwork);
     vec3 printedColor = artworkColor * (0.61 + diffuse * 0.43);
     printedColor += vec3(0.48, 0.40, 0.56) * grazing * 0.15 + specular * 0.22;
-    if (uFaceFinish > 18.5) {
+    if (translucent) {
+      printedColor = translucentCoating(normal, lightDirection, caramel);
+    } else if (uFaceFinish == ${SECURITY_HOLOGRAM_FINISH}.0) {
+      vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
+      float angle = dot(normal.xy, vec2(3.7, -2.15));
+      float position = dot(sheet, vec2(6.2, 1.9)) + angle;
+      vec3 foil = spectrum(position + 1.9);
+      vec2 lattice = vec2(sheet.x * 21.0 + sheet.y * 10.0, sheet.y * 22.0);
+      float chevrons = contourLine(lattice.x + abs(fract(lattice.y) - 0.5) * 1.65, 0.10);
+      float ghost = contourLine(lattice.x * 1.5 - lattice.y * 0.21 + angle * 0.25, 0.035);
+      vec3 base = mix(foil * (0.46 + diffuse * 0.34), artworkColor, 0.18);
+      printedColor = base * (0.92 + chevrons * 0.16 + ghost * 0.08)
+        + spectrum(position - 1.4) * (chevrons * 0.15 + grazing * 0.25) + specular * 0.38;
+    } else if (uFaceFinish > 18.5) {
       vec3 coating = normalize(texture2D(uPuff, vUv).rgb * 2.0 - 1.0);
       vec2 axis = normalize(uDirection);
       vec2 side = vec2(-axis.y, axis.x);
@@ -634,6 +689,9 @@ const fragmentShader = /* glsl */ `
       alpha = mix(alpha, releaseAlpha, released);
     }
     #endif
+    if (uKeepCrease > 0.5) {
+      strainLight = max(strainLight, texture2D(uSavedCreases, vUv).rg * 0.92);
+    }
     // A soft studio reflection and its falloff leave the material's finish visible.
     color *= 1.0 + strainLight.x * 0.18 - strainLight.y * 0.26;
     color += vec3(strainLight.x * (0.14 + specular * 0.18));
@@ -729,6 +787,10 @@ export class PeelRenderer {
   private readonly releaseHistory: Uint8Array;
   private readonly releaseData: Uint8Array;
   private readonly releaseTexture: THREE.DataTexture;
+  private readonly creasePixels: Uint8Array;
+  private readonly creaseTexture: THREE.DataTexture;
+  private keepCrease = false;
+  private lastCrease: { x: number; y: number; strength: number } | null = null;
   private lastReleaseRevision = -1;
   private readonly materials: THREE.ShaderMaterial[] = [];
   private readonly stickerMeshes: StickerMesh[] = [];
@@ -750,6 +812,7 @@ export class PeelRenderer {
   private readonly plainSurfaceMaterial = new THREE.MeshBasicMaterial({ toneMapped: false });
   private readonly surface: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial | THREE.MeshBasicMaterial>;
   private glassDepth: GlassDepthScene | null = null;
+  private castShadow = false;
   private zoom: number;
   private cameraSettings: CameraSettings;
   private cameraMotion: CameraMotion | null = null;
@@ -763,6 +826,8 @@ export class PeelRenderer {
   private touchCameraMode: TouchCameraMode | null;
   private touchPointPending = false;
   private focusedPiece: StickerPiece | null = null;
+  private followCurl = false;
+  private gluedBounds: PeelBounds | null = null;
   private manualView: ManualView;
   private miniMap: { canvas: HTMLCanvasElement; outline: HTMLElement } | null = null;
   private movingRegion: PeelRegion | null = null;
@@ -840,6 +905,10 @@ export class PeelRenderer {
     this.releaseTexture.minFilter = THREE.LinearFilter;
     this.releaseTexture.magFilter = THREE.LinearFilter;
     this.updateReleaseHistory();
+    this.creasePixels = new Uint8Array(simulation.width * simulation.height * 2);
+    this.creaseTexture = new THREE.DataTexture(this.creasePixels, simulation.width, simulation.height, THREE.RGFormat);
+    this.creaseTexture.minFilter = this.creaseTexture.magFilter = THREE.LinearFilter;
+    this.creaseTexture.needsUpdate = true;
 
     const art = makeArtTexture(artwork);
     const geometry = new THREE.PlaneGeometry(this.stickerWidth, this.stickerHeight, 124, 100);
@@ -890,6 +959,9 @@ export class PeelRenderer {
         uDissolve: { value: 0 },
         uTornOffset: { value: new THREE.Vector2() },
         uTearStrain: { value: this.tearStrain },
+        uSavedCreases: { value: this.creaseTexture },
+        uKeepCrease: { value: 0 },
+        uCaramelTint: { value: new THREE.Color("#e99b50") },
       };
       const material = new THREE.ShaderMaterial({
         uniforms,
@@ -1044,7 +1116,9 @@ export class PeelRenderer {
       this.movingBounds = translateBounds(regionBounds(region, TORN_LAYER_Z), { x: offsetX, y: offsetY });
     } else if (region && worldDepth > 0) {
       if (!detachedPointer) this.prepareAttachedCurl(worldGrab, worldDirection, worldDepth, profile);
-      this.movingBounds = curlBounds(region, worldGrab, worldDirection, worldDepth, radius, profile === "cone", stretch);
+      const closeCrop = this.touchCameraMode === "focus" && this.followCurl && !detachedPointer;
+      this.movingBounds = (closeCrop ? this.attachedCurl.projectedBounds(worldDirection, stretch) : null)
+        ?? curlBounds(region, worldGrab, worldDirection, worldDepth, radius, profile === "cone", stretch);
     }
     for (const material of this.materials) {
       const uniforms = material.uniforms as unknown as PeelUniforms;
@@ -1079,9 +1153,9 @@ export class PeelRenderer {
     this.shadow.material.uniforms.uOpacity.value = 0.3 + lift * 0.18;
   }
 
-  setTearWarning(snapshot: PeelSnapshot, warning: ReturnType<PeelSimulation["tearWarning"]>) {
+  setTearWarning(snapshot: PeelSnapshot, warning: ReturnType<PeelSimulation["tearWarning"]>, showGesture: boolean) {
     this.tearStrain.z = 0;
-    this.warningGesture = warning && warning.risk >= GESTURE_START_RISK ? warning : null;
+    this.warningGesture = showGesture && warning && warning.risk >= GESTURE_START_RISK ? warning : null;
     if (!this.warningGesture) this.warningOverlay.hide();
     if (!warning || warning.risk <= CREASE_START_RISK || !this.curlSeamCount) return;
 
@@ -1102,6 +1176,15 @@ export class PeelRenderer {
       closest = distance;
       this.tearStrain.set(x, y, strength);
     }
+    if (!this.keepCrease || strength < 0.28) return;
+    const piece = this.stickerLayout.pieceAtCell(this.simulation.activeGripCell);
+    if (!piece) return;
+    const { x, y } = this.tearStrain;
+    const last = this.lastCrease;
+    if (last && Math.hypot(x - last.x, y - last.y) < 0.16 && strength <= last.strength + 0.12) return;
+    this.lastCrease = { x, y, strength };
+    if (stampCrease(this.creasePixels, width, height, { x: this.stickerWidth, y: this.stickerHeight },
+      { x, y }, direction, strength, cell => this.stickerLayout.pieceAtCell(cell) === piece)) this.creaseTexture.needsUpdate = true;
   }
 
   private drawTearWarning() {
@@ -1178,6 +1261,7 @@ export class PeelRenderer {
     uniforms.uAttachedCurl.value = this.curlTexture;
     uniforms.uRestState.value = this.stateTexture;
     uniforms.uSettlingMask.value = this.stateTexture;
+    uniforms.uSavedCreases.value = this.creaseTexture;
     uniforms.uTearStrain.value.set(0, 0, 0);
     return material;
   }
@@ -1236,6 +1320,13 @@ export class PeelRenderer {
     for (const shape of this.dissolves) this.disposeDissolve(shape);
     this.dissolves.length = 0;
     this.heldDissolve = null;
+    this.clearCreases();
+  }
+
+  private clearCreases() {
+    this.lastCrease = null;
+    this.creasePixels.fill(0);
+    this.creaseTexture.needsUpdate = true;
   }
 
   private disposeDissolve(shape: DissolvingShape) {
@@ -1248,10 +1339,12 @@ export class PeelRenderer {
     this.settingsPreviewDirty = true;
     this.opticsMode = appearance.optics;
     this.frontFinish = appearance.face;
+    if (this.keepCrease && !appearance.keepCrease) this.clearCreases();
+    this.keepCrease = appearance.keepCrease === 1;
     const ridgeHeight = appearance.ridge ? RIDGE_HEIGHT : 0;
     const curlHeight = appearance.gripCurl ? GRIP_CURL_HEIGHT : 0;
     this.reliefHeight = ridgeHeight + curlHeight;
-    if (appearance.face >= PUFFY_FINISH && !this.puffTexture) {
+    if ((appearance.face === PUFFY_FINISH || usesFrontRefraction(appearance.face)) && !this.puffTexture) {
       const width = this.artwork.naturalWidth;
       const height = this.artwork.naturalHeight;
       const canvas = document.createElement("canvas");
@@ -1286,7 +1379,8 @@ export class PeelRenderer {
       this.glassDepth.setBackdrop(background);
     }
     this.surface.visible = !glassEnabled;
-    this.shadow.visible = !glassEnabled;
+    this.castShadow = shadowVisible(appearance);
+    this.shadow.visible = !glassEnabled && this.castShadow;
 
     const sticker = STICKER_COLORS[appearance.sticker].color;
     const moving = [...this.dissolves.map(shape => shape.mesh), ...(this.settling?.meshes ?? [])];
@@ -1294,6 +1388,8 @@ export class PeelRenderer {
       const uniforms = material.uniforms as unknown as PeelUniforms;
       uniforms.uWhiteArtwork.value = sticker || this.originalWhiteArtwork ? 1 : 0;
       uniforms.uStickerColor.value.set(sticker ?? "#ffffff");
+      uniforms.uCaramelTint.value.set(sticker ?? "#e99b50");
+      uniforms.uKeepCrease.value = this.keepCrease ? 1 : 0;
       uniforms.uFaceFinish.value = appearance.face;
       if (this.puffTexture) uniforms.uPuff.value = this.puffTexture;
       uniforms.uBackFinish.value = appearance.back;
@@ -1393,21 +1489,63 @@ export class PeelRenderer {
 
   resetTouchView() {
     this.focusedPiece = null;
+    this.gluedBounds = null;
     this.manualView = { center: this.boundsCenter(this.touchBounds), zoom: 1 };
     this.onTouchViewChange?.(this.touchView);
   }
 
-  focusAt(point: Vec2) {
-    if (this.touchCameraMode !== "focus" || this.stickerLayout.pieces.length < 2) return false;
+  focusAt(point: Vec2): "focus" | "overview" | null {
+    if (this.touchCameraMode !== "focus") return null;
     const units = 2 * this.camera.position.z * this.tangent / this.viewportHeight;
-    const piece = this.stickerLayout.hit(point, { x: 10 * units / this.stickerWidth, y: 10 * units / this.stickerHeight },
-      this.simulation.state);
-    if (!piece) return false;
+    const radius = this.focusedPiece ? { x: 0, y: 0 } : { x: 10 * units / this.stickerWidth, y: 10 * units / this.stickerHeight };
+    const piece = this.stickerLayout.hit(point, radius, this.simulation.state);
+    if (!piece && this.focusedPiece) {
+      this.resetTouchView();
+      return "overview";
+    }
+    if (!piece || piece === this.focusedPiece || !this.canFocusPiece(piece)) return null;
+    this.focusPiece(piece);
+    return "focus";
+  }
+
+  private canFocusPiece(piece: StickerPiece) {
     const overview = this.overviewDistance();
-    if (this.focusDistance(this.worldBounds(piece.area), overview) >= overview * 0.87) return false;
+    return this.focusDistance(this.worldBounds(piece.area), overview) < overview * 0.87;
+  }
+
+  private focusPiece(piece: StickerPiece) {
     this.focusedPiece = piece;
+    this.updateGluedBounds();
     this.onTouchViewChange?.(this.touchView);
-    return true;
+  }
+
+  setFollowCurl(enabled: boolean) {
+    if (this.followCurl === enabled) return;
+    this.followCurl = enabled;
+    this.updateGluedBounds();
+  }
+
+  updateTouchPeel(snapshot: PeelSnapshot) {
+    if (this.touchCameraMode !== "focus") return;
+    if (this.dragInput && !this.dragInput.working && this.movingRegion
+        && snapshot.frontDepth > 0 && !snapshot.torn && !snapshot.outwardPulling) {
+      const piece = this.stickerLayout.pieceAtCell(this.simulation.activeGripCell);
+      if (piece && (this.followCurl || this.canFocusPiece(piece))) {
+        this.dragInput.working = true;
+        if (piece !== this.focusedPiece) {
+          this.focusPiece(piece);
+          return;
+        }
+      }
+    }
+    this.updateGluedBounds();
+  }
+
+  private updateGluedBounds() {
+    const area = this.followCurl && this.focusedPiece
+      ? this.stickerLayout.areaInState(this.focusedPiece, this.simulation.state, Cell.adhered)
+      : null;
+    this.gluedBounds = area ? this.worldBounds(area) : null;
   }
 
   adjustManualView(factor: number, previous?: Vec2, next?: Vec2) {
@@ -1462,7 +1600,7 @@ export class PeelRenderer {
     this.clearSettling();
     const start = { x: clientX, y: clientY };
     this.dragInput = {
-      screen: start, start, point, cameraStart: this.camera.position.clone(), assist: null,
+      screen: start, start, point, cameraStart: this.camera.position.clone(), working: false, assist: null,
       unitsPerPixel: 2 * this.camera.position.z * this.tangent / this.viewportHeight,
     };
     if (this.touchCameraMode && this.cameraMotion) this.cameraMotion.velocity = { x: 0, y: 0, z: 0 };
@@ -1506,6 +1644,7 @@ export class PeelRenderer {
 
   endDrag() {
     this.dragInput = null;
+    this.lastCrease = null;
     this.warningGesture = null;
     this.tearStrain.z = 0;
     this.warningOverlay.hide();
@@ -1526,6 +1665,7 @@ export class PeelRenderer {
     this.stateTexture.dispose();
     this.curlTexture.dispose();
     this.releaseTexture.dispose();
+    this.creaseTexture.dispose();
     this.puffTexture?.dispose();
     this.filmOptics?.dispose();
     this.glassDepth?.dispose();
@@ -1598,7 +1738,9 @@ export class PeelRenderer {
   }
 
   private frameCamera(now: number) {
-    if (this.touchPointPending && this.cameraMotion) {
+    const waitingForRelease = this.focusedPiece && !this.dragInput && this.dissolves.length > 0
+      && this.simulation.state[this.focusedPiece.sample] === Cell.outside;
+    if ((this.touchPointPending || waitingForRelease) && this.cameraMotion) {
       this.lastCameraTime = now;
       return;
     }
@@ -1606,8 +1748,13 @@ export class PeelRenderer {
     const height = this.viewportHeight;
     const shortSide = Math.min(width, height);
     const touch = this.touchCameraMode !== null;
+    const focusMode = this.touchCameraMode === "focus";
     const manualCrop = this.touchCameraMode === "manual" && this.manualView.zoom > 1;
-    const focusBounds = this.focusedPiece ? this.worldBounds(this.focusedPiece.area) : null;
+    const held = this.heldDissolve;
+    const heldBounds = held?.bounds && this.dragInput ? translateBounds(held.bounds, held.offset) : null;
+    const focusBounds = this.focusedPiece
+      ? (this.followCurl ? this.gluedBounds ?? heldBounds ?? this.movingBounds : null) ?? this.worldBounds(this.focusedPiece.area)
+      : null;
     const wholeBounds = touch ? this.touchBounds : this.stickerBounds;
     const restBounds = focusBounds ?? wholeBounds;
     const fill = Math.min(0.945, (touch ? 0.92 : 0.82) * (this.touchCameraMode === "manual" ? 1 : this.zoom));
@@ -1615,7 +1762,7 @@ export class PeelRenderer {
     const bounds = manualCrop ? [] : [{ ...restBounds, z: restBounds.z + relief }];
     const pan = touch || this.cameraSettings.pan;
     if (this.movingBounds) bounds.push(this.movingBounds);
-    if (this.settling) {
+    if (this.settling && !focusMode) {
       const { from, to, progress } = this.settling;
       const lerp = THREE.MathUtils.lerp;
       bounds.push({
@@ -1626,25 +1773,37 @@ export class PeelRenderer {
     }
     for (const shape of this.dissolves) {
       const foreground = this.dragInput ? shape === this.heldDissolve
-        : shape.fadeStart === null || now - shape.fadeStart < DISSOLVE_MS * 0.65;
+        : !focusMode && (shape.fadeStart === null || now - shape.fadeStart < DISSOLVE_MS * 0.65);
       if (shape.bounds && foreground) bounds.push(translateBounds(shape.bounds, shape.offset));
     }
     const overview = this.touchFitDistance(wholeBounds, fill);
     const desired = manualCrop ? wholeBounds.z + (overview - wholeBounds.z) / this.manualView.zoom
-      : focusBounds ? this.focusDistance(focusBounds, overview) : overview;
+      : focusBounds ? Math.min(overview, this.focusDistance(focusBounds, overview)) : overview;
     const grabPose = touch ? this.dragInput?.cameraStart : null;
-    const base = Math.max(desired, grabPose?.z ?? 0);
-    const center = grabPose ?? (manualCrop ? this.manualView.center : this.boundsCenter(restBounds));
-    const comfort = Math.min(34, shortSide * (1 - fill) / 2);
+    const followGrip = focusMode && this.dragInput?.working;
+    const base = Math.max(desired, followGrip ? 0 : grabPose?.z ?? 0);
+    let center: Vec2 = grabPose ?? (manualCrop ? this.manualView.center : this.boundsCenter(restBounds));
+    const comfort = followGrip ? Math.min(32, shortSide * 0.08) : Math.min(34, shortSide * (1 - fill) / 2);
     const fit = bounds.length ? fitFrustum(bounds, this.tangent, width, height, comfort, pan) : null;
-    // During idle transitions, let the overview ease outward. The guard still
-    // protects the moving material once the player has picked up the sticker.
+    if (followGrip && grabPose && this.dragInput) {
+      // Zoom around the touch while leaving the gesture's physics projection alone.
+      const rect = this.domElement.getBoundingClientRect();
+      const { x, y } = this.dragInput.screen;
+      const shift = (grabPose.z - Math.max(base, fit?.distance ?? 0)) * 2 * this.tangent / height;
+      center = {
+        x: grabPose.x + (x - rect.left - width / 2) * shift,
+        y: grabPose.y + (rect.top + height / 2 - y) * shift,
+      };
+    }
+    // Focus uses one eased pan/zoom target. A separate instantaneous clamp
+    // can make a piece jump just before that transition starts.
     const protect = !touch || this.dragInput || this.settling || this.dissolves.length > 0;
-    const guard = protect && bounds.length ? fitFrustum(bounds, this.tangent, width, height, Math.min(9, shortSide * 0.024), pan) : null;
+    const guard = !focusMode && protect && bounds.length
+      ? fitFrustum(bounds, this.tangent, width, height, Math.min(9, shortSide * 0.024), pan) : null;
     const dt = THREE.MathUtils.clamp((now - this.lastCameraTime) / 1000, 0, 0.05);
     // Respect reduced motion for mobile camera commands; preserve the peel's reach guard.
     const motion = touch && !protect && this.reducedMotion.matches ? null : this.cameraMotion;
-    this.cameraMotion = stepCamera(motion, fit, guard, base, dt, pan, center);
+    this.cameraMotion = stepCamera(motion, fit, guard, base, dt, pan, center, focusMode);
     this.lastCameraTime = now;
     const { x, y, z } = this.cameraMotion.pose;
     this.camera.position.set(x, y, z);
@@ -1703,12 +1862,13 @@ export class PeelRenderer {
     const cameraStarted = performance.now();
     this.frameCamera(now);
     const renderStarted = performance.now();
-    const fronts = this.frontFinish >= FIRST_REFRACTIVE_FINISH;
-    const backs = this.opticsMode > 0 && (this.movingRegion !== null || this.dissolves.length > 0 || this.settling !== null);
+    const fronts = usesFrontRefraction(this.frontFinish);
+    const backs = (this.opticsMode > 0 || usesTranslucentCoating(this.frontFinish))
+      && (this.movingRegion !== null || this.dissolves.length > 0 || this.settling !== null);
     const meshes = [...this.stickerMeshes, ...(this.settling?.meshes ?? []), ...this.dissolves.map(shape => shape.mesh)];
     if (this.glassDepth?.mesh.visible) {
       this.glassDepth.update(this.renderer, this.camera, meshes.filter(mesh => mesh.material.side !== THREE.BackSide),
-        now, this.dragInput !== null);
+        now, this.dragInput !== null, this.castShadow);
     }
     if (fronts || backs) {
       this.filmOptics ??= new FilmOptics();

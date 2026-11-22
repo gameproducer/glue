@@ -12,6 +12,7 @@ const fragmentShader = /* glsl */ `
   uniform vec2 uParallax;
   uniform float uDepth;
   uniform sampler2D uShadow;
+  uniform float uShadowStrength;
   uniform vec2 uShadowExtent;
   uniform vec3 uBackdrop;
   varying vec3 vWorld;
@@ -42,7 +43,9 @@ const fragmentShader = /* glsl */ `
     vec2 shadowUv = (hit.xy + hit.z * vec2(0.42, -0.25)) / (2.0 * uShadowExtent) + 0.5;
     float inside = step(0.0, shadowUv.x) * step(shadowUv.x, 1.0)
                  * step(0.0, shadowUv.y) * step(shadowUv.y, 1.0);
-    color *= 1.0 - texture2D(uShadow, clamp(shadowUv, 0.0, 1.0)).r * inside * 0.72;
+    if (uShadowStrength > 0.0) {
+      color *= 1.0 - texture2D(uShadow, clamp(shadowUv, 0.0, 1.0)).r * inside * uShadowStrength;
+    }
 
     // Front-surface reflections remain sharp above the soft interior.
     float strip = exp(-pow((paneUv.x + paneUv.y * 0.17 + 0.86 + uParallax.x * 0.6) / 0.045, 2.0));
@@ -104,6 +107,7 @@ export class GlassDepthScene {
         uParallax: { value: this.parallax },
         uDepth: { value: 3 },
         uShadow: { value: this.shadowTarget.texture },
+        uShadowStrength: { value: 0.72 },
         uShadowExtent: { value: new THREE.Vector2(6, 6) },
         uBackdrop: { value: new THREE.Color("#25222b") },
       },
@@ -125,7 +129,8 @@ export class GlassDepthScene {
     this.mesh.material.uniforms.uBackdrop.value.set(color);
   }
 
-  update(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera, sources: StickerMesh[], now: number, dragging: boolean) {
+  update(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera, sources: StickerMesh[], now: number,
+    dragging: boolean, shadow: boolean) {
     const dt = Math.min(0.05, Math.max(0, (now - this.lastTime) / 1000));
     this.lastTime = now;
     if (this.reducedMotion.matches) {
@@ -143,6 +148,7 @@ export class GlassDepthScene {
     uniforms.uEye.value.copy(camera.position);
     uniforms.uViewScale.value.set(halfWidth * 1.12, halfHeight * 1.12);
     uniforms.uDepth.value = Math.max(3.2, Math.min(halfWidth, halfHeight) * 1.5);
+    uniforms.uShadowStrength.value = shadow ? 0.72 : 0;
     const extent = uniforms.uShadowExtent.value as THREE.Vector2;
     extent.set(
       Math.max(6, Math.abs(camera.position.x) + halfWidth * 1.4),
@@ -154,13 +160,14 @@ export class GlassDepthScene {
     this.shadowCamera.bottom = -extent.y;
     this.shadowCamera.updateProjectionMatrix();
 
-    const active = new Set(sources);
+    const active = new Set(shadow ? sources : []);
     for (const [source, mesh] of this.shadowMeshes) {
       if (active.has(source)) continue;
       this.shadowScene.remove(mesh);
       mesh.material.dispose();
       this.shadowMeshes.delete(source);
     }
+    if (!shadow) return;
     for (const source of sources) {
       let mesh = this.shadowMeshes.get(source);
       if (!mesh) {

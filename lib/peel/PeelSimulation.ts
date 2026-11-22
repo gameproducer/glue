@@ -677,6 +677,10 @@ export class PeelSimulation {
     return this.previousGrips;
   }
 
+  get activeGripCell() {
+    return this.grabIndex;
+  }
+
   setTearThreshold(value: number) {
     this.tearThreshold = clamp(value);
   }
