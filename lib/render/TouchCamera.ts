@@ -14,7 +14,7 @@ export const TOUCH_CAMERA_MODES = {
 
 export type TouchCameraMode = keyof typeof TOUCH_CAMERA_MODES;
 export type TouchCameraPreference = { mode: TouchCameraMode; miniMap: boolean; followCurl: boolean };
-export const DEFAULT_TOUCH_CAMERA: TouchCameraPreference = { mode: "focus", miniMap: false, followCurl: false };
+export const DEFAULT_TOUCH_CAMERA: TouchCameraPreference = { mode: "focus", miniMap: false, followCurl: true };
 export type TouchCameraView = { focused: boolean; canFocus: boolean; zoom: number };
 export const DEFAULT_TOUCH_VIEW: TouchCameraView = { focused: false, canFocus: false, zoom: 1 };
 
@@ -24,7 +24,7 @@ export function readTouchCamera(): TouchCameraPreference {
     return {
       mode: Object.hasOwn(TOUCH_CAMERA_MODES, saved?.mode) ? saved.mode : DEFAULT_TOUCH_CAMERA.mode,
       miniMap: saved?.miniMap === true,
-      followCurl: saved?.followCurl === true,
+      followCurl: typeof saved?.followCurl === "boolean" ? saved.followCurl : DEFAULT_TOUCH_CAMERA.followCurl,
     };
   } catch { return DEFAULT_TOUCH_CAMERA; }
 }

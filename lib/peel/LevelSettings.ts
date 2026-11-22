@@ -51,51 +51,90 @@ export const DEFAULT_LEVEL_SETTINGS: LevelSettings = {
 };
 
 const levelKey = (id: string) => `peel.level.${id}`;
+const SELECTION_KEY = "peel.selectedLevel";
 const bounded = (value: unknown, fallback: number, min: number, max: number) =>
   typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
 
-export function readLevelSettings(id: string): LevelSettings {
+type SavedLevelSettings = Omit<Partial<LevelSettings>, "tearFactors"> & { tearFactors?: Partial<TearFactors> };
+
+function settingsObject(value: unknown): SavedLevelSettings | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function normalizeLevelSettings(saved: SavedLevelSettings): LevelSettings {
   const defaults = DEFAULT_LEVEL_SETTINGS;
+  return {
+    profile: saved.profile === "cone" ? "cone" : defaults.profile,
+    tearThreshold: bounded(saved.tearThreshold, defaults.tearThreshold, 0, TENSION_CONTROL_MAX),
+    releaseJumpThreshold: bounded(saved.releaseJumpThreshold, defaults.releaseJumpThreshold, 0, RELEASE_JUMP_CONTROL_MAX),
+    tearFactors: {
+      outward: bounded(saved.tearFactors?.outward, defaults.tearFactors.outward, 0, 1),
+      bottleneck: bounded(saved.tearFactors?.bottleneck, defaults.tearFactors.bottleneck, 0, 1),
+    },
+    tearWarning: typeof saved.tearWarning === "boolean" ? saved.tearWarning : defaults.tearWarning,
+    liftedTransparency: bounded(saved.liftedTransparency, defaults.liftedTransparency, 0.05, 0.9),
+    appearance: normalizeAppearance(saved.appearance),
+    camera: {
+      pan: typeof saved.camera?.pan === "boolean" ? saved.camera.pan : defaults.camera.pan,
+      edgeClearance: bounded(saved.camera?.edgeClearance, defaults.camera.edgeClearance, MIN_EDGE_CLEARANCE, MAX_EDGE_CLEARANCE),
+    },
+    zoom: typeof saved.zoom === "number" && ZOOM_STEPS.includes(saved.zoom) ? saved.zoom : defaults.zoom,
+    peelSound: PEEL_SOUNDS.find(({ id: sound }) => sound === saved.peelSound)?.id ?? defaults.peelSound,
+    peelVolume: bounded(saved.peelVolume, defaults.peelVolume, 0, 1),
+    soundResponse: PEEL_SOUND_RESPONSES.find(({ id: response }) => response === saved.soundResponse)?.id ?? defaults.soundResponse,
+    edgeClick: typeof saved.edgeClick === "boolean" ? saved.edgeClick : defaults.edgeClick,
+    releaseDynamics: typeof saved.releaseDynamics === "boolean" ? saved.releaseDynamics : defaults.releaseDynamics,
+  };
+}
+
+export function readLevelSettings(id: string, previous?: LevelSettings): LevelSettings {
   const key = levelKey(id);
-  const readLegacy = (field: string) => {
+  let saved: SavedLevelSettings | null = null;
+  try {
+    saved = settingsObject(JSON.parse(localStorage.getItem(`${key}.settings`) ?? "null"));
+  } catch { /* Use legacy preferences. */ }
+
+  const readLegacy = (field: string, min: number, max: number) => {
     try {
       const value = localStorage.getItem(`${key}.${field}`);
-      return value === null || value.trim() === "" ? undefined : Number(value);
+      if (!value?.trim()) return undefined;
+      const parsed = bounded(Number(value), NaN, min, max);
+      return Number.isFinite(parsed) ? parsed : undefined;
     } catch { return undefined; }
   };
-  let saved: Partial<LevelSettings> | null = null;
-  try {
-    const value = JSON.parse(localStorage.getItem(`${key}.settings`) ?? "null");
-    if (value && typeof value === "object" && !Array.isArray(value)) saved = value;
-  } catch { /* Use legacy preferences. */ }
-  const legacyCamera = saved ? defaults.camera : readCameraSettings();
-  return {
-    profile: saved?.profile === "cone" ? "cone" : defaults.profile,
-    tearThreshold: bounded(saved?.tearThreshold ?? readLegacy("tearThreshold"), defaults.tearThreshold, 0, TENSION_CONTROL_MAX),
-    releaseJumpThreshold: bounded(saved?.releaseJumpThreshold ?? readLegacy("releaseJumpThreshold"),
-      defaults.releaseJumpThreshold, 0, RELEASE_JUMP_CONTROL_MAX),
-    tearFactors: {
-      outward: bounded(saved?.tearFactors?.outward ?? readLegacy("tearFactors.outward"), defaults.tearFactors.outward, 0, 1),
-      bottleneck: bounded(saved?.tearFactors?.bottleneck ?? readLegacy("tearFactors.bottleneck"), defaults.tearFactors.bottleneck, 0, 1),
-    },
-    tearWarning: typeof saved?.tearWarning === "boolean" ? saved.tearWarning : defaults.tearWarning,
-    liftedTransparency: bounded(saved?.liftedTransparency ?? readLegacy("liftedTransparency"), defaults.liftedTransparency, 0.05, 0.9),
-    appearance: saved ? normalizeAppearance(saved.appearance) : readAppearance(),
-    camera: {
-      pan: typeof saved?.camera?.pan === "boolean" ? saved.camera.pan : legacyCamera.pan,
-      edgeClearance: bounded(saved?.camera?.edgeClearance, legacyCamera.edgeClearance, MIN_EDGE_CLEARANCE, MAX_EDGE_CLEARANCE),
-    },
-    zoom: typeof saved?.zoom === "number" && ZOOM_STEPS.includes(saved.zoom) ? saved.zoom : defaults.zoom,
-    peelSound: saved ? PEEL_SOUNDS.find(({ id: sound }) => sound === saved.peelSound)?.id ?? defaults.peelSound : readPeelSound(),
-    peelVolume: saved ? bounded(saved.peelVolume, defaults.peelVolume, 0, 1) : readPeelVolume(),
-    soundResponse: saved
-      ? PEEL_SOUND_RESPONSES.find(({ id: response }) => response === saved.soundResponse)?.id ?? defaults.soundResponse
-      : readSoundResponse(),
-    edgeClick: typeof saved?.edgeClick === "boolean" ? saved.edgeClick : defaults.edgeClick,
-    releaseDynamics: typeof saved?.releaseDynamics === "boolean" ? saved.releaseDynamics : defaults.releaseDynamics,
-  };
+  const tearThreshold = saved?.tearThreshold ?? readLegacy("tearThreshold", 0, TENSION_CONTROL_MAX);
+  const releaseJumpThreshold = saved?.releaseJumpThreshold ?? readLegacy("releaseJumpThreshold", 0, RELEASE_JUMP_CONTROL_MAX);
+  const outward = saved?.tearFactors?.outward ?? readLegacy("tearFactors.outward", 0, 1);
+  const bottleneck = saved?.tearFactors?.bottleneck ?? readLegacy("tearFactors.bottleneck", 0, 1);
+  const liftedTransparency = saved?.liftedTransparency ?? readLegacy("liftedTransparency", 0.05, 0.9);
+  const local = { tearThreshold, releaseJumpThreshold, tearFactors: { outward, bottleneck }, liftedTransparency };
+  if (saved) return normalizeLevelSettings({ ...saved, ...local });
+  if (previous && [tearThreshold, releaseJumpThreshold, outward, bottleneck, liftedTransparency].every(value => value === undefined)) {
+    return previous;
+  }
+  return normalizeLevelSettings({
+    ...local,
+    appearance: readAppearance(), camera: readCameraSettings(), peelSound: readPeelSound(), peelVolume: readPeelVolume(),
+    soundResponse: readSoundResponse(),
+  });
 }
 
 export function saveLevelSettings(id: string, settings: LevelSettings) {
   try { localStorage.setItem(`${levelKey(id)}.settings`, JSON.stringify(settings)); } catch { /* Storage is optional. */ }
+}
+
+export function readLevelSelection(): { id: string; previous?: LevelSettings } | null {
+  try {
+    const raw = localStorage.getItem(SELECTION_KEY);
+    if (!raw) return null;
+    if (!raw.startsWith("{")) return { id: raw };
+    const saved = JSON.parse(raw);
+    if (typeof saved?.id !== "string") return null;
+    const previous = settingsObject(saved.previous);
+    return { id: saved.id, previous: previous ? normalizeLevelSettings(previous) : undefined };
+  } catch { return null; }
+}
+
+export function saveLevelSelection(id: string, previous: LevelSettings) {
+  try { localStorage.setItem(SELECTION_KEY, JSON.stringify({ id, previous })); } catch { /* Storage is optional. */ }
 }

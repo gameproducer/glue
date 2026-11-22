@@ -11,7 +11,7 @@ export function stampCrease(
   const bottom = Math.max(0, Math.floor(((seam.y - radius) / size.y + 0.5) * height));
   const top = Math.min(height, Math.ceil(((seam.y + radius) / size.y + 0.5) * height));
   const pixel = Math.max(size.x / width, size.y / height);
-  const lineWidth = Math.max(0.019, pixel * 0.8);
+  const lineWidth = Math.max(0.025, pixel * 1.1);
   let changed = false;
   for (let row = bottom; row < top; row++) {
     const dy = ((row + 0.5) / height - 0.5) * size.y - seam.y;

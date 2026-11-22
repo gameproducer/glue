@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX,
-  readLevelSettings, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity,
+  readLevelSelection, readLevelSettings, saveLevelSelection, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity,
 } from "../lib/peel/LevelSettings.ts";
 import { BACKGROUNDS, FACE_FINISHES, RELEASE_FINISHES, shadowVisible, usesFrontRefraction } from "../lib/render/PeelAppearance.ts";
+import { readTouchCamera, saveTouchCamera } from "../lib/render/TouchCamera.ts";
 
 function withStorage(entries, run) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -113,5 +114,42 @@ test("older visual, audio, camera and level settings seed a level once", () => {
     storage.set("peel.appearance", '{"face":23}');
     assert.equal(readLevelSettings("bread").appearance.face, 19);
     assert.equal(readLevelSettings("ruler").appearance.face, 23);
+  });
+});
+
+test("an uncustomized level inherits the last played level and retains that view on reload", () => {
+  withStorage([
+    ["peel.selectedLevel", "bread"],
+    ["peel.level.legacy.tearThreshold", "0"],
+    ["peel.level.legacy.settings", '{"zoom":75}'],
+  ], storage => {
+    assert.deepEqual(readLevelSelection(), { id: "bread" });
+    const bread = {
+      ...DEFAULT_LEVEL_SETTINGS, profile: "cone", zoom: 108, edgeClick: false,
+      appearance: { ...DEFAULT_LEVEL_SETTINGS.appearance, keepCrease: 1, background: 5 },
+    };
+    saveLevelSettings("bread", bread);
+    const active = readLevelSettings("bread");
+    saveLevelSelection("ruler", active);
+    assert.deepEqual(readLevelSelection(), { id: "ruler", previous: bread });
+    assert.deepEqual(readLevelSettings("ruler", readLevelSelection().previous), bread);
+    assert.equal(storage.has("peel.level.ruler.settings"), false);
+    assert.deepEqual(readLevelSettings("pencil", readLevelSettings("ruler", active)), bread);
+    assert.equal(readLevelSettings("legacy", bread).tearThreshold, 0);
+    assert.equal(readLevelSettings("legacy", bread).zoom, 75);
+
+    const newRuler = { ...bread, zoom: 90 };
+    saveLevelSettings("ruler", newRuler);
+    assert.deepEqual(readLevelSettings("ruler", DEFAULT_LEVEL_SETTINGS), newRuler);
+  });
+});
+
+test("touch focus follows the curl by default and an explicit choice still wins", () => {
+  withStorage([], storage => {
+    assert.deepEqual(readTouchCamera(), { mode: "focus", miniMap: false, followCurl: true });
+    storage.set("peel.touchCamera", '{"mode":"manual","miniMap":true}');
+    assert.deepEqual(readTouchCamera(), { mode: "manual", miniMap: true, followCurl: true });
+    saveTouchCamera({ mode: "focus", miniMap: true, followCurl: false });
+    assert.deepEqual(readTouchCamera(), { mode: "focus", miniMap: true, followCurl: false });
   });
 });

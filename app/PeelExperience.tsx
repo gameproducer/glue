@@ -17,7 +17,8 @@ import { APPEARANCE_OPTIONS, BACKGROUNDS, LEGACY_RIDGE_FINISH, shadowVisible, us
 import { MAX_EDGE_CLEARANCE, MIN_EDGE_CLEARANCE, type CameraSettings } from "@/lib/render/PeelFraming";
 import {
   DEFAULT_LEVEL_SETTINGS, RELEASE_JUMP_CONTROL_MAX, TENSION_CONTROL_MAX, ZOOM_STEPS,
-  readLevelSettings, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity, type LevelSettings,
+  readLevelSelection, readLevelSettings, saveLevelSelection, saveLevelSettings, sensitivityToThreshold, thresholdToSensitivity,
+  type LevelSettings,
 } from "@/lib/peel/LevelSettings";
 import { PeelRenderer } from "@/lib/render/PeelRenderer";
 import {
@@ -195,7 +196,7 @@ function SettingsDialog({ id, title, levelName, onDismiss, children }: {
 }
 
 export default function PeelExperience() {
-  const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
+  const [{ level, previous }, setSelection] = useState<{ level: Level; previous?: LevelSettings }>({ level: DEFAULT_LEVEL });
   const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
   const [audio] = useState(() => new PeelAudio());
   const [touchCamera, setTouchCamera] = useState(DEFAULT_TOUCH_CAMERA);
@@ -210,17 +211,15 @@ export default function PeelExperience() {
     return () => query.removeEventListener("change", sync);
   }, []);
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("peel.selectedLevel");
-      const found = LEVELS.find(item => item.id === saved);
-      if (found) setLevel(found);
-    } catch { /* Storage is optional. */ }
+    const saved = readLevelSelection();
+    const found = LEVELS.find(item => item.id === saved?.id);
+    if (found) setSelection({ level: found, previous: saved?.previous });
   }, []);
-  const selectLevel = (next: Level) => {
-    setLevel(next);
-    try { localStorage.setItem("peel.selectedLevel", next.id); } catch { /* Storage is optional. */ }
+  const selectLevel = (next: Level, previous: LevelSettings) => {
+    setSelection({ level: next, previous });
+    saveLevelSelection(next.id, previous);
   };
-  return <PeelGame key={level.id} level={level} onLevelChange={selectLevel}
+  return <PeelGame key={level.id} level={level} previous={previous} onLevelChange={selectLevel}
     bottomPanelOpen={bottomPanelOpen} onBottomPanelChange={setBottomPanelOpen} audio={audio}
     touchCamera={touchCamera} touchMode={touchScreen ? touchCamera.mode : null}
     onTouchCameraChange={preference => {
@@ -229,9 +228,10 @@ export default function PeelExperience() {
     }} />;
 }
 
-function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, audio, touchCamera, touchMode, onTouchCameraChange }: {
+function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPanelChange, audio, touchCamera, touchMode, onTouchCameraChange }: {
   level: Level;
-  onLevelChange: (level: Level) => void;
+  previous?: LevelSettings;
+  onLevelChange: (level: Level, settings: LevelSettings) => void;
   bottomPanelOpen: boolean;
   onBottomPanelChange: (open: boolean) => void;
   audio: PeelAudio;
@@ -278,6 +278,10 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     settingsRef.current = next;
     setSettings(next);
     saveLevelSettings(level.id, next);
+  };
+
+  const selectLevel = (next: Level) => {
+    if (next.id !== level.id) onLevelChange(next, settingsRef.current);
   };
 
   useEffect(() => {
@@ -392,7 +396,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
     if (!hostRef.current) return;
     let disposed = false;
     let teardown = () => {};
-    const saved = readLevelSettings(level.id);
+    const saved = readLevelSettings(level.id, previous);
     settingsRef.current = saved;
     setSettings(saved);
     audio.setVolume(saved.peelVolume);
@@ -659,7 +663,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
       activePointer.current = null;
       teardown();
     };
-  }, [level, audio, recordDiagnostic, refresh, startDiagnosticRecording]);
+  }, [level, previous, audio, recordDiagnostic, refresh, startDiagnosticRecording]);
 
   const changeProfile = (profile: CurlProfile) => {
     updateSettings({ profile });
@@ -891,16 +895,16 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
           <button type="button" aria-haspopup="dialog" onClick={() => setMenu("camera-sound")}>Camera &amp; sound</button>
         </div>
         <nav className="level-switcher" aria-label="Choose sticker level">
-          <button type="button" aria-label="Previous level" disabled={levelIndex === 0} onClick={() => onLevelChange(LEVELS[levelIndex - 1])}>‹</button>
+          <button type="button" aria-label="Previous level" disabled={levelIndex === 0} onClick={() => selectLevel(LEVELS[levelIndex - 1])}>‹</button>
           <label>
             <span>LEVEL {levelIndex + 1} / {LEVELS.length}</span>
-            <select aria-label="Sticker level" value={level.id} onChange={event => onLevelChange(LEVELS.find(item => item.id === event.target.value)!)}>
+            <select aria-label="Sticker level" value={level.id} onChange={event => selectLevel(LEVELS.find(item => item.id === event.target.value)!)}>
               {PACKS.map(pack => <optgroup key={pack} label={pack}>
                 {LEVELS.filter(item => item.pack === pack).map(item => <option key={item.id} value={item.id}>{item.name} · {item.maxMoves} moves</option>)}
               </optgroup>)}
             </select>
           </label>
-          <button type="button" aria-label="Next level" disabled={levelIndex === LEVELS.length - 1} onClick={() => onLevelChange(LEVELS[levelIndex + 1])}>›</button>
+          <button type="button" aria-label="Next level" disabled={levelIndex === LEVELS.length - 1} onClick={() => selectLevel(LEVELS[levelIndex + 1])}>›</button>
         </nav>
         <div className="readouts" aria-label="Level status">
           <span>MOVES&nbsp; {snapshot.moves} / {snapshot.maxMoves}</span>
@@ -1088,7 +1092,7 @@ function PeelGame({ level, onLevelChange, bottomPanelOpen, onBottomPanelChange, 
                 <label className="setting-toggle">
                   <input type="checkbox" checked={touchCamera.followCurl}
                     onChange={event => onTouchCameraChange({ ...touchCamera, followCurl: event.currentTarget.checked })} />
-                  <span>Follow the curl (experimental)</span>
+                  <span>Follow the curl</span>
                 </label>
               )}
               <label className="setting-control">

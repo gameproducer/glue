@@ -692,9 +692,14 @@ const fragmentShader = /* glsl */ `
     if (uKeepCrease > 0.5) {
       strainLight = max(strainLight, texture2D(uSavedCreases, vUv).rg * 0.92);
     }
-    // A soft studio reflection and its falloff leave the material's finish visible.
-    color *= 1.0 + strainLight.x * 0.18 - strainLight.y * 0.26;
-    color += vec3(strainLight.x * (0.14 + specular * 0.18));
+    // Keep the two sides of the crease readable over the released finish.
+    // The surrounding film keeps its selected transparency.
+    float ridge = smoothstep(0.02, 0.61, strainLight.x);
+    float trough = smoothstep(0.02, 0.61, strainLight.y);
+    color = mix(color, color * 0.24 + vec3(0.018, 0.016, 0.025), trough * 0.80);
+    vec3 creaseHighlight = mix(vec3(0.94, 0.96, 1.0), clamp(color, 0.0, 1.0), 0.15);
+    color = mix(color, creaseHighlight, ridge * 0.86);
+    alpha = max(alpha, silhouette * max(ridge, trough) * 0.84);
     if (uDissolve > 0.0) {
       float sweep = 0.5 + dot(vUv - 0.5, uDirection) * 0.6;
       float variation = softNoise(vUv * 7.0) * 0.8 + softNoise(vUv * 21.0) * 0.2;
