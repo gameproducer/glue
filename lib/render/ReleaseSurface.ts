@@ -24,6 +24,22 @@ export function detachedAnimation(now: number, detachedAt: number, releasedAt: n
   };
 }
 
+/** Normalize the dissolve along the actual detached material, including tiny islands. */
+export function detachedSweepRange(rgba: Uint8Array, width: number, height: number, direction: Vec2) {
+  let start = Infinity, end = -Infinity;
+  for (let cell = 0; cell < width * height; cell++) {
+    if (rgba[cell * 4 + 2] === 0) continue;
+    const x = (cell % width + 0.5) / width - 0.5;
+    const y = (Math.floor(cell / width) + 0.5) / height - 0.5;
+    const along = x * direction.x + y * direction.y;
+    start = Math.min(start, along);
+    end = Math.max(end, along);
+  }
+  if (end > start) return { start, span: end - start };
+  const cellSpan = Math.abs(direction.x) / width + Math.abs(direction.y) / height || 1 / width;
+  return { start: Number.isFinite(start) ? start - cellSpan / 2 : -cellSpan / 2, span: cellSpan };
+}
+
 /** Red records release, green holds the seam bevel, and blue holds previous grip curls. */
 export function writeReleaseSurface(
   target: Uint8Array, history: Uint8Array, sources: Int32Array, width: number, grips: ReadonlyMap<number, Vec2>,

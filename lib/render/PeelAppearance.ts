@@ -4,6 +4,7 @@ export const FACE_FINISHES = [
   "Hammered gold", "Engine-turned silver", "Oil-slick foil", "Cracked ice foil", "Lenticular checker foil",
   "Gloss laminate", "Soft-touch matte", "Linen laminate", "Spot UV varnish", "Dichroic laminate", "Puffy gloss",
   "Jelly", "Glass", "Liquid glass", "Water", "Clear tape", "Security hologram", "Caramel",
+  "Birefringent crystal", "Aerogel", "Event horizon",
 ] as const;
 export const BACK_FINISHES = [
   "Clear", "Frosted", "Prismatic", "Fine mesh",
@@ -24,7 +25,11 @@ export const FIRST_REFRACTIVE_FINISH = 20;
 export const CLEAR_TAPE_FINISH = 24;
 export const SECURITY_HOLOGRAM_FINISH = 25;
 export const CARAMEL_FINISH = 26;
-export const usesTranslucentCoating = (finish: number) => finish === CLEAR_TAPE_FINISH || finish === CARAMEL_FINISH;
+export const BIREFRINGENT_CRYSTAL_FINISH = 27;
+export const AEROGEL_FINISH = 28;
+export const EVENT_HORIZON_FINISH = 29;
+export const usesTranslucentCoating = (finish: number) =>
+  finish === CLEAR_TAPE_FINISH || (finish >= CARAMEL_FINISH && finish <= EVENT_HORIZON_FINISH);
 export const usesFrontRefraction = (finish: number) =>
   (finish >= FIRST_REFRACTIVE_FINISH && finish < CLEAR_TAPE_FINISH) || usesTranslucentCoating(finish);
 export const LEGACY_RIDGE_FINISH = 4;

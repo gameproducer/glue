@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import {
-  BACKGROUNDS, CARAMEL_FINISH, CLEAR_TAPE_FINISH, FILM_FILTERS, FIRST_REFRACTIVE_FINISH, PUFFY_FINISH,
-  SECURITY_HOLOGRAM_FINISH, shadowVisible, SPACE, STICKER_COLORS, usesFrontRefraction, usesTranslucentCoating,
-  type PeelAppearance,
+  AEROGEL_FINISH, BACKGROUNDS, BIREFRINGENT_CRYSTAL_FINISH, CARAMEL_FINISH, CLEAR_TAPE_FINISH,
+  EVENT_HORIZON_FINISH, FILM_FILTERS, FIRST_REFRACTIVE_FINISH, PUFFY_FINISH, SECURITY_HOLOGRAM_FINISH,
+  shadowVisible, SPACE, STICKER_COLORS, usesFrontRefraction, usesTranslucentCoating, type PeelAppearance,
 } from "./PeelAppearance";
 import {
   curlBounds, DEFAULT_CAMERA_SETTINGS, dragScaleForReach, fitFrustum, MAX_TENSION_STRETCH,
@@ -17,7 +17,9 @@ import { addSurfaceTexture } from "./SurfaceTexture";
 import { puffyNormals } from "./PuffyFinish";
 import { FilmOptics } from "./FilmOptics";
 import { CREASE_START_RISK, GESTURE_START_RISK, TearWarningOverlay } from "./TearWarningOverlay";
-import { detachedAlignmentDuration, detachedAnimation, releaseSettleDuration, writeReleaseSurface } from "./ReleaseSurface";
+import {
+  detachedAlignmentDuration, detachedAnimation, detachedSweepRange, releaseSettleDuration, writeReleaseSurface,
+} from "./ReleaseSurface";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 import { stickerLayout, type StickerArea, type StickerPiece } from "../peel/StickerLayout";
 import { moveManualView, tappedAreaFocus, type ManualView, type TouchCameraMode, type TouchCameraView } from "./TouchCamera";
@@ -25,6 +27,7 @@ import { stampCrease } from "./SavedCreases";
 
 const STICKER_WIDTH = 4.8;
 const DISSOLVE_MS = 1800;
+const FOCUS_DISSOLVE_MS = 1000;
 const TORN_LAYER_Z = 0.086;
 const RIDGE_HEIGHT = 0.065;
 const GRIP_CURL_HEIGHT = 0.105;
@@ -33,11 +36,13 @@ const tensionStretch = (stress: number, threshold: number) => threshold > 0
   ? MAX_TENSION_STRETCH * THREE.MathUtils.smoothstep(stress / threshold, 0.9, 1) : 0;
 
 type DissolvingShape = {
+  piece: StickerPiece | null;
   texture: THREE.DataTexture;
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
   detachedAt: number;
   releasedAt: number | null;
   alignmentMs: number;
+  dissolveMs: number;
   fadeStart: number | null;
   origin: Vec2;
   offset: Vec2;
@@ -103,6 +108,7 @@ type PeelUniforms = {
   uRelax: { value: number };
   uFlatOffset: { value: THREE.Vector2 };
   uDissolve: { value: number };
+  uDissolveSweep: { value: THREE.Vector2 };
   uTornOffset: { value: THREE.Vector2 };
   uTearStrain: { value: THREE.Vector3 };
   uSavedCreases: { value: THREE.DataTexture };
@@ -231,6 +237,7 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uFilmColor;
   uniform float uLiftedOpacity;
   uniform float uDissolve;
+  uniform vec2 uDissolveSweep;
   uniform sampler2D uAttachedCurl;
   uniform vec2 uGrab;
   uniform vec2 uDirection;
@@ -270,9 +277,68 @@ const fragmentShader = /* glsl */ `
       * (1.0 - smoothstep(0.25, 0.6, pixelWidth));
   }
 
+  vec3 sampleBackdrop(vec2 ray) {
+    vec2 border = 0.5 / uViewport;
+    return texture2D(uScene, clamp(ray, border, 1.0 - border)).rgb;
+  }
+
+  vec3 sculptedTransmission(vec3 normal, vec3 light, vec4 coating, vec2 sheet) {
+    vec3 profile = normalize(coating.rgb * 2.0 - 1.0);
+    vec3 curved = normalize(normal + vec3(profile.xy * 0.43, 0.0));
+    float rim = 1.0 - abs(curved.z);
+    float edge = 1.0 - smoothstep(0.24, 0.64, coating.a);
+    float glint = pow(max(dot(reflect(-light, curved), vec3(0.0, 0.0, 1.0)), 0.0), 31.0);
+    vec2 aspect = vec2(uViewport.y / uViewport.x, 1.0);
+    vec2 ray = gl_FragCoord.xy / uViewport - curved.xy * 0.036 * aspect;
+
+    if (uFaceFinish == ${BIREFRINGENT_CRYSTAL_FINISH}.0) {
+      vec2 axis = normalize(vec2(0.89, 0.42) + curved.xy * 0.46);
+      vec2 separation = axis * aspect * (0.014 + rim * 0.048 + edge * 0.010);
+      vec3 ordinary = sampleBackdrop(ray - separation);
+      vec3 extraordinary = sampleBackdrop(ray + separation);
+      float plane = dot(sheet, vec2(0.86, -0.52)) + dot(curved.xy, axis) * 0.40;
+      float planes = abs(fract(plane * 5.0 + 0.35) - 0.5);
+      float cleavage = 1.0 - smoothstep(0.020, 0.095 + fwidth(plane) * 3.0, planes);
+      vec3 split = mix(ordinary * vec3(0.70, 0.96, 1.04), extraordinary * vec3(1.06, 0.78, 1.04), 0.52);
+      vec3 flash = mix(vec3(0.40, 0.82, 1.0), vec3(0.94, 0.64, 1.0), smoothstep(-0.35, 0.4, curved.x + plane));
+      return split * 0.90 + flash * (0.045 + edge * 0.29 + cleavage * (0.13 + rim * 0.40) + glint * 0.25);
+    }
+
+    if (uFaceFinish == ${AEROGEL_FINISH}.0) {
+      vec2 blur = aspect * (0.008 + coating.a * 0.024 + rim * 0.013);
+      vec3 soft = (sampleBackdrop(ray + blur * vec2(0.8, 0.45))
+        + sampleBackdrop(ray + blur * vec2(-0.45, 0.8))
+        + sampleBackdrop(ray + blur * vec2(-0.8, -0.45))
+        + sampleBackdrop(ray + blur * vec2(0.45, -0.8))) * 0.25;
+      float mist = softNoise(sheet * 13.5 + curved.xy * 2.4) * 0.70 + softNoise(sheet * 37.0) * 0.30;
+      float dust = (grain(floor(vUv * 360.0)) - 0.5) * 0.025;
+      float scattering = clamp(0.24 + mist * 0.29 + edge * 0.27 + rim * 0.18, 0.0, 0.88);
+      vec3 blue = mix(vec3(0.15, 0.34, 0.59), vec3(0.45, 0.76, 0.97), mist * 0.72 + edge * 0.25);
+      return mix(soft * vec3(1.08, 0.95, 0.78), blue, scattering) + vec3(0.58, 0.77, 1.0) * (glint * 0.11 + edge * 0.14 + dust);
+    }
+
+    // A warped backdrop and offset spectral arcs suggest a tiny gravitational lens.
+    vec2 well = sheet - vec2(0.015, -0.025) + curved.xy * 0.13
+      + vec2(sin(uMaterialTime * 0.7), cos(uMaterialTime * 0.54)) * 0.014;
+    vec2 ellipse = well * vec2(0.92, 1.27);
+    float distanceToCenter = length(ellipse);
+    float influence = exp(-distanceToCenter * 3.7);
+    vec2 bent = ray + well * aspect * (0.020 * influence / (0.021 + dot(ellipse, ellipse)));
+    vec2 separation = vec2(-well.y, well.x) * aspect * (0.036 * influence);
+    vec3 lensed = vec3(sampleBackdrop(bent + separation).r, sampleBackdrop(bent).g, sampleBackdrop(bent - separation).b);
+    float angle = atan(ellipse.y, ellipse.x + 0.0001);
+    float band = (distanceToCenter - 0.225 - 0.018 * cos(angle * 2.0)) / (0.020 + rim * 0.012);
+    float echo = (distanceToCenter - 0.31) / 0.052;
+    float arc = exp(-band * band) * (0.45 + 0.55 * pow(0.5 + 0.5 * sin(angle * 1.4 + 0.9), 2.0));
+    vec3 spectrumArc = mix(vec3(0.36, 0.14, 1.0), vec3(0.21, 0.88, 1.0), 0.5 + 0.5 * cos(angle + 0.6));
+    float core = mix(0.38, 0.99, smoothstep(0.045, 0.25, distanceToCenter));
+    return lensed * core + spectrumArc * (0.043 + arc * 0.70 + exp(-echo * echo) * 0.14 + edge * 0.18 + glint * 0.12);
+  }
+
   vec3 translucentCoating(vec3 normal, vec3 light, bool caramel) {
     vec2 sheet = (vUv - 0.5) * uStickerSize / max(uStickerSize.x, uStickerSize.y);
     vec4 coating = texture2D(uPuff, vUv);
+    if (uFaceFinish >= ${BIREFRINGENT_CRYSTAL_FINISH}.0) return sculptedTransmission(normal, light, coating, sheet);
     vec3 profile = normalize(coating.rgb * 2.0 - 1.0);
     float bevel = caramel ? 0.80 : 0.16;
     vec3 curved = normalize(normal + vec3(profile.xy * bevel, 0.0));
@@ -372,7 +438,8 @@ const fragmentShader = /* glsl */ `
     float grazing = pow(1.0 - abs(normal.z), 2.0);
     float specular = pow(max(dot(reflect(-lightDirection, normal), vec3(0.0, 0.0, 1.0)), 0.0), 26.0);
     bool caramel = uFaceFinish == ${CARAMEL_FINISH}.0;
-    bool translucent = uFaceFinish == ${CLEAR_TAPE_FINISH}.0 || caramel;
+    bool translucent = uFaceFinish == ${CLEAR_TAPE_FINISH}.0
+      || (uFaceFinish >= ${CARAMEL_FINISH}.0 && uFaceFinish <= ${EVENT_HORIZON_FINISH}.0);
     #ifdef PEEL_BACK_FACE
     vec3 filmColor = uFilmColor * (0.78 + diffuse * 0.14);
     filmColor += vec3(1.0, 0.82, 0.92) * (grazing * 0.18 + specular * 0.24);
@@ -412,7 +479,7 @@ const fragmentShader = /* glsl */ `
     }
     vec3 color = filmColor;
     float alpha = silhouette * uLiftedOpacity;
-    if (uFilmOptics > 0.5) {
+    if (uFilmOptics > 0.5 && !translucent) {
       vec2 screen = gl_FragCoord.xy / uViewport;
       vec2 aspect = vec2(uViewport.x / uViewport.y, 1.0);
       vec2 delta = (screen - vLensCenter) * aspect;
@@ -730,11 +797,19 @@ const fragmentShader = /* glsl */ `
     color = mix(color, creaseHighlight, ridge * 0.86);
     alpha = max(alpha, silhouette * max(ridge, trough) * 0.84);
     if (uDissolve > 0.0) {
-      float sweep = 0.5 + dot(vUv - 0.5, uDirection) * 0.6;
+      float along = dot(vUv - 0.5, uDirection);
       float variation = softNoise(vUv * 7.0) * 0.8 + softNoise(vUv * 21.0) * 0.2;
-      float dissolveStart = 0.10 + sweep * 0.42 + variation * 0.15;
-      float veil = 1.0 - smoothstep(0.0, 1.0, uDissolve) * 0.35;
-      alpha *= veil * (1.0 - smoothstep(dissolveStart, dissolveStart + 0.34, uDissolve));
+      if (uDissolveSweep.y > 0.0) {
+        // The last edge fades on the same clock that returns the touch camera.
+        float sweep = clamp((along - uDissolveSweep.x) / uDissolveSweep.y, 0.0, 1.0);
+        float start = sweep * (0.66 + (variation - 0.5) * 0.20 * (1.0 - sweep));
+        alpha *= 1.0 - clamp((uDissolve - start) / 0.34, 0.0, 1.0);
+      } else {
+        float sweep = 0.5 + along * 0.6;
+        float dissolveStart = 0.10 + sweep * 0.42 + variation * 0.15;
+        float veil = 1.0 - smoothstep(0.0, 1.0, uDissolve) * 0.35;
+        alpha *= veil * (1.0 - smoothstep(dissolveStart, dissolveStart + 0.34, uDissolve));
+      }
     }
     #if defined(PEEL_SETTLING) && defined(PEEL_BACK_FACE)
       alpha *= 1.0 - smoothstep(0.78, 1.0, uRelax);
@@ -996,6 +1071,7 @@ export class PeelRenderer {
         uRelax: { value: 0 },
         uFlatOffset: { value: new THREE.Vector2() },
         uDissolve: { value: 0 },
+        uDissolveSweep: { value: new THREE.Vector2() },
         uTornOffset: { value: new THREE.Vector2() },
         uTearStrain: { value: this.tearStrain },
         uSavedCreases: { value: this.creaseTexture },
@@ -1238,6 +1314,9 @@ export class PeelRenderer {
       const { width, height } = this.simulation;
       const data = new Uint8Array(width * height * 4);
       this.simulation.writeDetachedTexture(data);
+      const focusMode = this.touchCameraMode === "focus";
+      const direction = back.material.uniforms.uDirection.value as THREE.Vector2;
+      const sweep = focusMode ? detachedSweepRange(data, width, height, direction) : null;
       extendStateTexture(data, this.stateSources);
       const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat);
       texture.minFilter = THREE.LinearFilter;
@@ -1255,7 +1334,7 @@ export class PeelRenderer {
       const length = depth * (1 + uniforms.uStretch.value);
       const theta = Math.min(length / radius, Math.PI);
       const shift = depth + Math.max(length - Math.PI * radius, 0) - radius * Math.sin(theta);
-      const direction = uniforms.uDirection.value;
+      if (sweep) uniforms.uDissolveSweep.value.set(sweep.start, sweep.span);
       const flatOffset = uniforms.uFlatOffset.value.copy(direction).multiplyScalar(shift);
       uniforms.uState.value = texture;
       const mesh = new THREE.Mesh(back.geometry, material);
@@ -1278,8 +1357,10 @@ export class PeelRenderer {
       }
       const { liftedCells, totalCells } = this.simulation.diagnostics().current;
       this.heldDissolve = {
+        piece: this.stickerLayout.pieceAtCell(this.simulation.activeGripCell),
         texture, mesh, detachedAt: performance.now(), releasedAt: null, fadeStart: null,
         alignmentMs: detachedAlignmentDuration(liftedCells, totalCells),
+        dissolveMs: focusMode ? FOCUS_DISSOLVE_MS : DISSOLVE_MS,
         origin: { ...pointer }, offset: { x: 0, y: 0 }, bounds,
       };
       this.dissolves.push(this.heldDissolve);
@@ -1776,9 +1857,7 @@ export class PeelRenderer {
     style.bottom = percent(0.5 + (y - halfHeight) / this.stickerHeight);
   }
 
-  private frameCamera(now: number) {
-    const waitingForRelease = this.focusedPiece && !this.dragInput && this.dissolves.length > 0
-      && this.simulation.state[this.focusedPiece.sample] === Cell.outside;
+  private frameCamera(now: number, waitingForRelease = false) {
     if ((this.touchPointPending || waitingForRelease) && this.cameraMotion) {
       this.lastCameraTime = now;
       return;
@@ -1818,7 +1897,7 @@ export class PeelRenderer {
     }
     for (const shape of this.dissolves) {
       const foreground = this.dragInput ? shape === this.heldDissolve
-        : !focusMode && (shape.fadeStart === null || now - shape.fadeStart < DISSOLVE_MS * 0.65);
+        : !focusMode && (shape.fadeStart === null || now - shape.fadeStart < shape.dissolveMs * 0.65);
       if (shape.bounds && foreground) bounds.push(translateBounds(shape.bounds, shape.offset));
     }
     const desired = manualCrop ? wholeBounds.z + (overview - wholeBounds.z) / this.manualView.zoom
@@ -1846,7 +1925,7 @@ export class PeelRenderer {
       ? fitFrustum(bounds, this.tangent, width, height, Math.min(9, shortSide * 0.024), pan) : null;
     const dt = THREE.MathUtils.clamp((now - this.lastCameraTime) / 1000, 0, 0.05);
     // Respect reduced motion for mobile camera commands; preserve the peel's reach guard.
-    const motion = touch && !protect && this.reducedMotion.matches ? null : this.cameraMotion;
+    const motion = touch && (!protect || (focusMode && !this.dragInput)) && this.reducedMotion.matches ? null : this.cameraMotion;
     this.cameraMotion = stepCamera(motion, fit, guard, base, dt, pan, center, focusMode);
     this.lastCameraTime = now;
     const { x, y, z } = this.cameraMotion.pose;
@@ -1891,20 +1970,20 @@ export class PeelRenderer {
         this.reducedMotion.matches ? 0 : shape.alignmentMs);
       shape.fadeStart = fadeStart;
       const fadeElapsed = fadeStart === null ? 0 : Math.max(0, now - fadeStart);
-      if (fadeElapsed >= DISSOLVE_MS) {
+      if (fadeElapsed >= shape.dissolveMs) {
         this.disposeDissolve(shape);
         this.dissolves.splice(i, 1);
       } else {
         shape.mesh.material.uniforms.uRelax.value = alignment;
-        shape.mesh.material.uniforms.uDissolve.value = fadeElapsed / DISSOLVE_MS;
+        shape.mesh.material.uniforms.uDissolve.value = fadeElapsed / shape.dissolveMs;
       }
     }
-    if (this.focusedPiece && !this.dragInput && this.dissolves.length === 0
-        && this.simulation.state[this.focusedPiece.sample] === Cell.outside) {
-      this.resetTouchView();
-    }
+    const releasedFocus = this.focusedPiece && !this.dragInput
+      && this.simulation.state[this.focusedPiece.sample] === Cell.outside ? this.focusedPiece : null;
+    const waitingForRelease = !!releasedFocus && this.dissolves.some(shape => shape.piece === releasedFocus);
+    if (releasedFocus && !waitingForRelease) this.resetTouchView();
     const cameraStarted = performance.now();
-    this.frameCamera(now);
+    this.frameCamera(now, waitingForRelease);
     const renderStarted = performance.now();
     const fronts = usesFrontRefraction(this.frontFinish);
     const backs = (this.opticsMode > 0 || usesTranslucentCoating(this.frontFinish))

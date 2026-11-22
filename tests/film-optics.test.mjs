@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { FilmOptics } from "../lib/render/FilmOptics.ts";
-import { DEFAULT_APPEARANCE, FILM_OPTICS, readAppearance } from "../lib/render/PeelAppearance.ts";
+import {
+  DEFAULT_APPEARANCE, FACE_FINISHES, FILM_OPTICS, normalizeAppearance, readAppearance,
+  usesFrontRefraction, usesTranslucentCoating,
+} from "../lib/render/PeelAppearance.ts";
 
 test("film refraction captures the scene without its own film and restores visibility", () => {
   const optics = new FilmOptics();
@@ -58,4 +61,15 @@ test("film optics defaults off and saves independently from the back material", 
     if (previous) Object.defineProperty(globalThis, "localStorage", previous);
     else delete globalThis.localStorage;
   }
+});
+
+test("new translucent finishes round-trip and refract on both sides of a lifted flap", () => {
+  for (const name of ["Birefringent crystal", "Aerogel", "Event horizon"]) {
+    const face = FACE_FINISHES.indexOf(name);
+    assert.equal(normalizeAppearance({ face }).face, face);
+    assert.equal(usesFrontRefraction(face), true);
+    assert.equal(usesTranslucentCoating(face), true);
+  }
+  assert.equal(FACE_FINISHES[25], "Security hologram");
+  assert.equal(usesFrontRefraction(25), false);
 });

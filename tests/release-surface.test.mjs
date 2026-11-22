@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detachedAlignmentDuration, detachedAnimation, releaseSettleDuration, writeReleaseSurface } from "../lib/render/ReleaseSurface.ts";
+import {
+  detachedAlignmentDuration, detachedAnimation, detachedSweepRange, releaseSettleDuration, writeReleaseSurface,
+} from "../lib/render/ReleaseSurface.ts";
 import { nearestStateSources } from "../lib/render/StateTexture.ts";
 
 test("released relief bevels into the adhesive and curls locally around old grips", () => {
@@ -47,4 +49,20 @@ test("detached material aligns 75% faster while held and fades once released and
   assert.deepEqual(detachedAnimation(2400, detachedAt, null, duration), { alignment: 1, fadeStart: null });
   assert.equal(detachedAnimation(2400, detachedAt, 2300, duration).fadeStart, 2300);
   assert.equal(detachedAnimation(1300, detachedAt, 1200, duration).fadeStart, detachedAt + duration);
+});
+
+test("the mobile dissolve uses the last edge of the detached piece rather than the full sheet", () => {
+  const width = 16, height = 8;
+  const mask = new Uint8Array(width * height * 4);
+  mask[(3 * width + 2) * 4 + 2] = 255;
+  mask[(3 * width + 4) * 4 + 2] = 255;
+  mask[(3 * width + 15) * 4] = 255;
+  const forward = detachedSweepRange(mask, width, height, { x: 1, y: 0 });
+  assert.deepEqual(forward, { start: 2.5 / width - 0.5, span: 2 / width });
+  const backward = detachedSweepRange(mask, width, height, { x: -1, y: 0 });
+  assert.equal(backward.start, -(forward.start + forward.span));
+  assert.equal(backward.span, forward.span);
+  const singleRow = detachedSweepRange(mask, width, height, { x: 0, y: 1 });
+  assert.ok(singleRow.span > 0);
+  assert.ok(singleRow.start < 3.5 / height - 0.5);
 });
