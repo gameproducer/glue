@@ -517,12 +517,14 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
           const solverMs = performance.now() - solverStarted;
           renderer.frameTimings.recordInput(solverMs);
           const finished = simulation.snapshot();
-          if (accepted && finished.moves === finished.maxMoves + 1) {
+          const spentMove = finished.moves > beforeRelease.moves;
+          if (spentMove && finished.moves === finished.maxMoves + 1) {
             setMoveLimitToast(true);
             moveToastTimer.current = window.setTimeout(() => setMoveLimitToast(false), 2800);
           }
           recordDiagnostic(releasedByPlayer ? "pointer_up" : "pointer_cancel", beforeRelease.pointer, {
             accepted,
+            spentMove,
             commit: true,
             hadGrab,
             outwardPulling: beforeRelease.outwardPulling,
@@ -539,7 +541,7 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
             setMiss(true);
             window.setTimeout(() => setMiss(false), 420);
           }
-          if (navigator.vibrate && accepted) navigator.vibrate(12);
+          if (navigator.vibrate && spentMove) navigator.vibrate(12);
         };
 
         const touches = new Map<number, Vec2>();
@@ -864,7 +866,7 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
         : snapshot.pulling
           ? snapshot.frontDepth === 0 ? "Sweep from the edge into the sticker."
             : snapshot.canCommit ? "Let go to keep this peel, or keep sweeping." : "Keep sweeping the peel front."
-          : snapshot.moves > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
+          : snapshot.progress > 0 ? "Use the new exposed boundary for the next sweep." : "Start on an edge and sweep through the sticker.";
 
   const appearanceControl = (key: keyof PeelAppearance, label: string, hint?: string) => {
     const options = APPEARANCE_OPTIONS[key];
@@ -923,7 +925,7 @@ function PeelGame({ level, previous, onLevelChange, bottomPanelOpen, onBottomPan
             {touchView.focused ? (
               <button type="button" disabled={snapshot.tracking} onClick={showWholeSticker}>Whole sticker</button>
             ) : touchView.canFocus && !snapshot.tracking && (
-              <p className="touch-camera-hint">Tap a small piece to zoom</p>
+              <p className="touch-camera-hint">Tap the sticker to zoom</p>
             )}
           </div>
         )}

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { stickerLayout } from "../lib/peel/StickerLayout.ts";
 import { fitFrustum, stepCamera } from "../lib/render/PeelFraming.ts";
-import { MAX_MANUAL_ZOOM, moveManualView } from "../lib/render/TouchCamera.ts";
+import { MAX_MANUAL_ZOOM, moveManualView, tappedAreaFocus } from "../lib/render/TouchCamera.ts";
 import { stampCrease } from "../lib/render/SavedCreases.ts";
 import { AttachedCurl } from "../lib/render/AttachedCurl.ts";
 
@@ -51,6 +51,17 @@ test("working area follows adhered cells of the selected piece and ignores the v
   assert.equal(layout.pieceAtCell(4), null);
   state[2] = state[3] = 3;
   assert.equal(layout.areaInState(layout.pieces[0], state, 1), null);
+});
+
+test("tapping a broad piece zooms modestly toward the tap and a second tap retargets at the same scale", () => {
+  const bounds = { left: -2.4, right: 2.4, bottom: -1.6, top: 1.6, z: 0.02 };
+  const overview = 12;
+  const left = tappedAreaFocus(bounds, { x: -2, y: 1 }, overview);
+  const right = tappedAreaFocus(bounds, { x: 2, y: -1 }, overview);
+  assert.ok(left.x < -1 && left.y > 0.5);
+  assert.ok(right.x > 1 && right.y < -0.5);
+  assert.equal(right.z, left.z);
+  assert.ok(Math.abs((overview - bounds.z) / (left.z - bounds.z) - 1.22) < 1e-9);
 });
 
 test("a lifted strip is framed at its transformed location instead of its old footprint", () => {

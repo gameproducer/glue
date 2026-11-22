@@ -62,7 +62,7 @@ test("pulling out from any side, a corner, or into a cutout cannot release mater
   }
 });
 
-test("reversing outward restores a partial peel and the flap can still be re-grabbed inward", () => {
+test("reversing a partial re-grip restores the flap and still spends a move", () => {
   const width = 52;
   const height = 30;
   const mask = rectangleMask(width, height, 3, 48, 5, 24);
@@ -76,17 +76,45 @@ test("reversing outward restores a partial peel and the flap can still be re-gra
   simulation.begin({ x: 0.16, y: 0.5 }, 700);
   simulation.drag({ x: 0.24, y: 0.5 }, 1000);
   assert.ok(simulation.snapshot().progress > initialProgress);
+  assert.equal(simulation.snapshot().canCommit, true);
   simulation.drag({ x: -0.2, y: 0.5 }, 1200);
   assert.equal(simulation.snapshot().progress, initialProgress);
   assert.equal(simulation.snapshot().torn, false);
   assert.deepEqual(simulation.state, initialState);
   assert.equal(simulation.end(true), false);
-  assert.equal(simulation.snapshot().moves, 1);
+  assert.equal(simulation.snapshot().moves, 2);
 
   simulation.begin({ x: 0.16, y: 0.5 }, 1400);
   simulation.drag({ x: 0.68, y: 0.5 }, 1800);
   assert.equal(simulation.end(true), true);
+  assert.equal(simulation.snapshot().moves, 3);
   assert.ok(simulation.snapshot().progress > initialProgress);
+});
+
+test("an intact peel that reaches the release threshold spends one move even when returned to the start", () => {
+  const mask = rectangleMask(64, 40, 6, 57, 10, 29);
+  const simulation = new PeelSimulation(64, 40, 9, 4, mask, 1, 1);
+  const start = { x: 6 / 63, y: 0.5 };
+  const inward = { x: 0.32, y: 0.5 };
+  simulation.begin(start, 100);
+  simulation.drag(inward, 400);
+  assert.equal(simulation.snapshot().canCommit, true);
+  simulation.drag(start, 600);
+  simulation.drag(inward, 850);
+  simulation.drag(start, 1100);
+  assert.equal(simulation.snapshot().progress, 0);
+  assert.equal(simulation.end(), false);
+  assert.equal(simulation.end(), false);
+  assert.equal(simulation.snapshot().moves, 1);
+  assert.deepEqual(simulation.state, mask);
+
+  simulation.begin(start, 1300);
+  simulation.end();
+  assert.equal(simulation.snapshot().moves, 1);
+  simulation.begin(start, 1500);
+  simulation.drag({ x: start.x + 0.001, y: start.y }, 1600);
+  simulation.end();
+  assert.equal(simulation.snapshot().moves, 1);
 });
 
 test("a sweep only peels the connected component reached from its edge", () => {

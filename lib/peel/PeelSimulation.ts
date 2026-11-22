@@ -136,6 +136,7 @@ export class PeelSimulation {
   private pendingNewCells = 0;
   private liftedCells = 0;
   private moves = 0;
+  private moveEarned = false;
   private tracking = false;
   private pulling = false;
   private outwardPulling = false;
@@ -243,6 +244,7 @@ export class PeelSimulation {
     this.pendingNewCells = 0;
     this.liftedCells = 0;
     this.moves = 0;
+    this.moveEarned = false;
     this.tracking = false;
     this.pulling = false;
     this.outwardPulling = false;
@@ -263,6 +265,7 @@ export class PeelSimulation {
   begin(point: Vec2, time = 0) {
     if (this.tracking || this.failed || this.torn || this.releasedCells >= this.totalCells) return false;
     this.tracking = true;
+    this.moveEarned = false;
     this.pulling = false;
     this.outwardPulling = false;
     this.edgeCueSent = false;
@@ -409,6 +412,8 @@ export class PeelSimulation {
     const waves = Math.floor(waveTravel);
     this.frontTravelRemainder = waveTravel - waves;
     const { frontCells, averageAdhesion, queuedCells, newlyReleased } = this.rebuildLifted(waves);
+    // A valid peel spends a move even if the flap later returns to the board.
+    this.moveEarned ||= this.detached || this.canCommitPartial;
     const frontRebuildMs = performance.now() - frontStarted;
 
     // Detect sudden growth independently of how much was lifted before this update.
@@ -531,8 +536,8 @@ export class PeelSimulation {
       }
       this.releasedHistoryRevision++;
       this.releasedCells += this.pendingNewCells;
-      this.moves++;
     }
+    if (accepted || this.moveEarned) this.moves++;
 
     this.pendingNewCells = 0;
     this.liftedCells = 0;

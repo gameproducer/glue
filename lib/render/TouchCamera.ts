@@ -7,7 +7,7 @@ export const MAX_MANUAL_ZOOM = 3.25;
 const KEY = "peel.touchCamera";
 
 export const TOUCH_CAMERA_MODES = {
-  focus: { label: "Tap to focus", hint: "Tap or start peeling a small piece to zoom. Tap empty space to zoom out." },
+  focus: { label: "Tap to focus", hint: "Tap the sticker to zoom into that area. Tap empty space to zoom out." },
   fit: { label: "Tighter fit", hint: "Fill more of the screen while keeping the whole sticker in view." },
   manual: { label: "Manual zoom", hint: "Pinch or use + and − to zoom. Pan with two fingers between peels." },
 } as const;
@@ -34,6 +34,16 @@ export function saveTouchCamera(preference: TouchCameraPreference) {
 }
 
 export type ManualView = { center: Vec2; zoom: number };
+
+export function tappedAreaFocus(bounds: PeelBounds, point: Vec2, overview: number) {
+  const x = Math.max(bounds.left, Math.min(bounds.right, point.x));
+  const y = Math.max(bounds.bottom, Math.min(bounds.top, point.y));
+  return {
+    x: x * 0.6 + (bounds.left + bounds.right) * 0.2,
+    y: y * 0.6 + (bounds.bottom + bounds.top) * 0.2,
+    z: bounds.z + (overview - bounds.z) / 1.22,
+  };
+}
 
 export function moveManualView(
   view: ManualView, previous: Vec2, next: Vec2, factor: number, overviewUnitsPerPixel: number, bounds: PeelBounds,

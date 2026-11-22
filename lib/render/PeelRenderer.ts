@@ -18,7 +18,7 @@ import { CREASE_START_RISK, GESTURE_START_RISK, TearWarningOverlay } from "./Tea
 import { detachedAlignmentDuration, detachedAnimation, releaseSettleDuration, writeReleaseSurface } from "./ReleaseSurface";
 import { Cell, type CurlProfile, type PeelSimulation, type PeelSnapshot, type Vec2 } from "../peel/PeelSimulation";
 import { stickerLayout, type StickerArea, type StickerPiece } from "../peel/StickerLayout";
-import { moveManualView, type ManualView, type TouchCameraMode, type TouchCameraView } from "./TouchCamera";
+import { moveManualView, tappedAreaFocus, type ManualView, type TouchCameraMode, type TouchCameraView } from "./TouchCamera";
 import { stampCrease } from "./SavedCreases";
 
 const STICKER_WIDTH = 4.8;
@@ -831,6 +831,7 @@ export class PeelRenderer {
   private touchCameraMode: TouchCameraMode | null;
   private touchPointPending = false;
   private focusedPiece: StickerPiece | null = null;
+  private focusTap: Vec2 | null = null;
   private followCurl = false;
   private gluedBounds: PeelBounds | null = null;
   private manualView: ManualView;
@@ -1482,18 +1483,17 @@ export class PeelRenderer {
   }
 
   get touchView(): TouchCameraView {
-    const overview = this.touchCameraMode === "focus" ? this.overviewDistance() : 0;
     return {
       focused: this.focusedPiece !== null,
-      canFocus: overview > 0 && this.stickerLayout.pieces.length > 1 && this.stickerLayout.pieces.some(piece =>
-        this.simulation.state[piece.sample] !== Cell.outside
-        && this.focusDistance(this.worldBounds(piece.area), overview) < overview * 0.87),
+      canFocus: this.touchCameraMode === "focus"
+        && this.stickerLayout.pieces.some(piece => this.simulation.state[piece.sample] !== Cell.outside),
       zoom: this.manualView.zoom,
     };
   }
 
   resetTouchView() {
     this.focusedPiece = null;
+    this.focusTap = null;
     this.gluedBounds = null;
     this.manualView = { center: this.boundsCenter(this.touchBounds), zoom: 1 };
     this.onTouchViewChange?.(this.touchView);
@@ -1508,18 +1508,19 @@ export class PeelRenderer {
       this.resetTouchView();
       return "overview";
     }
-    if (!piece || piece === this.focusedPiece || !this.canFocusPiece(piece)) return null;
-    this.focusPiece(piece);
+    if (!piece) return null;
+    this.focusPiece(piece, this.uvToWorld(point));
     return "focus";
   }
 
-  private canFocusPiece(piece: StickerPiece) {
+  private canFrameWholePiece(piece: StickerPiece) {
     const overview = this.overviewDistance();
     return this.focusDistance(this.worldBounds(piece.area), overview) < overview * 0.87;
   }
 
-  private focusPiece(piece: StickerPiece) {
+  private focusPiece(piece: StickerPiece, tap: Vec2 | null = null) {
     this.focusedPiece = piece;
+    this.focusTap = tap;
     this.updateGluedBounds();
     this.onTouchViewChange?.(this.touchView);
   }
@@ -1535,7 +1536,7 @@ export class PeelRenderer {
     if (this.dragInput && !this.dragInput.working && this.movingRegion
         && snapshot.frontDepth > 0 && !snapshot.torn && !snapshot.outwardPulling) {
       const piece = this.stickerLayout.pieceAtCell(this.simulation.activeGripCell);
-      if (piece && (this.followCurl || this.canFocusPiece(piece))) {
+      if (piece && (this.followCurl || this.canFrameWholePiece(piece))) {
         this.dragInput.working = true;
         if (piece !== this.focusedPiece) {
           this.focusPiece(piece);
@@ -1757,14 +1758,20 @@ export class PeelRenderer {
     const manualCrop = this.touchCameraMode === "manual" && this.manualView.zoom > 1;
     const held = this.heldDissolve;
     const heldBounds = held?.bounds && this.dragInput ? translateBounds(held.bounds, held.offset) : null;
-    const focusBounds = this.focusedPiece
-      ? (this.followCurl ? this.gluedBounds ?? heldBounds ?? this.movingBounds : null) ?? this.worldBounds(this.focusedPiece.area)
+    const pieceBounds = this.focusedPiece ? this.worldBounds(this.focusedPiece.area) : null;
+    const focusBounds = pieceBounds
+      ? (this.followCurl ? this.gluedBounds ?? heldBounds ?? this.movingBounds : null) ?? pieceBounds
       : null;
     const wholeBounds = touch ? this.touchBounds : this.stickerBounds;
     const restBounds = focusBounds ?? wholeBounds;
     const fill = Math.min(0.945, (touch ? 0.92 : 0.82) * (this.touchCameraMode === "manual" ? 1 : this.zoom));
+    const overview = this.touchFitDistance(wholeBounds, fill);
+    const wholeFocus = focusBounds ? this.focusDistance(focusBounds, overview) : overview;
+    const localFocus = pieceBounds && this.focusTap && wholeFocus >= overview * 0.87
+      ? tappedAreaFocus(pieceBounds, this.focusTap, overview) : null;
     const relief = this.simulation.releasedGrips.size > 0 ? this.reliefHeight : 0;
-    const bounds = manualCrop ? [] : [{ ...restBounds, z: restBounds.z + relief }];
+    // Distant edges can crop out during a local close-up. Still fit the moving flap.
+    const bounds = manualCrop || localFocus ? [] : [{ ...restBounds, z: restBounds.z + relief }];
     const pan = touch || this.cameraSettings.pan;
     if (this.movingBounds) bounds.push(this.movingBounds);
     if (this.settling && !focusMode) {
@@ -1781,13 +1788,12 @@ export class PeelRenderer {
         : !focusMode && (shape.fadeStart === null || now - shape.fadeStart < DISSOLVE_MS * 0.65);
       if (shape.bounds && foreground) bounds.push(translateBounds(shape.bounds, shape.offset));
     }
-    const overview = this.touchFitDistance(wholeBounds, fill);
     const desired = manualCrop ? wholeBounds.z + (overview - wholeBounds.z) / this.manualView.zoom
-      : focusBounds ? Math.min(overview, this.focusDistance(focusBounds, overview)) : overview;
+      : localFocus?.z ?? Math.min(overview, wholeFocus);
     const grabPose = touch ? this.dragInput?.cameraStart : null;
     const followGrip = focusMode && this.dragInput?.working;
     const base = Math.max(desired, followGrip ? 0 : grabPose?.z ?? 0);
-    let center: Vec2 = grabPose ?? (manualCrop ? this.manualView.center : this.boundsCenter(restBounds));
+    let center: Vec2 = grabPose ?? (manualCrop ? this.manualView.center : localFocus ?? this.boundsCenter(restBounds));
     const comfort = followGrip ? Math.min(32, shortSide * 0.08) : Math.min(34, shortSide * (1 - fill) / 2);
     const fit = bounds.length ? fitFrustum(bounds, this.tangent, width, height, comfort, pan) : null;
     if (followGrip && grabPose && this.dragInput) {
